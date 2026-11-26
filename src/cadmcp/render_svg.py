@@ -798,7 +798,7 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     from .ir.resolve import Box
     boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
         ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
-    if asm is None and len(boxes) > 1:  # 焊接件：杆件/板互不相交 → 画家算法消隐（白色填充可见面，由远及近）
+    if len(boxes) > 1:  # 焊接件杆件/板、装配零件包围盒 → 画家算法消隐（白色填充可见面，由远及近）
         for bb in _painter_order(boxes):
             _iso_box_faces(s, iso, bb)
         return
@@ -934,8 +934,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 x0, y0 = P(bu0, bw0)
                 x1, y1 = P(bu1, bw1)
                 occ = _occluder_rects(boxes, k, v.type, ha, va, P, solid)
-                _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ,
-                             THICK if inst.source.kind in ("part", "assembly") else THIN)
+                _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ, THICK)  # 可见轮廓一律粗实线（GB/T 4457.4）
         else:
             x0, y0 = P(ulo, wlo)
             x1, y1 = P(uhi, whi)
