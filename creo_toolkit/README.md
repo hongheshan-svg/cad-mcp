@@ -41,6 +41,7 @@ cmake --build build --config Release
 | `src/cmd_session.cpp` | `ping` / `model.*` |
 | `src/cmd_model.cpp` | `feat.*` / `datum.*`（IR 坐标 → Creo 坐标 `(x, z, −y)`） |
 | `src/cmd_drawing.cpp` | `drw.*` |
+| `src/cmd_assembly.cpp` | `asm.*`（元件按 IR 位姿放入；坐标系重合约束，失败退回固定；全局干涉） |
 
 ## 首期限制（服务端如实报错，Python 端记警告、不中断）
 
@@ -48,7 +49,8 @@ cmake --build build --config Release
 - `feat.hole` 用拉伸切除实现，不建 118° 钻尖。
 - `drw.section`：只做 full / half；step / local 返回 `PRO_TK_NOT_IMPLEMENTED`。
 - `drw.dim kind=ordinate` 首期按基线式线性尺寸创建。
-- 钣金、焊接件、装配建模仍不走 TOOLKIT。
+- 钣金、焊接件建模仍不走 TOOLKIT。
+- 装配：带偏移/旋转的放置只按位姿固定（不建约束）；空白装配（无 start_asm）没有 ASM_DEF_CSYS，对装配本身的坐标系约束会退回固定。
 
 ## 实机核对顺序（建议）
 

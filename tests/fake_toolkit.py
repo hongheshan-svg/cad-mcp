@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 DOC = Path(__file__).resolve().parent.parent / "docs" / "CREO_TOOLKIT.md"
-COMMON = {"model": {"model", "feature"}, "feat": {"model", "feature"}, "datum": {"model", "feature"},
+COMMON = {"asm": {"asm"}, "model": {"model", "feature"}, "feat": {"model", "feature"}, "datum": {"model", "feature"},
           "drw": {"drawing"}, "ping": set()}
 
 
@@ -33,6 +33,7 @@ class FakeToolkit:
         self.schema = doc_schema()
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail: set[str] = set()
+        self.interference: list[dict[str, Any]] = []  # asm.interference 返回的干涉对
         self._next_id = 100
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -92,6 +93,13 @@ class FakeToolkit:
     def _result(self, cmd: str, a: dict[str, Any]) -> dict[str, Any]:
         if cmd == "ping":
             return {"creo": "10.0.0.0", "toolkit": "fake"}
+        if cmd == "asm.new":
+            return {"name": a["name"]}
+        if cmd == "asm.add_component":
+            self._next_id += 1
+            return {"id": self._next_id, "placement": "csys" if a.get("csys") else "fixed"}
+        if cmd == "asm.interference":
+            return {"pairs": list(self.interference)}
         if cmd == "model.new_part":
             return {"name": a["name"]}
         if cmd == "model.regenerate":

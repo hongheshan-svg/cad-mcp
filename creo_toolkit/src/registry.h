@@ -28,5 +28,6 @@ json dispatch(const std::string& name, const json& args);
 void register_session_cmds();   // cmd_session.cpp
 void register_model_cmds();     // cmd_model.cpp
 void register_drawing_cmds();   // cmd_drawing.cpp
+void register_assembly_cmds();  // cmd_assembly.cpp
 
 }  // namespace cadmcp

@@ -351,3 +351,8 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
    比较 SW 中 MC_ 坐标系三轴方向与平台预测（`euler_xyz` 的逆 `rotate_xyz`）；不一致时调整 `op_mate_coordinate` 中的分解顺序。
 4. TODO(实机核对)：装配级特征 `Feature.Select2(True, 1)` 能否与 `SelectByID2(..., "COORDSYS", ..., mark=1)` 组合成坐标系配合的两个选择。
 5. regenerate：对一个故意引用丢失的零件调用，确认 errors 列出特征名与错误码。
+
+### Creo TOOLKIT 装配（asm.*）
+1. 先建 `examples/cylinder_station.py` 的两块板，再建 ASSEMBLY：库件无 `<library_root>/<编码>.prt` 时平台先经 TOOLKIT 建包络占位件。
+2. 核对元件位置与 SVG/模拟结果一致（坐标映射 `(x, z, −y)` + `Q·T·Qᵀ`）；oplog 中 `asm.add_component` 的 `placement` 应为 `csys`（有 place 无偏移）或 `fixed`。
+3. 人为让两件重叠，`asm.interference` 回读 `{components, volume_mm3}` 应出现在 build 结果的 interferences 中。

@@ -13,7 +13,7 @@ from typing import Any
 
 from ...errors import CAPABILITY_UNSUPPORTED, NATIVE_ERROR, TARGET_UNAVAILABLE, CadError
 from ..base import CAPABILITIES, BuildResult, CadAdapter
-from .compile import compile_part, compile_part_tk
+from .compile import compile_assembly_tk, compile_part, compile_part_tk
 from .edit import CreoEditor
 
 
@@ -61,12 +61,17 @@ class CreoAdapter(CadAdapter):
     def info(self) -> dict[str, Any]:
         return {"cad": "creo", "version": self.version, "adapter": "creoson+toolkit" if self.tk else "creoson"}
 
+    def has_library_item(self, code: str) -> bool:
+        """标准件库中是否有原生 Creo 模型 <library_root>/<编码>.prt；没有时平台生成包络块占位。"""
+        return bool(self.library_root) and (Path(self.library_root) / f"{code}.prt").exists()
+
     def capabilities(self) -> dict[str, str]:
         caps = {c: "none" for c in CAPABILITIES}
         caps.update({"open_existing": "full", "set_parameters_existing": "full", "mass_properties": "full",
                      "export.step": "partial", "export.pdf": "partial", "build_drawing": "partial"})
         if self.tk is not None:
-            caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial"})
+            caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial", "build_assembly": "partial",
+                         "interference.exact": "partial"})
         elif self.start_part and self.udf_dir:
             caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial"})
         return caps
@@ -152,7 +157,23 @@ class CreoAdapter(CadAdapter):
                            {}, extra={"features": rb.get("features", [])})
 
     def build_assembly(self, spec, resolved, out_dir, component_files) -> BuildResult:
-        raise CadError(CAPABILITY_UNSUPPORTED, "Creo assembly build: P2（file_assemble + Csys 约束）")
+        if self.tk is None:
+            raise CadError(CAPABILITY_UNSUPPORTED, "Creo 从零建装配需要 TOOLKIT 服务 cadmcp_tk",
+                           hint="config.yaml 中 creo 目标加 toolkit: {host, port}（见 creo_toolkit/README.md）")
+        from .toolkit import run_tk_ops
+        ops = compile_assembly_tk(spec, resolved, {k: str(v) for k, v in component_files.items()}, self.library_root)
+        res = run_tk_ops(self.tk, ops, out_dir, spec.name)
+        oplog = str(out_dir / f"{spec.name}.oplog.json")
+        rb = res["readback"]
+        if res["status"] == "errors":
+            failed = [r for r in res["log"] if not r["ok"]]
+            where = failed[-1]["op"] if failed else "model.regenerate"
+            raise CadError(NATIVE_ERROR, f"Creo TOOLKIT assembly {spec.name} failed at {where}",
+                           hint=f"查看 {oplog}；再生失败：{(rb.get('regen') or {}).get('failed', [])}",
+                           native_code=failed[-1]["error"] if failed else "")
+        path = Path(rb["path"]) if rb.get("path") else out_dir / f"{spec.name.lower()}.asm"
+        return BuildResult(path, {"status": res["status"], "errors": [], "warnings": res["warnings"], "oplog": oplog},
+                           {"source": "cad"}, {"interferences": rb.get("interferences", [])})
 
     def build_drawing(self, plan, model_file, out_dir, model) -> BuildResult:
         from .drawing import CreoDrawingExecutor, compile_drawing
