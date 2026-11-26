@@ -1,0 +1,209 @@
+"""装配解析：坐标系对齐求位姿、阵列展开、BOM、包围盒干涉检查（与 CAD 无关）。
+
+真实适配器用这里求出的位姿做校验；原生装配仍用坐标系重合约束（SW 坐标系配合 /
+Creo Csys 约束）建立，保证模型在 CAD 中仍然是"约束驱动"而非"固定位置"。
+"""
+from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..errors import REF_NOT_FOUND, SPEC_INVALID, CadError
+from ..expr import evaluate, resolve_parameters
+from .assembly import AssemblySpec
+from .resolve import Box, ResolvedRef
+
+Mat = list[list[float]]
+
+
+def identity() -> Mat:
+    return [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
+
+
+def matmul(a: Mat, b: Mat) -> Mat:
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+
+def translate(x: float, y: float, z: float) -> Mat:
+    m = identity()
+    m[0][3], m[1][3], m[2][3] = x, y, z
+    return m
+
+
+def rotate_xyz(rx: float, ry: float, rz: float) -> Mat:
+    """依次绕 X、Y、Z（固定轴）旋转，角度为度。结果 = Rz·Ry·Rx。"""
+    def r(axis: int, deg: float) -> Mat:
+        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        c = 0.0 if abs(c) < 1e-12 else c
+        s = 0.0 if abs(s) < 1e-12 else s
+        m = identity()
+        i, j = [(1, 2), (0, 2), (0, 1)][axis]
+        m[i][i], m[i][j], m[j][i], m[j][j] = c, -s, s, c
+        if axis == 1:
+            m[i][j], m[j][i] = s, -s
+        return m
+    return matmul(r(2, rz), matmul(r(1, ry), r(0, rx)))
+
+
+def invert_rigid(m: Mat) -> Mat:
+    rt = [[m[j][i] for j in range(3)] for i in range(3)]
+    t = [m[i][3] for i in range(3)]
+    out = identity()
+    for i in range(3):
+        for j in range(3):
+            out[i][j] = rt[i][j]
+        out[i][3] = -sum(rt[i][k] * t[k] for k in range(3))
+    return out
+
+
+def apply(m: Mat, p: tuple[float, float, float]) -> tuple[float, float, float]:
+    return tuple(sum(m[i][k] * p[k] for k in range(3)) + m[i][3] for i in range(3))  # type: ignore[return-value]
+
+
+def ref_frame(ref: ResolvedRef) -> Mat:
+    return matmul(translate(*ref.origin), rotate_xyz(*ref.rotate))
+
+
+def world_box(m: Mat, b: Box) -> Box:
+    pts = [apply(m, (x, y, z)) for x in (b.xmin, b.xmax) for y in (b.ymin, b.ymax) for z in (b.zmin, b.zmax)]
+    xs, ys, zs = zip(*pts)
+    return Box(min(xs), max(xs), min(ys), max(ys), min(zs), max(zs))
+
+
+@dataclass
+class SourceInfo:
+    """组件来源的几何与 BOM 信息（由 Gateway 根据 part:/lib:/asm:/file: 提供）。"""
+    source: str
+    kind: str  # part | assembly | purchased | standard
+    part_no: str
+    title: str
+    material: str | None
+    mass_kg: float
+    bbox: Box
+    references: dict[str, ResolvedRef]
+    model: str | None = None
+    properties: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class Instance:
+    id: str
+    component: str
+    source: SourceInfo
+    transform: Mat
+    world_bbox: Box
+
+
+@dataclass
+class ResolvedAssembly:
+    name: str
+    part_no: str
+    title: str
+    parameters: dict[str, float]
+    instances: list[Instance]
+    bbox: Box
+    mass_kg: float
+    properties: dict[str, str]
+
+    def bom(self) -> list[dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for inst in self.instances:
+            s = inst.source
+            key = s.part_no or s.source
+            if key not in rows:
+                rows[key] = {"part_no": s.part_no, "title": s.title, "spec": s.model or "", "material": s.material or "",
+                             "kind": s.kind, "qty": 0, "unit_mass_kg": round(s.mass_kg, 4), "instances": []}
+            rows[key]["qty"] += 1
+            rows[key]["instances"].append(inst.id)
+        order = {"assembly": 0, "part": 1, "purchased": 2, "standard": 3}
+        out = sorted(rows.values(), key=lambda r: (order.get(r["kind"], 9), r["part_no"]))
+        for i, r in enumerate(out, 1):
+            r["item"] = i
+        return out
+
+    def summary(self) -> dict[str, Any]:
+        return {"name": self.name, "part_no": self.part_no, "title": self.title,
+                "instances": len(self.instances), "bbox_mm": [round(v, 2) for v in self.bbox.size],
+                "mass_kg": round(self.mass_kg, 3), "bom_lines": len(self.bom())}
+
+
+def resolve_assembly(spec: AssemblySpec, source_info: Callable[[str], SourceInfo]) -> ResolvedAssembly:
+    params = resolve_parameters(spec.parameters)
+
+    def ev(v):
+        return evaluate(v, params)
+
+    comps = {c.id: c for c in spec.components}
+    sources = {c.id: source_info(c.source) for c in spec.components}
+    base_tf: dict[str, Mat] = {}
+    visiting: set[str] = set()
+
+    def ref_of(comp_id: str, ref: str) -> ResolvedRef:
+        refs = sources[comp_id].references
+        if ref not in refs:
+            raise CadError(REF_NOT_FOUND, f"{comp_id} ({sources[comp_id].source}) has no reference {ref!r}",
+                           hint=f"available: {sorted(refs)}")
+        r = refs[ref]
+        if r.kind != "csys":
+            raise CadError(SPEC_INVALID, f"{comp_id}.{ref} is a {r.kind}; v0 placement only aligns coordinate systems (CS_*)",
+                           hint="在零件中添加 CS_ 坐标系基准用于装配")
+        return r
+
+    def tf(cid: str) -> Mat:
+        if cid in base_tf:
+            return base_tf[cid]
+        if cid in visiting:
+            raise CadError(SPEC_INVALID, f"circular placement involving {cid!r}")
+        visiting.add(cid)
+        c = comps[cid]
+        if c.place is None:
+            m = identity()
+        else:
+            tgt_comp, _, tgt_ref = c.place.to.partition(".")
+            if tgt_comp == "ASM":
+                if tgt_ref != "CS_Origin":
+                    raise CadError(REF_NOT_FOUND, f"assembly reference {tgt_ref!r} unknown", hint="use ASM.CS_Origin")
+                target = identity()
+            else:
+                target = matmul(tf(tgt_comp), ref_frame(ref_of(tgt_comp, tgt_ref)))
+            off = [ev(v) for v in c.place.offset]
+            rot = [ev(v) for v in c.place.rotate]
+            align = ref_frame(ref_of(cid, c.place.align))
+            m = matmul(target, matmul(translate(*off), matmul(rotate_xyz(*rot), invert_rigid(align))))
+        visiting.discard(cid)
+        base_tf[cid] = m
+        return m
+
+    instances: list[Instance] = []
+    for c in spec.components:
+        m0 = tf(c.id)
+        n = int(round(ev(c.array.count))) if c.array else 1
+        step = [ev(v) for v in c.array.step] if c.array else [0.0, 0.0, 0.0]
+        for k in range(n):
+            m = matmul(translate(*(s * k for s in step)), m0)
+            iid = c.id if n == 1 else f"{c.id}#{k + 1}"
+            instances.append(Instance(iid, c.id, sources[c.id], m, world_box(m, sources[c.id].bbox)))
+
+    boxes = [i.world_bbox for i in instances]
+    bb = Box(min(b.xmin for b in boxes), max(b.xmax for b in boxes), min(b.ymin for b in boxes),
+             max(b.ymax for b in boxes), min(b.zmin for b in boxes), max(b.zmax for b in boxes))
+    return ResolvedAssembly(spec.name, spec.part_no, spec.title, params, instances, bb,
+                            sum(i.source.mass_kg for i in instances), dict(spec.properties))
+
+
+def aabb_interference(asm: ResolvedAssembly, tol: float = 0.01) -> list[dict[str, Any]]:
+    """包围盒干涉（保守：可能误报 L 形件等，不会漏报）。贴合面（重叠厚度 ≤ tol）不算干涉。"""
+    out = []
+    ins = asm.instances
+    for a in range(len(ins)):
+        for b in range(a + 1, len(ins)):
+            A, B = ins[a].world_bbox, ins[b].world_bbox
+            dx = min(A.xmax, B.xmax) - max(A.xmin, B.xmin)
+            dy = min(A.ymax, B.ymax) - max(A.ymin, B.ymin)
+            dz = min(A.zmax, B.zmax) - max(A.zmin, B.zmin)
+            if dx > tol and dy > tol and dz > tol:
+                out.append({"a": ins[a].id, "b": ins[b].id, "overlap_mm": [round(dx, 3), round(dy, 3), round(dz, 3)],
+                            "volume_mm3": round(dx * dy * dz, 1)})
+    return out

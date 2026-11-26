@@ -1,0 +1,25 @@
+[project]
+name = "cadmcp"
+version = "0.1.0"
+description = "Unified MCP platform for SolidWorks and Creo (spec-driven modeling and drawings)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.20",
+    "pydantic>=2.9",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+windows = ["pywin32>=306; sys_platform == 'win32'", "creopyson>=0.7"]
+
+[project.scripts]
+cadmcp = "cadmcp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

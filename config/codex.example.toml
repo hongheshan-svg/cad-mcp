@@ -1,0 +1,7 @@
+# 追加到 ~/.codex/config.toml（Windows: %USERPROFILE%\.codex\config.toml）
+[mcp_servers.cad]
+command = "uv"
+args = ["run", "--project", "D:/cad-mcp", "cadmcp", "serve", "--stdio"]
+env = { CADMCP_NODE_CONFIG = "D:/cadmcp/node.yaml" }
+startup_timeout_sec = 60
+tool_timeout_sec = 300        # SolidWorks 建模/出图单步可能较慢

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cad": {
+      "command": "uv",
+      "args": ["run", "--project", ".", "cadmcp", "serve", "--stdio"],
+      "env": {
+        "CADMCP_NODE_CONFIG": "${CADMCP_NODE_CONFIG:-}",
+        "CADMCP_WORKSPACE": "${CADMCP_WORKSPACE:-}"
+      }
+    }
+  }
+}

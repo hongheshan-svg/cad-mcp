@@ -1,0 +1,32 @@
+# Windows 测试机节点配置（复制为 D:/cadmcp/node.yaml 后按实际修改）
+node_id: test-ws-01
+workspace_root: "D:/cadmcp/workspaces"
+policy: "D:/cadmcp/policy.yaml"
+workers:
+  - id: sw2024
+    adapter: solidworks
+    cad: solidworks
+    version: "2024"
+    visible: true                # 测试时可见，便于观察
+    holes_via: cut               # cut = 拉伸切除做孔（稳妥）；wizard = 孔向导（待实机核对）
+    templates:                   # 留空则用 SolidWorks 默认模板（工具-选项-默认模板）
+      part: ""
+      assembly: ""
+      drawing_A4: ""             # 公司 GB 图框模板，如 "D:/templates/GB_A4.drwdot"
+      drawing_A3: ""
+      drawing_A2: ""
+      bom: ""
+    library_root: "D:/cadmcp/library/solidworks"   # 标准件库（<编码>.SLDPRT，含 CS_ 基准）
+    # material_map:              # 平台材料名 → [SW 材料库名, 材料名]，不填用内置映射
+    #   Q235: ["SOLIDWORKS Materials", "AISI 1020"]
+    # view_map:                  # 如中文版视图名不同或方向不对，在此覆盖
+    #   top: ["*前视", 0]
+  - id: creo10
+    adapter: creo
+    cad: creo
+    version: "10.0"
+    creoson: { host: localhost, port: 9056 }
+  - id: mock-sw2024              # 对照：不依赖 CAD 的模拟目标
+    adapter: mock
+    cad: solidworks
+    version: "2024"
