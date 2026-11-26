@@ -423,3 +423,5 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
   出图：端面视图（SW *Front / Creo 沿 IR Z）+ 过键槽的全剖主视图（轴线水平；Creo 用 RIGHT 命名视图，核对朝向）+
   右上角参数表（SW `op_table` 的 swBOMConfigurationAnchor_TopLeft 取值缺省 1）。原生图上齿形按实际几何显示（非规定画法），
   分度线 / Φd 不生成（warn）。
+- 齿轮轴（tests/test_gear.py 的 GS）：Front Plane 上齿廓折线 + 外圆，`keyway_cut` 起始偏移 40、深 36 切出 20 个齿槽；
+  核对 FeatureCut4 对嵌套轮廓只切两轮廓之间的区域。Creo 同理（TOP 偏移 40 拉伸切除）。

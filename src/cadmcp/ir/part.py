@@ -217,6 +217,22 @@ class ShaftThread(Strict):
     tolerance: str = Field("6g", description="外螺纹公差带")
 
 
+class ShaftGear(Strict):
+    """齿轮轴：在某轴段上加工直齿（渐开线标准齿廓，GB/T 1356）。该段直径 = 齿顶圆 da = m(z + 2 + 2x)，
+    齿宽 = 该段长度。出图按 GB/T 4459.2（齿顶线粗实线、分度线细点画线、齿根线细实线）并附参数表。"""
+    feature: Literal["gear"]
+    name: str
+    step: int
+    module: Num
+    teeth: int = Field(ge=6)
+    pressure_angle: Num = 20.0
+    shift: Num = 0.0
+    accuracy: str = "8 GB/T 10095.1"
+    tip_tolerance: str = "h11"
+    flank_ra: Num = 1.6
+    mate: str | None = None
+
+
 class Mount(Strict):
     """外购件安装接口：按标准件库登记的接口自动开螺钉孔 + 止口/让位孔，并生成装配用坐标系 CS_<name>
     （z 沿面外法向；把外购件的接口坐标系对齐到它即可装配）。"""
@@ -233,7 +249,7 @@ class Mount(Strict):
     pilot: bool = Field(True, description="是否开止口/让位孔（库中登记了 pilot 时）")
 
 
-Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove | ShaftThread | Mount,
+Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove | ShaftThread | ShaftGear | Mount,
                     Field(discriminator="feature")]
 
 

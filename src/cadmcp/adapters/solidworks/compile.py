@@ -179,6 +179,14 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                                                         "external": True, "tol": f["callout"].split("-")[-1]},
                                     "轴外螺纹装饰线（失败不影响几何）"))
                 continue
+            if f["kind"] == "gear":  # 齿轮段：Front Plane(XY) 画齿廓折线 + 外圆，从 z0 起切到 z1（齿槽 = 两轮廓之间）
+                ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))
+                ops.append(NativeOp("sketch_polyline_closed", {"sketch": sk, "points": f["points"]}))
+                ops.append(NativeOp("sketch_circle", {"sketch": sk, "center": [0, 0], "diameter": f["d"] + 2}))
+                ops.append(NativeOp("keyway_cut", {"feature": f["name"], "sketch": sk, "start_offset": f["z0"],
+                                                   "depth": f["z1"] - f["z0"], "flip": False},
+                                    "FeatureCut4：起始偏移 z0、深度 = 齿宽，切出全部齿槽"))
+                continue
             if f["kind"] == "keyway":
                 # 键槽朝向：0/180 → 在 Right Plane(YZ) 画槽形，沿 ±X 切；90/270 → Top Plane(XZ)，沿 ±Y 切
                 ang = round(f["angle"]) % 360
@@ -538,6 +546,11 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                       **({"prefix": ex["prefix"], "suffix": ex.get("suffix", "")}
                                                          if ex.get("prefix") else {})},
                                 "选两条轮廓边线 AddDimension2；等距尺寸加前后缀 n×p(=<DIM>)"))
+    if plan.gear_table:  # 齿轮轴参数表
+        t = plan.gear_table
+        ops.append(NativeOp("table", {"origin": list(t["origin"]), "columns": [c for c, _ in t["columns"]],
+                                      "widths": [w for _, w in t["columns"]], "rows": [list(r) for r in t["rows"]],
+                                      "title": "齿轮参数表"}, "图框右上角齿轮参数表"))
     if plan.layout == "shaft":
         for d in plan.dims:
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):

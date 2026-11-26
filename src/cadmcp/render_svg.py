@@ -733,6 +733,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if part is not None and part.base_type == "shaft":
         from .render_shaft import render_shaft
         render_shaft(s, plan, part, rendered_refs)
+        if plan.gear_table:
+            from .render_gear import draw_param_table
+            draw_param_table(s, plan.gear_table)
+            rendered_refs.append("gear_table")
     if part is not None and plan.layout == "gear":
         from .render_gear import render_gear
         render_gear(s, plan, part, rendered_refs)

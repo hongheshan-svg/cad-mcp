@@ -178,7 +178,7 @@ def _check_shaft(p: ResolvedPart) -> list[Finding]:
     for f in p.shaft_features:
         z0, z1 = p.step_z(f["step"])
         if f["z0"] < z0 - 1e-6 or f["z1"] > z1 + 1e-6:
-            out.append(_f("S002", "error", f["name"], f"{f['callout']} 超出所在轴段 {f['step']}（{z0:g}–{z1:g}）",
+            out.append(_f("S002", "error", f["name"], f"{f.get('callout', f['name'])} 超出所在轴段 {f['step']}（{z0:g}–{z1:g}）",
                           "缩短长度或调整 offset/position"))
             continue
         if f["kind"] == "keyway":

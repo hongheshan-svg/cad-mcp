@@ -14,7 +14,7 @@ from .. import materials, standards
 from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
-from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
+from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket, ShaftGear,
                    ShaftThread,
                    SheetMetalBase, ShaftBase, Boss, WeldmentBase)
 from .weldment import plate_hole_frame, resolve_weldment
@@ -638,6 +638,26 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             shaft_feats.append({"kind": "thread", "name": f.name, "step": f.step, "d": d, "d1": d1, "pitch": pitch,
                                 "length": tl, "z0": z0, "z1": z0 + tl, "side": side, "offset": z0 - sz0,
                                 "callout": code, "full": abs(tl - L) < 1e-6})
+            continue
+        if isinstance(f, ShaftGear):
+            if not isinstance(base, ShaftBase):
+                raise CadError(SPEC_INVALID, f"gear {f.name}: only valid on a shaft base", hint="盘状齿轮用 part.gear")
+            if not 0 <= f.step < len(steps):
+                raise CadError(SPEC_INVALID, f"{f.name}: step {f.step} out of range (0..{len(steps) - 1})")
+            from .. import gear as G
+            sz0 = sum(L for L, _ in steps[:f.step])
+            L, d = steps[f.step]
+            g = G.geometry(ev(f.module), f.teeth, ev(f.pressure_angle), ev(f.shift))
+            if abs(d - g["da"]) > 0.01:
+                raise CadError(SPEC_INVALID, f"gear {f.name}: step {f.step} diameter {d:g} ≠ tip diameter da = {g['da']:g}",
+                               hint=f"把轴段 {f.step} 直径改为 {g['da']:g}")
+            pts = G.outline(g["m"], g["z"], g["alpha"], g["x"])
+            volume -= (math.pi * d * d / 4 - G.polygon_area(pts)) * L
+            g.update({"accuracy": f.accuracy, "tip_tolerance": f.tip_tolerance, "flank_ra": ev(f.flank_ra),
+                      "mate": f.mate, "blank_runout": None})
+            gear = g
+            shaft_feats.append({"kind": "gear", "name": f.name, "step": f.step, "d": d, "z0": sz0, "z1": sz0 + L,
+                                "points": [list(q) for q in pts], "m": g["m"], "z": g["z"], "df": g["df"], "pd": g["d"]})
             continue
         if isinstance(f, (Keyway, Groove)):
             if not isinstance(base, ShaftBase):

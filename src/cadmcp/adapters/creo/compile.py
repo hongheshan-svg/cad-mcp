@@ -221,6 +221,12 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
                 feat("feat.cosmetic_thread", f["name"], "轴外螺纹：装饰螺纹（失败不影响几何）", edge_point=cyl_pt,
                      start_edge_point=start_pt, major_diameter=f["d"], length=f["length"])
                 continue
+            if f["kind"] == "gear":  # 齿轮段：IR XY 面（TOP）偏移 z0 处画齿廓折线 + 外圆，切深 = 齿宽
+                pts = f["points"]
+                ents = [_line(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))] + [_circle((0, 0), f["d"] / 2 + 1)]
+                feat("feat.extrude", f["name"], "齿轮段：切出齿槽", plane={"ref": "TOP", "offset": f["z0"]}, entities=ents,
+                     depth=f["z1"] - f["z0"], direction="normal", op="cut", through_all=False)
+                continue
             if f["kind"] == "keyway":
                 ang = round(f["angle"]) % 360
                 if ang not in (0, 90, 180, 270):

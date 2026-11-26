@@ -114,3 +114,47 @@ def test_blank_runout_table():
     p = _p({**GEAR, "gear": {**GEAR["gear"], "blank_tolerances": False}})
     plan = plan_part_drawing(DrawingSpec(model="GR1"), p)
     assert not any(d.kind in ("gtol", "datum") for d in plan.dims)
+
+
+GS = {"name": "GS1", "part_no": "GS-01", "title": "齿轮轴", "material": "40Cr",
+      "base": {"type": "shaft", "chamfer": 1, "steps": [
+          {"length": 30, "diameter": 25, "tolerance": "k6"}, {"length": 10, "diameter": 30},
+          {"length": 36, "diameter": 44}, {"length": 10, "diameter": 30}, {"length": 20, "diameter": 25, "tolerance": "k6"},
+          {"length": 40, "diameter": 20, "tolerance": "k6"}]},
+      "features": [{"feature": "gear", "name": "G", "step": 2, "module": 2, "teeth": 20},
+                   {"feature": "keyway", "name": "KW", "step": 5, "length": 28}]}
+
+
+def test_gear_shaft_resolve_and_drawing():
+    p = _p(GS)
+    g = next(f for f in p.shaft_features if f["kind"] == "gear")
+    assert (g["z0"], g["z1"], g["pd"], g["df"]) == (40, 76, 40, 35)
+    plan = plan_part_drawing(DrawingSpec(model="GS1"), p)
+    assert plan.layout == "shaft" and plan.sheet == "A3"
+    texts = {d.ref: d.text for d in plan.dims}
+    assert texts["step2_dia"] == "Φ44h11(0/-0.160)" and texts["ra:flank:G"] == "Ra 1.6"
+    assert {r[0]: r[2] for r in plan.gear_table["rows"]}["公法线长度"] == "15.321"
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"] and "gear_table" in out["dim_refs"]
+    tx0 = plan.gear_table["origin"][0]
+    main = plan.views[0]
+    assert main.origin_on_sheet[0] + main.size_mm[0] / 2 < tx0  # 参数表不压主视图
+    bad = {**GS, "base": {**GS["base"], "steps": [*GS["base"]["steps"][:2], {"length": 36, "diameter": 45},
+                                                    *GS["base"]["steps"][3:]]}}
+    with pytest.raises(Exception, match="tip diameter"):
+        _p(bad)
+
+
+def test_gear_shaft_native_ops():
+    from cadmcp.adapters.creo.compile import compile_part_tk
+    from cadmcp.adapters.solidworks.compile import compile_drawing, compile_part
+    s = PartSpec.model_validate(GS)
+    p = resolve_part(s)
+    sw = compile_part(s, p)
+    cut = next(o for o in sw if o.op == "keyway_cut" and o.args["feature"] == "G")
+    assert cut.args["start_offset"] == 40 and cut.args["depth"] == 36
+    assert any(o.op == "sketch_polyline_closed" and o.args["sketch"] == "SK_G" for o in sw)
+    tk = next(o for o in compile_part_tk(s, p) if o.op == "tk.feat.extrude" and o.args.get("feature") == "G")
+    assert tk.args["op"] == "cut" and tk.args["plane"] == {"ref": "TOP", "offset": 40}
+    ops = compile_drawing(plan_part_drawing(DrawingSpec(model="GS1"), p), "GS1.SLDPRT")
+    assert any(o.op == "table" and o.args["title"] == "齿轮参数表" for o in ops)

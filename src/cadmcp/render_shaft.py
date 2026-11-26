@@ -105,6 +105,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         zt = f["z0"] if f["side"] == "end" else f["z1"]  # 终止线在螺纹靠轴内的一端
         if 1e-6 < zt < Ltot - 1e-6:
             s.line(*P(zt, -f["d"] / 2), *P(zt, f["d"] / 2), THICK)
+    # 齿轮段（GB/T 4459.2 外形视图）：齿顶线即轮廓；分度线细点画线（伸出端面 2 mm）、齿根线细实线
+    for f in (f for f in part.shaft_features if f["kind"] == "gear"):
+        for sign in (1, -1):
+            s.line(*P(f["z0"] - 2 / sc, sign * f["pd"] / 2), *P(f["z1"] + 2 / sc, sign * f["pd"] / 2), THIN, CENTER)
+            s.line(*P(f["z0"], sign * f["df"] / 2), *P(f["z1"], sign * f["df"] / 2), THIN)
     # 键槽（朝前，主视图显示其实形）
     kws = [f for f in part.shaft_features if f["kind"] == "keyway"]
     for f in kws:

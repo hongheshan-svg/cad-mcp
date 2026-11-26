@@ -359,6 +359,11 @@ def tk_detail_ops(plan) -> list[NativeOp]:
             "drawing": D, "origin": _xy((bx0, by0)), "columns": _cols(HOLE_COLS), "row_height": 5,
             "rows": _rows([[r["tag"], r["x"], r["y"], r["size"]] for r in plan.hole_table]), "header_bottom": False},
             "孔表（位置同 SVG 预览）"))
+    if plan.gear_table and plan.layout != "gear":  # 齿轮轴参数表（齿轮零件图的表在 _gear_view_ops 里）
+        g = plan.gear_table
+        ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": _xy((g["origin"][0], g["origin"][1] - g["size"][1])),
+                                             "columns": _cols(g["columns"]), "rows": _rows([list(r) for r in g["rows"]]),
+                                             "row_height": g["row_height"], "header_bottom": False}, "齿轮参数表"))
     texts = list(plan.notes)
     if texts:  # 技术要求：首行在上，文字块左下角
         ops.append(NativeOp("tk.drw.note", {"drawing": D, "text": "\n".join(texts), "at": [x0, y0 + TITLE_H + 11]},

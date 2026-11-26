@@ -148,8 +148,12 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
             continue
         refs.append(d.ref)
 
-    # ---- 参数表（右上角，表头在上）----
-    t = param_table(plan, part)
+    draw_param_table(s, plan.gear_table or param_table(plan, part))
+    refs.append("gear_table")
+
+
+def draw_param_table(s, t) -> None:
+    """齿轮参数表（右上角，表头在上）。"""
     x0, ytop = t["origin"]
     rh = t["row_height"]
     widths = [w for _, w in t["columns"]]
@@ -166,4 +170,3 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
                 s.line(x, ytop, x, ytop - th, THIN)
             s.text(x + w / 2, y + 2.2, str(c), 3.0 if len(str(c)) < 14 else 2.5, "middle")
             x += w
-    refs.append("gear_table")

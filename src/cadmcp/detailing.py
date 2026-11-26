@@ -1022,7 +1022,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     D = b.xmax - b.xmin
     kws = [f for f in p.shaft_features if f["kind"] == "keyway"]
     sec_d = max((f["d"] for f in kws), default=0.0)
-    col_w = [Ltot]
+    col_w = [Ltot + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
     row_h = [D] + ([sec_d] if kws else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
@@ -1045,6 +1045,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         for i, (L, d) in enumerate(p.shaft_steps):
             tol = p.shaft_tolerances[i] if p.shaft_tolerances else None
             th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["step"] == i), None)
+            gr = next((f for f in p.shaft_features if f["kind"] == "gear" and f["step"] == i), None)
+            if gr is not None:  # 齿轮段：直径 = 齿顶圆，按齿顶圆公差带注偏差
+                tol = p.gear["tip_tolerance"]
             # 螺纹段：螺纹代号注在大径上替代 Φ（GB/T 4459.1）
             dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(d, tol, spec.fit_deviations),
                             f"step{i}_dia",
@@ -1058,6 +1061,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                             (0.0, p.shaft_steps[0][1] / 2)))
         for f in p.shaft_features:
             sz0 = p.step_z(f["step"])[0]
+            if f["kind"] == "gear":  # 齿面粗糙度注在分度线延长线上（齿段右端外）
+                ra = p.gear["flank_ra"]
+                dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:flank:{f['name']}",
+                                (f["z1"] + 3 / scale, f["pd"] / 2), {"normal": (0, 1)}))
+                continue
             if f["kind"] == "thread":  # 未满整段：注螺纹长度（自轴段端面起）
                 if not f["full"]:
                     dims.append(Dim("front", "linear", "z", f["length"], f"{f['length']:g}", f"{f['name']}_len",
@@ -1086,6 +1094,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     precision_sheet(plan, p)
     if spec.dimensions != "none":
         shaft_dim_sheet(plan, p)
+    if p.gear:  # 齿轮轴：参数表（右上角）
+        from .gear_drawing import param_table
+        plan.gear_table = param_table(plan, p)
     return plan
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
@@ -1607,7 +1618,7 @@ def shaft_dia_z(p: ResolvedPart, i: int) -> float:
     Ltot = p.bbox.zmax - p.bbox.zmin
     c = p.shaft_chamfer
     z0, z1 = p.step_z(i)
-    busy = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i]
+    busy = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] != "gear"]
     cands = [z0 + (z1 - z0) * k / 20 for k in range(2, 19)]
     return max(cands, key=lambda z: (min(min([abs(z - (a + b) / 2) - (b - a) / 2 for a, b in busy] or [1e9]), 4.0),
                                       min(z, Ltot - z) > c + 2,  # 避开端部倒角
