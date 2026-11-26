@@ -445,3 +445,14 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 样例：`tests/test_center_holes.py`。SW 走 `leader_note`（引线箭头在端面轴线处），Creo 走 `tk.drw.note` + `leader_to`。
 核对：引线是否附着到端面（轴线与端面交点不是边线，可能附着失败而成为自由注释）；预览里的保留符号 "<" 原生端没有画，
 保留要求只体现在技术要求里。
+
+## 待核实的标准数值（不需要 Windows，需要标准原文）
+
+| 表 | 位置 | 状态 |
+|---|---|---|
+| GB/T 145 中心孔 A 型 D、B 型 D2 | `standards.CENTER_HOLES` | 已对照 IS 2473:1975（等同 ISO 866）核实 |
+| GB/T 145 中心孔 l1 | 同上 | 未核实（出图不用） |
+| GB/T 275 轴颈圆柱度（0 级轴承） | `precision._BEARING_CYL` | 未核实 |
+| GB/T 1184 圆跳动 6/7 级 | `precision._RUNOUT` | 未核实 |
+| 齿坯跳动公差 | `gear._BLANK_RUNOUT` | 未核实 |
+| 按轴端直径推荐中心孔 d | `standards._CH_BY_DIA` | 经验值，非标准表 |
