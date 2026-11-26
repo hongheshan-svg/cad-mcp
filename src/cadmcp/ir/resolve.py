@@ -529,6 +529,10 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     def ev(v):
         return evaluate(v, params)
 
+    if spec.auto_precision:
+        from ..precision import auto_shaft_precision
+        spec = auto_shaft_precision(spec, ev)
+
     dens = materials.density(spec.material)
     base = spec.base
     profile = None

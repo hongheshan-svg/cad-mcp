@@ -367,6 +367,8 @@ class PartSpec(Strict):
     datums: list[Datum] = Field([], description="基准；几何公差引用其字母")
     tolerances: list[GeoTol] = Field([], description="几何公差（形位公差）")
     roughness: list[Roughness] = Field([], description="个别表面粗糙度；其余表面按出图 surface_finish")
+    auto_precision: bool = Field(False, description="轴类：按工程惯例自动补基准（两端轴承位 A、B）、轴承位圆柱度（GB/T 275）、"
+                                 "其余配合段/齿轮段径向圆跳动（GB/T 1184）与配合面粗糙度；已写的基准/公差不改动")
     casting: CastingSpec | None = Field(None, description="铸件（category=casting）：加工面、余量、拔模、最小铸孔")
     gear: GearSpec | None = Field(None, description="直齿圆柱齿轮：底座为 extrude + circle（直径 = 齿顶圆）")
 

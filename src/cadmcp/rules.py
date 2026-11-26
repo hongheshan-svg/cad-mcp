@@ -127,7 +127,7 @@ def check_part(p: ResolvedPart) -> list[Finding]:
     return out
 
 
-IT_GRADE_RA = {5: 0.4, 6: 0.8, 7: 1.6, 8: 1.6, 9: 3.2}  # 配合精度 → 建议最大 Ra（μm）
+from .precision import IT_GRADE_RA  # noqa: E402  配合精度 → 建议最大 Ra（μm）
 
 
 def _check_precision(p: ResolvedPart) -> list[Finding]:
