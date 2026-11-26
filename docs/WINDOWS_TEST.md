@@ -153,3 +153,12 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 3. 序号为 BOM 序号（双击可见链接到明细表），位置在主视图四周、按顺时针编号；oplog 中 bom_balloons 的
    placed / missing（missing 多说明 `RootDrawingComponent.GetChildren` 或组件匹配有问题，此时会退回自动序号）。
 4. 出图结果 rules 中没有 D011/D012；有的话把 oplog 和 PDF 一起发回。
+
+### 焊接件：原生焊缝符号与切割清单（D013 / D014）
+建 `examples/weld_base.py` 并出图，核对：
+1. 零件特征树“切割清单”下每个文件夹有属性 Description / LENGTH / MATERIAL（oplog 中 cut_list_properties 的 folders 数；
+   若报 rows matched 不足，记录切割清单文件夹的类型名与实体名）。
+2. 工程图焊缝符号是 SW 原生焊接符号：周围焊有小圆、双面焊两侧都有三角形、尾部 135。
+   oplog 中 weld_symbol 返回 native=false 时记录 fallback 原因。常见原因是符号代码不对：在 SW 里手工插一个角焊缝符号，
+   用宏读 `WeldSymbol.GetText(True, …)` 得到代码，写到节点配置 `templates.weld_fillet_symbol`。
+3. 切割清单表表头在下，长度/数量与预览一致；rules 中没有 D013/D014。

@@ -104,8 +104,12 @@ def test_sw_executor_weldment(sw_svc):
     assert post[21] == pytest.approx(0.010) and post[5] == pytest.approx(0.480)
     cuts = [c[1] for c in ad.sw.calls if c[0] == "FeatureCut4"]
     assert cuts and all(a[3] == FakeConstants().swEndCondBlind for a in cuts)  # 板孔不打穿到杆件
-    notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
-    assert any("K3 ◣ ○" in n for n in notes)
+    assert names.count("InsertWeldSymbol3") == 2                       # 两组焊缝：周围焊 + 双面焊
+    texts = [c[1] for c in ad.sw.calls if c[0] == "SetText"]
+    assert [a[:3] for a in texts].count((True, "3", "<WELD-FILLET>")) == 2
+    assert (False, "3", "<WELD-FILLET>", "4处", "", 0) in texts             # 双面焊另一侧
+    assert ("SetPeripheral", (True,)) in ad.sw.calls and ("SetProcess", (True, "135")) in ad.sw.calls
+    assert names.count("InsertWeldmentTable") == 1
 
 
 def test_sw_edit_existing(sw_svc, tmp_path):

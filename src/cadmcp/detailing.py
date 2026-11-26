@@ -329,7 +329,10 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     if p.base_type.startswith("weldment"):
         ks = sorted({w["size"] for w in p.welds})
         k0 = max(ks, key=lambda k: sum(1 for w in p.welds if w["size"] == k)) if ks else 3
-        notes.append(f"{n}. 焊接按 GB/T 985.1，焊丝 ER50-6；未注焊缝 K{k0:g} 连续角焊缝。")
+        proc = p.weld_options.get("process", "135")
+        how = {"135": "CO2 气体保护焊（135），焊丝 ER50-6", "111": "焊条电弧焊（111），焊条 E4303",
+               "141": "钨极氩弧焊（141）"}[proc]
+        notes.append(f"{n}. {how}，坡口按 GB/T 985.1；未注焊缝 K{k0:g} 连续角焊缝。")
         notes.append(f"{n + 1}. 焊缝饱满，无夹渣、气孔、咬边、未焊透。")
         notes.append(f"{n + 2}. 焊后清渣去飞溅，校正变形；"
                      + ("整体去应力退火后再加工。" if p.weld_options.get("stress_relief") else "型材切口去毛刺。"))
@@ -539,15 +542,23 @@ def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None
             return (round(far / span * 4), c[1], -c[0])
         w = max(ws, key=score)
         used.append((vc(w["center"], ha), vc(w["center"], va)))
+        sx, sy = _project(main, p, tuple(w["center"]))
         plan.dims.append(Dim(main.type, "weld", None, k, f"K{k:g}", f"weld:K{k:g}:{kind}",
                              (vc(w["center"], ha), vc(w["center"], va)),
-                             {"all_around": kind == "all_around", "count": len(ws)}))
-    # 切割清单序号（主视图）
-    for r in plan.cut_list:
-        body = next(x for x in p.weld_bodies if x["name"] == r["bodies"][0])
-        bb = Box(*body["box"])
-        plan.balloons.append({"item": r["item"], "instance": body["name"],
-                              "at": ((sum(vrange(bb, ha)) / 2), (sum(vrange(bb, va)) / 2))})
+                             {"symbol": "fillet", "size": k, "all_around": kind == "all_around",
+                              "both_sides": kind == "two_sides", "count": len(ws),
+                              "process": p.weld_options.get("process", "135"),
+                              "welds": [x["id"] for x in ws],
+                              "sheet_at": (round(sx, 2), round(sy, 2)),
+                              "sheet_pos": (round(sx + 10, 2), round(sy + 12, 2))}))
+    # 切割清单序号：与装配图相同的排布规则（主视图四周、顺时针编号），切割清单序号随之重排
+    from types import SimpleNamespace as NS
+    shim = NS(bbox=p.bbox, instances=[NS(id=x["name"], world_bbox=Box(*x["box"])) for x in p.weld_bodies])
+    rows = [{"item": r["item"], "part_no": r["spec"], "instances": list(r["bodies"]), "_r": r} for r in plan.cut_list]
+    rows, plan.balloons = layout_balloons(rows, shim, main, plan.sheet_size)
+    for r in rows:
+        r["_r"]["item"] = r["item"]
+    plan.cut_list.sort(key=lambda r: r["item"])
     return plan
 
 
@@ -781,6 +792,31 @@ def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list
     return out
 
 
+def check_weldment_drawing(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
+    """D013 切割清单与方案不一致（行数/数量/长度）；D014 焊缝符号没有全部标出。"""
+    out = []
+    if "cut_list_rows" in rendered and plan.cut_list:
+        def key(spec_len: str, qty) -> tuple[int, float]:
+            nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", str(spec_len))]  # 长度或板件最大边
+            try:
+                return int(float(qty)), round(max(nums), 0) if nums else 0.0
+            except (TypeError, ValueError):
+                return -1, 0.0
+        want = sorted(key(r["length_mm"] if r["kind"] == "member" else max(r["size_mm"]), r["qty"]) for r in plan.cut_list)
+        got = sorted(key(x[1], x[2]) for x in rendered["cut_list_rows"])
+        if want != got:
+            out.append({"rule": "D013", "severity": "error",
+                        "message": f"图上切割清单与方案不一致：方案 {len(want)} 行（数量,长度）{want[:4]}，图上 {got[:4]}",
+                        "fix": "检查零件切割清单属性（LENGTH/Description）与切割清单模板；SW 中可能需要更新切割清单"})
+    if "weld_symbols" in rendered:
+        need = sum(1 for d in plan.dims if d.kind == "weld")
+        if rendered["weld_symbols"] < need:
+            out.append({"rule": "D014", "severity": "error",
+                        "message": f"焊缝符号 {rendered['weld_symbols']} 个，方案要求 {need} 个",
+                        "fix": "查看 oplog 中 weld_symbol 的失败原因；已退回注释的会在 notes 中"})
+    return out
+
+
 def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """出图校验。rendered = 适配器回读的实际图纸内容（尺寸 ref 列表、视图列表等）；
     无回读时只校验方案本身。"""
@@ -828,6 +864,8 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         f("D007", "warning", "装配图没有明细表")
     if rendered is not None and plan.model_kind == "assembly":
         out += check_bom_association(plan, rendered)
+    if rendered is not None and plan.layout == "weldment":
+        out += check_weldment_drawing(plan, rendered)
     if plan.model_kind == "part" and not any("公差" in n for n in plan.notes):
         f("D008", "warning", "缺少未注公差说明")
     return out

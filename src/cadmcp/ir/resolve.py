@@ -757,5 +757,6 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,
             "weld_options": {"end_caps": base.end_caps, "open_ends": wr.open_ends,
-                             "stress_relief": base.stress_relief}} if isinstance(base, WeldmentBase) else {}),
+                             "stress_relief": base.stress_relief, "process": base.weld_process}}
+           if isinstance(base, WeldmentBase) else {}),
     )

@@ -180,30 +180,49 @@ def _draw_weld_bodies(s, part, vtype, ha, va, P):
 
 def _weld_symbol(s, px, py, d):
     """GB/T 324 角焊缝符号：箭头引线 → 基准线（实线 + 虚线识别线），三角形在基准线上（箭头侧），
-    左侧焊脚 K，右侧处数；周围焊在转折处画小圆。"""
+    双面焊上下各一个三角形（不画虚线）；左侧焊脚 K，右侧处数；周围焊在转折处画小圆；尾部焊接方法代号。"""
     from .render_gdt import _tri
-    ex, ey = px + 10, py + 12
+    ex_ = d.extra or {}
+    if "sheet_at" in ex_:
+        (px, py), (ex, ey) = ex_["sheet_at"], ex_["sheet_pos"]
+    else:
+        ex, ey = px + 10, py + 12
     s.line(px, py, ex, ey, THIN)
     a = math.atan2(py - ey, px - ex)
     _tri(s, [(px, py), (px - 2.2 * math.cos(a - 0.3), py - 2.2 * math.sin(a - 0.3)),
              (px - 2.2 * math.cos(a + 0.3), py - 2.2 * math.sin(a + 0.3))])
     L = 26
     s.line(ex, ey, ex + L, ey, THIN)
-    s.line(ex, ey - 1.2, ex + L, ey - 1.2, THIN, "1.5,1")
+    both = ex_.get("both_sides")
+    if not both:
+        s.line(ex, ey - 1.2, ex + L, ey - 1.2, THIN, "1.5,1")
     tx = ex + 9
-    s.poly([(tx, ey), (tx + 3.5, ey), (tx, ey + 3.5)], THIN)  # 角焊缝 ◣
+    s.poly([(tx, ey), (tx + 3.5, ey), (tx, ey + 3.5)], THIN)  # 角焊缝 ◣（箭头侧）
+    if both:
+        s.poly([(tx, ey), (tx + 3.5, ey), (tx, ey - 3.5)], THIN)  # 另一侧
+        s.text(ex + 1, ey - 3.6, d.text, 3)
     s.text(ex + 1, ey + 0.8, d.text, 3)
+    if ex_.get("process"):  # 尾部：焊接方法代号
+        s.line(ex + L, ey, ex + L + 2.5, ey + 2.5, THIN)
+        s.line(ex + L, ey, ex + L + 2.5, ey - 2.5, THIN)
+        s.text(ex + L + 3.2, ey - 1, ex_["process"], 3)
     if d.extra and d.extra.get("count", 1) > 1:
         s.text(tx + 5, ey + 0.8, f"{d.extra['count']}处", 3)
     if d.extra and d.extra.get("all_around"):
         s.circle(ex, ey, 1.4, THIN)
 
 
-def _draw_cut_list(s, x0, y_bottom, rows) -> float:
-    """切割清单（标题栏上方，自下而上：表头在下）。返回表顶 y。"""
+def _draw_cut_list(s, x0, y_bottom, rows, out_rows=None) -> float:
+    """切割清单（标题栏上方，GB/T 10609.2：表头在下，序号自下而上）。返回表顶 y。"""
     cols = [("序号", 12), ("规格", 52), ("长度/尺寸", 36), ("数量", 14), ("备注", 66)]
     by = y_bottom
-    for r in rows:
+    xx = x0
+    for name, w in cols:
+        s.rect(xx, by, w, 7, THIN)
+        s.text(xx + 1.5, by + 2.2, name, 3)
+        xx += w
+    by += 7
+    for r in sorted(rows, key=lambda r: r["item"]):
         size = f"L={r['length_mm']:g}" if r["kind"] == "member" else "×".join(f"{v:g}" for v in r["size_mm"])
         note = "两端平切 90°" if r["kind"] == "member" else ("焊后加工" if r.get("machined") else "")
         xx = x0
@@ -211,14 +230,11 @@ def _draw_cut_list(s, x0, y_bottom, rows) -> float:
             s.rect(xx, by, w, 7, THIN)
             s.text(xx + 1.5, by + 2.2, str(val), 3)
             xx += w
+        if out_rows is not None:
+            out_rows.append([r["item"], size, r["qty"]])
         by += 7
-    xx = x0
-    for name, w in cols:
-        s.rect(xx, by, w, 7, THIN)
-        s.text(xx + 1.5, by + 2.2, name, 3)
-        xx += w
-    s.text(x0, by + 9, "切割清单", 3.5)
-    return by + 14
+    s.text(x0, by + 2, "切割清单", 3.5)
+    return by + 7
 
 
 def _draw_iso(s, cx, cy, sc, box, part, asm):
@@ -264,6 +280,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     s.rect(5, 5, W - 10, H - 10, THICK)  # 图框
     rendered_refs: list[str] = []
     balloon_items: list[int] = []
+    cut_rows: list[list[Any]] = []
     bom_rows: list[tuple[Any, Any, Any]] = []
     part = model if isinstance(model, ResolvedPart) else None
     asm = model if isinstance(model, ResolvedAssembly) else None
@@ -483,7 +500,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if plan.notes:
         rendered_refs.append("notes")
     if plan.cut_list:
-        _draw_cut_list(s, x0, y0 + tbh + 12 + 5 * len(plan.notes), plan.cut_list)
+        _draw_cut_list(s, x0, y0 + tbh + 12 + 5 * len(plan.notes), plan.cut_list, cut_rows)
         rendered_refs.append("cut_list")
     # 明细表（标题栏上方）
     if plan.bom:  # GB/T 10609.2：表头在下，序号自下而上
@@ -505,4 +522,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions()}
     if asm is not None:
         out.update(bom_rows=bom_rows, balloon_items=balloon_items)
+    if plan.layout == "weldment":
+        out.update(cut_list_rows=cut_rows, balloon_items=balloon_items,
+                   weld_symbols=sum(1 for r in rendered_refs if r.startswith("weld:")))
     return s.render(), out

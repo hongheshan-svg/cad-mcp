@@ -120,6 +120,17 @@ def weldment_ops(p: ResolvedPart) -> list[NativeOp]:
         ops.append(NativeOp("extrude_body", {"feature": body["name"], "sketch": sk, "start_offset": lo,
                                              "depth": hi - lo},
                             "FeatureExtrusion3 Merge=False，起始偏移到杆件端面"))
+    # 切割清单属性：杆件是拉伸实体（非结构构件），SW 不会自动算 LENGTH，按方案写入各切割清单项
+    rows = []
+    for r in p.cut_list:
+        props = {"Description": r["spec"], "MATERIAL": p.material, "规格": r["spec"]}
+        if r["kind"] == "member":
+            props.update(LENGTH=f"{r['length_mm']:g}", 下料长度=f"{r['length_mm']:g}", 端部="两端平切 90°")
+        else:
+            props.update(LENGTH="×".join(f"{v:g}" for v in r["size_mm"]), 板厚=r["spec"].split("t")[-1])
+        rows.append({"bodies": list(r["bodies"]), "props": props})
+    ops.append(NativeOp("cut_list_properties", {"rows": rows},
+                        "UpdateCutList → 各 CutListFolder 的 CustomPropertyManager 写 Description/LENGTH/MATERIAL"))
     welds = p.welds
     if welds:
         ops.append(NativeOp("set_custom_properties", {"properties": {
@@ -383,14 +394,22 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref}))
-    for d in plan.dims:  # 焊缝符号：先用注释承载（P1：InsertWeldSymbol3 原生焊接符号）
+    for d in plan.dims:  # 焊缝符号：原生 InsertWeldSymbol3，失败时退回带引线注释
         if d.kind == "weld":
             ex = d.extra or {}
-            text = f"{d.text} ◣{' ○' if ex.get('all_around') else ''}  {ex.get('count', 1)}处"
-            ops.append(NativeOp("leader_note", {"view": d.view, "text": text, "at_model": d.at, "ref": d.ref}))
+            text = (f"{d.text}{'/' + d.text if ex.get('both_sides') else ''} ◣{' ○' if ex.get('all_around') else ''}"
+                    f"  {ex.get('count', 1)}处  {ex.get('process', '')}")
+            ops.append(NativeOp("weld_symbol", {
+                "view": d.view, "size": ex.get("size", d.value), "both_sides": bool(ex.get("both_sides")),
+                "all_around": bool(ex.get("all_around")), "count": ex.get("count", 1), "process": ex.get("process", ""),
+                "at": [v / 1000 for v in ex.get("sheet_at", (0, 0))], "pos": [v / 1000 for v in ex.get("sheet_pos", (0, 0))],
+                "at_model": d.at, "fallback_text": text, "ref": d.ref},
+                "选中焊缝处模型边线 → InsertWeldSymbol3 → SetText 角焊缝/焊脚/处数，周围焊、尾部焊接方法"))
     if plan.cut_list:
         ops.append(NativeOp("weldment_cut_list", {"view": plan.views[0].type, "anchor": "above_title_block",
-                                                  "rows": plan.cut_list},
+                                                  "rows": [{k: r[k] for k in ("item", "kind", "spec", "qty", "length_mm",
+                                                                             "size_mm") if k in r} for r in plan.cut_list],
+                                                  "header_bottom": True},
                             "IView.InsertWeldmentTable；失败时以注释输出"))
         ops.append(NativeOp("auto_balloon", {"view": plan.views[0].type}))
     for d in plan.dims:  # 精度标注：先用注释承载（P1：InsertGtol / InsertDatumTag2 / InsertSurfaceFinishSymbol3 原生符号）

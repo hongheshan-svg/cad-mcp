@@ -19,6 +19,7 @@ ARITY = {
     "CreateFillet": 2, "ReplaceComponents2": 5, "SetSystemValue3": 3, "Save3": 3, "GetDocumentDependencies2": 4, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
     "InsertBomTable4": 10, "InsertBOMBalloon2": 6, "MoveRow": 3, "SetHeader": 2, "GetComponents2": 2,
     "SetColumnTitle2": 3, "SetColumnCustomProperty": 2, "AutoBalloon5": 1, "Text": 2, "Text2": 3,
+    "InsertWeldSymbol3": 0, "SetText": 6, "SetPeripheral": 1, "SetProcess": 2,
 }
 
 

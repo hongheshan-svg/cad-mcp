@@ -23,7 +23,7 @@ NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimensi
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons"}
+                "bom_balloons", "cut_list_properties", "weld_symbol"}
 
 
 class OpFailed(Exception):
@@ -376,11 +376,123 @@ class SwExecutor:
         self.features[feature] = feat
         return {"feature": feature}
 
-    def op_weldment_cut_list(self, view: str, anchor: str, rows):
+    def op_cut_list_properties(self, rows):
+        """更新切割清单，并按实体名把规格/长度写到对应切割清单项（文件夹）的属性。"""
+        m = self.model
+        m.ForceRebuild3(False)
+        folders, f, done = [], m.FirstFeature(), set()
+        for _ in range(20000):
+            if f is None:
+                break
+            tn = str(f.GetTypeName2())
+            if tn == "SolidBodyFolder":
+                try:
+                    f.GetSpecificFeature2().UpdateCutList()
+                except Exception:  # noqa: BLE001
+                    pass
+            elif tn == "CutListFolder":
+                folders.append(f)
+            f = f.GetNextFeature()
+        if not folders:  # 切割清单文件夹在 SolidBodyFolder 下：遍历子特征
+            f = m.FirstFeature()
+            for _ in range(20000):
+                if f is None:
+                    break
+                if str(f.GetTypeName2()) == "SolidBodyFolder":
+                    sub = f.GetFirstSubFeature()
+                    for _ in range(5000):
+                        if sub is None:
+                            break
+                        if str(sub.GetTypeName2()) == "CutListFolder":
+                            folders.append(sub)
+                        sub = sub.GetNextSubFeature()
+                f = f.GetNextFeature()
+        by_body = {b: r for r in rows for b in r["bodies"]}
+        for fd in folders:
+            try:
+                bodies = fd.GetSpecificFeature2().GetBodies() or []
+                names = [str(b.Name) for b in bodies]
+            except Exception:  # noqa: BLE001
+                continue
+            r = next((by_body[n] for n in names if n in by_body), None)
+            if r is None:
+                continue
+            mgr = fd.CustomPropertyManager
+            for k, v in r["props"].items():
+                mgr.Add3(k, self.c.swCustomInfoText, str(v), self.c.swCustomPropertyReplaceValue)
+            done.add(id(r))
+        self.readback["cut_list_folders"] = len(folders)
+        if len(done) < len(rows):
+            raise OpFailed(f"cut list: {len(done)}/{len(rows)} rows matched {len(folders)} folders "
+                           "(检查实体名是否保留、切割清单是否自动更新)")
+        return {"folders": len(folders), "rows": len(rows)}
+
+    def op_weld_symbol(self, view: str, size: float, both_sides: bool, all_around: bool, count: int, process: str,
+                       at, pos, at_model, fallback_text: str, ref: str):
+        """原生焊接符号；任一步失败退回带引线注释（leader_note）。符号代码可在节点配置 templates.weld_fillet_symbol 覆盖。"""
+        sym = self.templates.get("weld_fillet_symbol", "<WELD-FILLET>")
+        k = f"{size:g}"
+        try:
+            self.model.ClearSelection2(True)
+            if not self.model.Extension.SelectByID2("", "EDGE", at[0], at[1], 0, False, 0, None, 0):
+                raise OpFailed("no edge at weld location")
+            ws = self.model.InsertWeldSymbol3()
+            if ws is None:
+                raise OpFailed("InsertWeldSymbol3 returned None")
+            right = f"{count}处" if count > 1 else ""
+            if not ws.SetText(True, k, sym, right, "", 0):
+                raise OpFailed("WeldSymbol.SetText (arrow side) failed")
+            if both_sides:
+                ws.SetText(False, k, sym, right, "", 0)
+            if all_around:
+                try:
+                    ws.SetPeripheral(True)
+                except Exception:  # noqa: BLE001
+                    pass
+            if process:
+                try:
+                    ws.SetProcess(True, process)
+                except Exception:  # noqa: BLE001
+                    pass
+            ws.GetAnnotation().SetPosition2(pos[0], pos[1], 0)
+            self.readback["weld_symbols"] = self.readback.get("weld_symbols", 0) + 1
+            return {"native": True}
+        except Exception as e:  # noqa: BLE001
+            self.op_leader_note(view=view, text=fallback_text, at_model=at_model, ref=ref)
+            self.readback["weld_symbols"] = self.readback.get("weld_symbols", 0) + 1
+            self.readback.setdefault("weld_symbol_fallback", []).append(f"{ref}: {e}")
+            return {"native": False, "fallback": str(e)}
+
+    def op_weldment_cut_list(self, view: str, anchor: str, rows, header_bottom: bool = True):
         v = self.views.get(view) if hasattr(self, "views") else None
-        if v is None or v.InsertWeldmentTable(False, 0.0, 0.0, 1, "", "") is None:
+        tpl = self.templates.get("cut_list", "")
+        tb = None if v is None else v.InsertWeldmentTable(False, 0.0, 0.0, 1, tpl, "")
+        if tb is None:
             raise OpFailed("InsertWeldmentTable failed (cut list in notes)")
-        return {"rows": len(rows)}
+        tbl = self._qi(tb, "ITableAnnotation")
+        if header_bottom:
+            try:
+                tbl.SetHeader(self._k("swTableHeader_Bottom", 2), 1)
+            except Exception:  # noqa: BLE001
+                pass
+        # 回读：每行 [序号, 长度/说明, 数量]（列名按模板：LENGTH/长度、QTY/数量）
+        got = []
+        try:
+            nr, nc = int(tbl.RowCount or 0), int(tbl.ColumnCount or 0)
+            hdr_row = nr - 1 if header_bottom else 0
+            heads = [str(tbl.Text(hdr_row, c)).upper() for c in range(nc)]
+            col = lambda *names: next((i for i, h in enumerate(heads) if any(n in h for n in names)), None)  # noqa: E731
+            ci, cl, cq = col("ITEM", "序号", "项目"), col("LENGTH", "长度"), col("QTY", "数量")
+            for r in range(nr):
+                if r == hdr_row or cl is None or cq is None:
+                    continue
+                got.append([str(tbl.Text(r, ci)).strip() if ci is not None else "",
+                            str(tbl.Text(r, cl)).strip(), str(tbl.Text(r, cq)).strip()])
+        except Exception:  # noqa: BLE001
+            got = []
+        if got:
+            self.readback["cut_list_rows"] = got
+        return {"rows": len(rows), "readback_rows": len(got)}
 
     def op_keyway_cut(self, feature: str, sketch: str, start_offset: float, depth: float, flip: bool = False):
         """从草图平面偏移 start_offset 处开始、沿法向切 depth（键槽底面 = 轴心 + d/2 - t1）。"""

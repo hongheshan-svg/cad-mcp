@@ -88,6 +88,8 @@ class WeldmentBase(Strict):
     weld_size: Num | None = Field(None, description="角焊缝焊脚 K（mm）；默认按较薄件自动取")
     end_caps: bool = Field(False, description="敞口管端加塑料堵头（否则报 W003 提醒）")
     stress_relief: bool = False
+    weld_process: Literal["135", "111", "141"] = Field(
+        "135", description="焊接方法（GB/T 5185）：135 MAG/CO2 气保焊、111 焊条电弧焊、141 TIG")
 
     @model_validator(mode="after")
     def _some(self):
