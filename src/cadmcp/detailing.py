@@ -1106,6 +1106,17 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     ha_, va_ = VIEW_AXES[v.type]
                     pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
                     feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
+    if part is not None and getattr(part, "weld_bodies", None):  # 焊接件：杆件/板件投影（文字不压型材）
+        for body in part.weld_bodies:
+            bb = Box(*body["box"])
+            for v in vmap.values():
+                if v.type not in VIEW_AXES:
+                    continue
+                ha_, va_ = VIEW_AXES[v.type]
+                (u0, u1), (w0, w1) = vrange(bb, ha_), vrange(bb, va_)
+                x0, y0 = _uv_sheet(v, bbox, (u0, w0))
+                x1, y1 = _uv_sheet(v, bbox, (u1, w1))
+                feat.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
     for sec in plan.sections:  # 剖切符号与字母
         pv = vmap.get(sec.parent)
         if pv is None:
