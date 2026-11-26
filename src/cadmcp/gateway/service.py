@@ -511,15 +511,107 @@ class CadService:
                                 + str(sorted(str(q.relative_to(s.work)) for q in s.work.rglob('*') if q.is_file())[:20]))
         return p
 
+    # ----- 引用查找（工作区外：policy.read_allow 下的共享盘/PDM 检出目录）-----
+    def _ref_index(self, t: Target, root: Path) -> dict[str, list[str]]:
+        """root 下所有装配/工程图 → 其引用（按修改时间增量更新，缓存到工作区根目录）。"""
+        cache_file = self.policy.workspace_root / "where_used_index.json"
+        if not hasattr(self, "_refcache"):
+            try:
+                self._refcache = json.loads(cache_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self._refcache = {}
+        exts = {t.adapter.ext["assembly"].lower(), t.adapter.ext["drawing"].lower()}
+        out: dict[str, list[str]] = {}
+        dirty = False
+        for q in root.rglob("*"):
+            if not q.is_file() or q.suffix.lower() not in exts:
+                continue
+            key = str(q.resolve())
+            mt = q.stat().st_mtime
+            hit = self._refcache.get(key)
+            if not hit or hit[0] != mt:
+                hit = [mt, t.adapter.references(q) or []]
+                self._refcache[key] = hit
+                dirty = True
+            out[key] = hit[1]
+        if dirty:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(self._refcache, ensure_ascii=False), encoding="utf-8")
+        return out
+
+    def _external_users(self, t: Target, originals: list[Path]) -> tuple[list[Path], list[dict[str, Any]]]:
+        """工作区外引用 originals 的装配/工程图（传递：零件 → 装配 → 装配图）。返回 (文件, 提示)。"""
+        s = self._session()
+        known = {Path(v).resolve() for v in s.source_paths.values()}
+        notes: list[dict[str, Any]] = []
+        if not self.policy.read_allow:
+            notes.append({"rule": "E015", "severity": "warning", "target": "policy.read_allow",
+                          "message": "未配置 read_allow，无法检查共享盘上其他引用此文件的装配/工程图",
+                          "hint": "在 policy 中配置设计库根目录；或把整个项目目录作为 sources 复制进来"})
+            return [], notes
+        index: dict[str, list[str]] = {}
+        for root in self.policy.read_allow:
+            if root.exists():
+                index.update(self._ref_index(t, root))
+        found: list[Path] = []
+        frontier = [o.resolve() for o in originals]
+        seen = set(frontier)
+        while frontier:
+            tgt = frontier.pop(0)
+            for user, refs in index.items():
+                up = Path(user)
+                if up in seen:
+                    continue
+                for r in refs:
+                    rp = Path(r.replace("\\", "/"))
+                    if rp.name.lower() != tgt.name.lower():
+                        continue
+                    cand = rp if rp.is_absolute() else up.parent / rp
+                    if cand.exists() and cand.resolve() != tgt:
+                        continue  # 引用的是别处的同名文件
+                    if not cand.exists():
+                        notes.append({"rule": "E016", "severity": "warning", "target": str(up),
+                                      "message": f"{up.name} 引用的 {r} 找不到原路径，按同名判定为引用本文件",
+                                      "hint": "确认它确实用的是这个零件"})
+                    seen.add(up)
+                    frontier.append(up)
+                    if up not in known:
+                        found.append(up)
+                    break
+        return found, notes
+
+    def _import_users(self, users: list[Path]) -> list[str]:
+        s = self._session()
+        k, v = next(iter(s.source_paths.items()))
+        src_root = Path(v).parents[len(Path(k).parts) - 1]
+        out = []
+        for q in users:
+            q = q.resolve()
+            if src_root in q.parents:
+                rel = str(q.relative_to(src_root))
+            else:
+                root = next(r for r in self.policy.read_allow if r in q.parents)
+                rel = str(Path("_ext") / root.name / q.relative_to(root))
+            s.add_source(q, rel)
+            out.append(rel)
+        if out:
+            s.log("import_dependents", {"files": out})
+        return out
+
     def inspect_existing(self, file: str) -> dict[str, Any]:
         s = self._session()
         p = self._work_file(file)
         t = self._target(s.target_id)
+        rel = str(p.relative_to(s.work))
         with t.lock:
             info = t.adapter.inspect(p)
             used = t.adapter.where_used(p, s.work)
-        return {"ok": True, "file": str(p.relative_to(s.work)), **info,
-                "used_by": [str(q.relative_to(s.work)) for q in used]}
+            orig = s.source_paths.get(rel)
+            outside, notes = self._external_users(t, [Path(orig)]) if orig else ([], [])
+        return {"ok": True, "file": rel, **info, "used_by": [str(q.relative_to(s.work)) for q in used],
+                "used_by_outside": [str(q) for q in outside],
+                **({"notes": notes} if notes else {}),
+                **({"hint": "修改时这些文件会自动复制进工作区一起更新和检查"} if outside else {})}
 
     def edit_existing(self, file: str, edits: list[dict[str, Any]], dry_run: bool = False) -> dict[str, Any]:
         """修改工作区中的现有模型：校验 → 执行并重建 → 对比 → 更新引用它的装配/工程图。"""
@@ -541,6 +633,18 @@ class CadService:
         if not summ["passed"] or dry_run:
             return {"ok": summ["passed"], "applied": False, "file": rel, "findings": findings,
                     **({"hint": "修正 error 后重试；dry_run=false 才会执行"} if not summ["passed"] else {})}
+        # 全部检查：共享盘上引用它的装配/工程图（含间接引用）自动纳入工作区，一起更新与检查
+        imported: list[str] = []
+        orig = s.source_paths.get(rel)
+        if orig:
+            with t.lock:
+                outside, notes = self._external_users(t, [Path(orig)])
+            findings += notes
+            if len(outside) > self.policy.max_import_dependents:
+                return {"ok": False, "applied": False, "file": rel, "findings": findings,
+                        "error": f"{len(outside)} 个文件引用了它（上限 {self.policy.max_import_dependents}）",
+                        "hint": "这是大范围共用件：建议走 PDM 变更流程；或调高 policy.max_import_dependents"}
+            imported = self._import_users(outside)
         n = s.checkpoint(f"before edit {rel}")
         with t.lock:
             res = t.adapter.apply_edits(p, parsed)
@@ -552,8 +656,18 @@ class CadService:
         d = diff(before, res["after"])
         refreshed = []
         with t.lock:
-            for q in t.adapter.where_used(p, s.work):
-                r = t.adapter.refresh(q)
+            # 按引用层级刷新：先直接引用者（装配/零件图），再引用它们的（装配图）；已修改文件预先载入
+            order, frontier, loaded = [], [p], [p]
+            while frontier:
+                cur = frontier.pop(0)
+                for q in t.adapter.where_used(cur, s.work):
+                    if q not in order and q != p:
+                        order.append(q)
+                        frontier.append(q)
+            for q in order:
+                r = t.adapter.refresh(q, preload=list(loaded))
+                if q.suffix.lower() == t.adapter.ext["assembly"].lower():
+                    loaded.append(q)
                 qr = str(q.relative_to(s.work))
                 refreshed.append({"file": qr, **r})
                 if r.get("status") == "errors":
@@ -564,7 +678,7 @@ class CadService:
                                      "message": f"{qr} 有 {r['dangling']} 个悬空标注（引用的特征被压缩/删除）",
                                      "hint": "在图上删除或重新标注；或撤销压缩（cad_change_rollback 到修改前检查点）"})
         rec = {"file": rel, "edits": [e.model_dump() for e in parsed], "diff": d, "regen": regen,
-               "refreshed": refreshed, "findings": findings, "description": describe(rel, d), "checkpoint": n}
+               "refreshed": refreshed, "imported_dependents": imported, "findings": findings, "description": describe(rel, d), "checkpoint": n}
         s.edits.append(rec)
         s.log("edit_existing", {"file": rel, "edits": edits}, {"diff": d, "refreshed": [r["file"] for r in refreshed]})
         return {"ok": True, "applied": True, **{k: v for k, v in rec.items() if k != "checkpoint"},
@@ -673,6 +787,15 @@ class CadService:
                 shutil.copy2(rel_dir / item["file"], orig)
                 ok = _sha(orig) == _sha(rel_dir / item["file"])
                 item["status"] = "written" if ok else "failed"
+            # 回写后的文件里保存的引用可能指向工作区：改为原位置的同名文件
+            by_name = {Path(i["to"]).name.lower(): Path(i["to"]) for i in plan if i["status"] == "written"}
+            by_name.update({Path(v).name.lower(): Path(v) for v in s.source_paths.values()
+                            if Path(v).name.lower() not in by_name})
+            t_ = self._target(s.target_id)
+            with t_.lock:
+                for item in plan:
+                    if item["status"] == "written":
+                        item["retargeted"] = t_.adapter.retarget(Path(item["to"]), by_name)
             s.log("writeback", {"files": [i["file"] for i in plan]}, {"result": plan})
         return {"ok": all(i["status"] in ("ready", "written") for i in plan), "confirmed": confirm, "files": plan,
                 "new_files_not_written": new_files,

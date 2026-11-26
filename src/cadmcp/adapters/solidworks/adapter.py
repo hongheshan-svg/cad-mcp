@@ -166,23 +166,39 @@ class SolidWorksAdapter(CadAdapter):
         f = Path(self.library_root) / f"{code}.SLDPRT" if self.library_root else None
         return f if f is not None and f.exists() else None
 
-    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
-        out = []
-        for q in list(search_dir.rglob("*.SLDASM")) + list(search_dir.rglob("*.SLDDRW")):
-            deps = self.sw.GetDocumentDependencies2(str(q), False, True, False) or []
-            if any(str(d).lower().endswith(path.name.lower()) for d in deps[1::2]):
-                out.append(q)
-        return out
+    def references(self, path: Path) -> list[str] | None:
+        if path.suffix.upper() not in (".SLDASM", ".SLDDRW"):
+            return None
+        deps = self.sw.GetDocumentDependencies2(str(path), False, True, False) or []
+        return [str(d) for d in deps[1::2]]  # [名称, 路径, 名称, 路径, …]
 
-    def refresh(self, path: Path) -> dict[str, Any]:
+    def refresh(self, path: Path, preload: list[Path] | None = None) -> dict[str, Any]:
         from ..native import NativeOp
+        # 先打开已修改的文件：SW 打开装配/工程图时优先使用内存中同名文档，避免按旧路径读到共享盘上的旧版本
+        pre = [self.sw.OpenDoc6(str(q), self.constants.swDocPART if q.suffix.upper() == ".SLDPRT"
+                                else self.constants.swDocASSEMBLY, self.constants.swOpenDocOptions_Silent, "", 0, 0)
+               for q in (preload or [])]
         ops = [NativeOp("rebuild", {}), NativeOp("count_dangling", {}), NativeOp("save_document", {})]
         if path.suffix.upper() == ".SLDDRW":
             ops.append(NativeOp("export", {"format": "pdf"}))
         ex, res = self._edit_run(path, ops, "refresh")
         ex.op_close_document()
+        for d in pre:
+            if d is not None:
+                self.sw.CloseDoc(d.GetTitle())
         return {"status": res["status"], "dangling": ex.readback.get("dangling", 0),
                 "exports": ex.readback.get("exports", [])}
+
+    def retarget(self, path: Path, by_name: dict[str, Path]) -> int:
+        """ISldWorks.ReplaceReferencedDocument：把引用改为原位置的同名文件（文件须未打开）。"""
+        if path.suffix.upper() not in (".SLDASM", ".SLDDRW"):
+            return 0
+        n = 0
+        for old in self.references(path) or []:
+            new = by_name.get(Path(old.replace("\\", "/")).name.lower())
+            if new is not None and str(new).lower() != old.lower() and self.sw.ReplaceReferencedDocument(str(path), old, str(new)):
+                n += 1
+        return n
 
     def open(self, path: Path, readonly: bool) -> dict[str, Any]:
         c = self.constants

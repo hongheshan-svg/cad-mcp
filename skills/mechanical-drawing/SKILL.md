@@ -77,7 +77,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   平台把版本号写进标题栏、把更改记录写进每张图纸，并在发布目录保存 revisions.json。
 - 修改公司现有模型（不是平台建的）：
   1. `cad_change_begin(project, sources=[原文件或目录])` 把零件和图纸一起复制进工作区（原文件不会被改）；
-  2. `cad_inspect_existing(file)` 读特征树、尺寸全名、方程式/全局变量、used_by；
+  2. `cad_inspect_existing(file)` 读特征树、尺寸全名、方程式/全局变量、used_by；`used_by_outside` 是共享盘上
+     其他引用它的装配/工程图（含间接引用），修改时会自动纳入并一起更新、检查、回写——改共用件前把这个列表告诉用户；
   3. `cad_edit_existing(file, edits)`：尺寸由方程式驱动时改全局变量（set_variable），不要直接改尺寸；
      不确定时先 `dry_run=true`；结果里看 diff（质量/包围盒变化）和 refreshed（图纸是否更新、悬空标注）；
   4. 有 E010 悬空标注先处理（回滚或改图）再发布；`cad_change_commit` 的更改说明会自动生成；

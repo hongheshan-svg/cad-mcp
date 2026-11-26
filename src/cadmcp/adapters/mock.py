@@ -178,35 +178,35 @@ class MockAdapter(CadAdapter):
         after = self.inspect(path) if not errors else {**self.inspect(path), "unsaved": True}
         return {"regen": regen, "after": after}
 
-    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
-        out = []
-        for q in sorted(search_dir.rglob("*")):
-            if q == path or not q.is_file():
-                continue
-            try:
-                d = self._read(q)
-            except CadError:
-                continue
-            if d["kind"] in ("assembly", "drawing") and path.name in self._native(d).get("references", []):
-                out.append(q)
-        return out
+    def references(self, path: Path) -> list[str] | None:
+        try:
+            d = self._read(path)
+        except CadError:
+            return None
+        return list(self._native(d).get("references", [])) if d["kind"] in ("assembly", "drawing") else None
 
-    def refresh(self, path: Path) -> dict[str, Any]:
+    def refresh(self, path: Path, preload: list[Path] | None = None) -> dict[str, Any]:
         d = self._read(path)
         n = self._native(d)
         dangling = 0
+        loaded = {q.name: q for q in (preload or [])}  # 同 SW：内存中已打开的同名文档优先
+        unresolved = []
         for ref in n.get("references", []):
+            name = Path(ref).name
             try:
-                m = self._native(self._read(path.parent / ref))
+                m = self._native(self._read(loaded.get(name, path.parent / ref)))
             except CadError:
-                return {"status": "errors", "dangling": 0, "errors": [f"missing reference {ref}"]}
+                if name in loaded:
+                    return {"status": "errors", "dangling": 0, "errors": [f"missing reference {ref}"]}
+                unresolved.append(ref)  # 未修改的件留在原位置（SW 按存储路径读取），不影响本次检查
+                continue
             sup = {f["name"] for f in m.get("features", []) if f.get("suppressed")}
             feat_of = {x["name"]: x.get("feature") for x in m.get("dimensions", [])}
             dangling += sum(1 for a in n.get("annotations", []) if feat_of.get(a) in sup)
         n["refreshed"] = True
         d["native"] = n
         path.write_text(json.dumps(d, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-        return {"status": "ok", "dangling": dangling, "exports": []}
+        return {"status": "ok", "dangling": dangling, "exports": [], **({"unresolved": unresolved} if unresolved else {})}
 
     def open(self, path: Path, readonly: bool) -> dict[str, Any]:
         d = self._read(path)

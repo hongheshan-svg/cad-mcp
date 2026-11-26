@@ -1,6 +1,6 @@
 workspace_root: "D:/cadmcp/workspaces"
 release_root: "D:/cadmcp/releases"
-read_allow:                      # 允许复制进工作区的设计库/PDM 检出目录（只读）
+read_allow:                      # 设计库/PDM 检出目录（只读）；修改共用件时在这些目录里查找所有引用它的装配/工程图
   - "D:/designs"
 allow_upgrade_save: false        # 禁止用新版本 CAD 保存旧版本文件
 commit_requires: [regen_ok, rules_no_error, drawings_no_error, edits_ok]
@@ -8,3 +8,4 @@ writeback_allow:                 # 允许把发布结果回写的原位置（默
   - "D:/designs"
 native_call_enabled: false
 mass_tolerance: 0.03             # CAD 实测质量与 spec 估算偏差阈值
+max_import_dependents: 200       # 修改共用件时自动纳入的引用文件上限；超过则要求走 PDM 变更流程

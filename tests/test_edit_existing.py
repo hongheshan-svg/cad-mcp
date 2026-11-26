@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from legacy import write_legacy
@@ -129,3 +130,49 @@ def test_replace_then_writeback_copies_new_part(legacy):
     assert [f["file"] for f in new] == ["PH_CYL-SC32x100.mprt"] and (src / "PH_CYL-SC32x100.mprt").exists()
     asm = json.loads((src / "Station.masm").read_text(encoding="utf-8"))["native"]
     assert asm["components"][0]["file"] == "PH_CYL-SC32x100.mprt"
+
+
+def test_where_used_outside_workspace(svc, tmp_path):
+    """只复制进单个零件：共享盘上其他项目引用它的装配及装配图自动纳入并更新；同名的别的零件不受影响。"""
+    from legacy import HDR
+    designs = tmp_path / "designs"
+    old = write_legacy(designs / "OLD")
+    other = designs / "OTHER"
+    other.mkdir()
+    machine = {**HDR, "kind": "assembly", "name": "Machine", "native": {
+        "references": [str((old / "Bracket.mprt").resolve())],
+        "components": [{"instance": "Bracket-1", "file": "Bracket.mprt", "code": "Bracket", "mass_kg": 0.75}],
+        "mates": [], "mass_kg": 0.75}}
+    mdrw = {**HDR, "kind": "drawing", "name": "Machine_DRW", "native": {"references": ["Machine.masm"], "annotations": []}}
+    (other / "Machine.masm").write_text(json.dumps(machine), encoding="utf-8")
+    (other / "Machine.mdrw").write_text(json.dumps(mdrw), encoding="utf-8")
+    decoy = designs / "DECOY"
+    decoy.mkdir()
+    (decoy / "Bracket.mprt").write_text((old / "Bracket.mprt").read_text(encoding="utf-8"), encoding="utf-8")
+    user = {**HDR, "kind": "assembly", "name": "User", "native": {"references": ["Bracket.mprt"], "components": []}}
+    (decoy / "User.masm").write_text(json.dumps(user), encoding="utf-8")
+
+    svc.policy.read_allow.append(designs.resolve())
+    svc.change_begin("OLD", sources=[str(old / "Bracket.mprt")])
+    info = svc.inspect_existing("Bracket.mprt")
+    outside = sorted(Path(x).name for x in info["used_by_outside"])
+    assert outside == ["Bracket.mdrw", "Machine.masm", "Machine.mdrw", "Station.masm"]  # 不含 DECOY/User.masm
+    r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
+    assert sorted(r["imported_dependents"]) == ["Bracket.mdrw", "Station.masm", "_ext/designs/OTHER/Machine.masm",
+                                                "_ext/designs/OTHER/Machine.mdrw"]
+    assert [x["file"] for x in r["refreshed"]] == ["Bracket.mdrw", "Station.masm", "_ext/designs/OTHER/Machine.masm",
+                                                   "_ext/designs/OTHER/Machine.mdrw"]
+    svc.commit("B")
+    svc.policy.writeback_allow.append(designs.resolve())
+    w = svc.writeback(confirm=True)
+    assert w["ok"] and {Path(f["to"]).name for f in w["files"]} == {"Bracket.mprt", "Bracket.mdrw", "Station.masm",
+                                                                  "Machine.masm", "Machine.mdrw"}
+    assert json.loads((other / "Machine.masm").read_text(encoding="utf-8"))["native"]["refreshed"]
+
+
+def test_no_read_allow_warns(svc, tmp_path):
+    src = write_legacy(tmp_path / "d")
+    svc.policy.check_read = lambda p: None
+    svc.change_begin("X", sources=[str(src / "Bracket.mprt")])
+    r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
+    assert any(f["rule"] == "E015" for f in r["findings"])

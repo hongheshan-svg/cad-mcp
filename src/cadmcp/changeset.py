@@ -75,6 +75,18 @@ class ChangeSession:
         s.log("begin", {"project": project, "target": target_id, "sources": sources or []})
         return s
 
+    def add_source(self, q: Path, rel: str) -> Path:
+        """会话中途纳入新的源文件（如自动找到的引用文件）：同 begin，复制到 src（只读）与 work。"""
+        self.policy.check_read(q)
+        for dest_root in (self.src, self.work):
+            dest = dest_root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(q, dest)
+        (self.src / rel).chmod(0o444)
+        self.source_hashes[rel] = _sha(q)
+        self.source_paths[rel] = str(q.resolve())
+        return self.work / rel
+
     def log(self, op: str, args: dict[str, Any], result: dict[str, Any] | None = None) -> None:
         rec = {"t": datetime.now().isoformat(timespec="seconds"), "op": op, "args": args}
         if result is not None:

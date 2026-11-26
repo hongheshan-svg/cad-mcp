@@ -73,13 +73,28 @@ class CadAdapter(ABC):
         """标准件/外购件原生模型文件；None 时平台生成包络占位件。"""
         return None
 
-    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
-        """search_dir 中引用 path 的装配/工程图。"""
-        return []
+    def references(self, path: Path) -> list[str] | None:
+        """装配/工程图直接引用的文件（文件中保存的路径，可能是绝对路径或仅文件名）；不是装配/工程图时返回 None。"""
+        return None
 
-    def refresh(self, path: Path) -> dict[str, Any]:
-        """重建引用文档（装配/工程图）并保存；工程图返回悬空标注数。"""
+    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
+        """search_dir 中直接引用 path 的装配/工程图。"""
+        out = []
+        for q in sorted(search_dir.rglob("*")):
+            if q.is_file() and q != path and q.suffix.lower() in {self.ext["assembly"].lower(), self.ext["drawing"].lower()}:
+                refs = self.references(q) or []
+                if any(Path(r.replace("\\", "/")).name.lower() == path.name.lower() for r in refs):
+                    out.append(q)
+        return out
+
+    def refresh(self, path: Path, preload: list[Path] | None = None) -> dict[str, Any]:
+        """重建引用文档（装配/工程图）并保存；preload = 先在内存中打开的已修改文件（保证引用到新版本）。
+        工程图返回悬空标注数。"""
         raise CadError(CAPABILITY_UNSUPPORTED, f"{self.cad}: refresh not supported")
+
+    def retarget(self, path: Path, by_name: dict[str, Path]) -> int:
+        """回写后：把 path 中的引用改为原位置的同名文件（by_name: 小写文件名 → 原始路径）。返回修改数。"""
+        return 0
 
     @abstractmethod
     def open(self, path: Path, readonly: bool) -> dict[str, Any]: ...

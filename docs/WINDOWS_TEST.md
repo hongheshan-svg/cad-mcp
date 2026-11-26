@@ -91,7 +91,10 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 
 记录：inspect 读到的尺寸名是否完整（中文版特征名如"凸台-拉伸1"）、改后质量是否变化、工程图是否自动更新、
 有无悬空尺寸。需要回写时先在 policy 加 `writeback_allow`，再 `cad_change_writeback(confirm=true)`；
-**原文件会先备份到发布目录 `_writeback_backup`**。发回 `*.inspect.oplog.json`、`*.edit.oplog.json`、`*.refresh.oplog.json`。
+**原文件会先备份到发布目录 `_writeback_backup`**。
+再试一次"只复制单个零件"：另一个文件夹里放一个引用该零件的装配，确认 inspect 的 `used_by_outside` 能找到它、
+修改后它被更新，回写后在 SW 中打开原位置的装配，**检查它引用的是原位置的新零件而不是工作区路径**
+（`ReplaceReferencedDocument` 重定向是否生效）。发回 `*.inspect.oplog.json`、`*.edit.oplog.json`、`*.refresh.oplog.json`。
 
 ## 4. Creo 探针（约 5 分钟）
 
