@@ -105,3 +105,14 @@ def test_bearing_fits_one_side():
         {"id": "seat", "source": "part:BH2", "place": {"offset": [0, 0, 5]}}]}))
     g = fit_gaps(svc._models()["BA2"].resolved)
     assert len(g) == 1 and "seat.Seat[0]（孔）" in g[0]["message"]
+
+
+def test_asm_view_draws_revolve_steps():
+    """装配视图：轴按段画阶梯轮廓（Φ25 段与 Φ32 轴肩各一个矩形），端视为同心圆，被更近的大圆盖住的不画。"""
+    from cadmcp.ir.assembly_resolve import solid_boxes
+    a = _asm()
+    pin = next(i for i in a.instances if i.id == "pin")
+    assert [round(b.xmax - b.xmin) for b, _ in solid_boxes(pin)] == [20, 28]
+    plan = plan_assembly_drawing(DrawingSpec(model="FA"), a)
+    svg, _ = render(plan, a)
+    assert svg.count("<circle") >= 2  # 俯视：销头 Φ28 外圆（Φ20 被挡）+ 序号圈

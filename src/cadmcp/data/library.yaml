@@ -201,6 +201,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 12]}
     properties: {规格: "20×42×12"}
+    revolve: [[0, 12, 42, 20]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ42H7）
       - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 内圈}
       - {role: shaft, d: 42, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 外圈}
@@ -215,6 +216,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 12]}
     properties: {规格: "25×47×12"}
+    revolve: [[0, 12, 47, 25]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ47H7）
       - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 内圈}
       - {role: shaft, d: 47, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 外圈}
@@ -229,6 +231,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 13]}
     properties: {规格: "30×55×13"}
+    revolve: [[0, 13, 55, 30]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ30k6、Φ55H7）
       - {role: hole, d: 30, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 13], name: 内圈}
       - {role: shaft, d: 55, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 13], name: 外圈}
@@ -243,6 +246,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 14]}
     properties: {规格: "20×47×14"}
+    revolve: [[0, 14, 47, 20]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ47H7）
       - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 14], name: 内圈}
       - {role: shaft, d: 47, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 14], name: 外圈}
@@ -257,6 +261,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 15]}
     properties: {规格: "25×52×15"}
+    revolve: [[0, 15, 52, 25]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ52H7）
       - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 内圈}
       - {role: shaft, d: 52, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 外圈}
@@ -271,6 +276,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 16]}
     properties: {规格: "30×62×16"}
+    revolve: [[0, 16, 62, 30]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ30k6、Φ62H7）
       - {role: hole, d: 30, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 16], name: 内圈}
       - {role: shaft, d: 62, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 16], name: 外圈}
@@ -285,6 +291,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 17]}
     properties: {规格: "35×72×17"}
+    revolve: [[0, 17, 72, 35]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ35k6、Φ72H7）
       - {role: hole, d: 35, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 内圈}
       - {role: shaft, d: 72, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 外圈}
@@ -299,6 +306,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 15]}
     properties: {规格: "20×52×15"}
+    revolve: [[0, 15, 52, 20]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ52H7）
       - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 内圈}
       - {role: shaft, d: 52, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 外圈}
@@ -313,6 +321,7 @@ items:
       CS_Face: {origin: [0, 0, 0]}
       CS_Back: {origin: [0, 0, 17]}
     properties: {规格: "25×62×17"}
+    revolve: [[0, 17, 62, 25]]
     fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ62H7）
       - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 内圈}
       - {role: shaft, d: 62, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 外圈}

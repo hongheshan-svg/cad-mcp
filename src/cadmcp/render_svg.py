@@ -334,6 +334,58 @@ def _rect_hidden(s, x0, y0, x1, y1, occ, w=THICK, show_hidden=True):
                 s.line(*pa, *pb, THIN, dash=HIDDEN)
 
 
+def _draw_asm_view(s, asm, vtype, ha, va, P, sc):
+    """装配视图：零件按实体块消隐（被前方零件挡住的轮廓画细虚线）。回转件（轴、轴承）按段画阶梯轮廓；
+    轴线朝向观察者时画同心圆（某段外圆被更靠近观察者的更大段挡住则不画）。标准件（螺钉等）不作遮挡体。"""
+    from .ir.assembly_resolve import apply, solid_boxes
+    blocks = []  # (实例序号, 世界包围盒, 段参数)
+    for k, inst in enumerate(asm.instances):
+        blocks += [(k, bb, seg) for bb, seg in solid_boxes(inst)]
+    boxes = [b for _, b, _ in blocks]
+    solid = [asm.instances[k].source.kind != "standard" for k, _, _ in blocks]
+    ax_d, sg_d = VIEW_LOOK.get(vtype, ("z", 1))
+    for bi, (k, bb, seg) in enumerate(blocks):
+        inst = asm.instances[k]
+        if seg is not None:
+            o = apply(inst.transform, (0.0, 0.0, 0.0))
+            zt = apply(inst.transform, (0.0, 0.0, 1.0))
+            axis = [zt[i] - o[i] for i in range(3)]
+            if abs(axis["xyz".index(ax_d)]) > 0.999:  # 端视：画圆
+                z0, z1, do, di = seg
+                near = z1 if axis["xyz".index(ax_d)] * sg_d > 0 else z0
+                c = apply(inst.transform, (0.0, 0.0, near))
+                dep = c["xyz".index(ax_d)] * sg_d  # 越大越靠近观察者
+                cx_, cy_ = P(vc(c, ha), vc(c, va))
+
+                def covered(r_):  # 更靠近观察者的块完全盖住该圆
+                    for bj, (k2, bb2, sg2) in enumerate(blocks):
+                        if bj == bi or not solid[bj] and k2 != k:
+                            continue
+                        lo2 = min(getattr(bb2, ax_d + "min") * sg_d, getattr(bb2, ax_d + "max") * sg_d)
+                        if lo2 < dep - 1e-6:
+                            continue
+                        (u0_, u1_), (w0_, w1_) = vrange(bb2, ha), vrange(bb2, va)
+                        (X0, Y0), (X1, Y1) = P(u0_, w0_), P(u1_, w1_)
+                        X0, X1, Y0, Y1 = min(X0, X1), max(X0, X1), min(Y0, Y1), max(Y0, Y1)
+                        if sg2 is not None:  # 回转段：按圆判断（同轴且外径不小于）
+                            ccx, ccy = (X0 + X1) / 2, (Y0 + Y1) / 2
+                            if math.hypot(ccx - cx_, ccy - cy_) < 1e-3 and sg2[2] / 2 * sc >= r_ - 1e-6:
+                                return True
+                        elif X0 <= cx_ - r_ and X1 >= cx_ + r_ and Y0 <= cy_ - r_ and Y1 >= cy_ + r_:
+                            return True
+                    return False
+                for r_ in (do / 2 * sc, di / 2 * sc):
+                    if r_ > 0 and not covered(r_):
+                        s.circle(cx_, cy_, r_, THICK)
+                continue
+        (bu0, bu1), (bw0, bw1) = vrange(bb, ha), vrange(bb, va)
+        x0, y0 = P(bu0, bw0)
+        x1, y1 = P(bu1, bw1)
+        own = [j for j, (k2, _, _) in enumerate(blocks) if k2 == k]
+        occ = _occluder_rects(boxes, bi, vtype, ha, va, P, [sv and j not in own for j, sv in enumerate(solid)])
+        _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ, THICK)  # 可见轮廓一律粗实线（GB/T 4457.4）
+
+
 def _draw_weld_bodies(s, part, vtype, ha, va, P):
     """焊接件视图：每个杆件/板件按包围盒投影并消隐（被前方杆件/板件挡住的轮廓画细虚线，GB/T 4457.4）；
     端视的管材画内壁（细实线，被挡时省略），圆管画圆。"""
@@ -964,14 +1016,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         elif part is not None and part.weld_bodies:
             _draw_weld_bodies(s, part, v.type, ha, va, P)
         elif asm is not None:
-            boxes = [i.world_bbox for i in asm.instances]  # 按包围盒近似消隐：被前方零件挡住的轮廓画细虚线
-            solid = [i.source.kind != "standard" for i in asm.instances]  # 标准件（螺钉等）不作遮挡体
-            for k, inst in enumerate(asm.instances):
-                (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
-                x0, y0 = P(bu0, bw0)
-                x1, y1 = P(bu1, bw1)
-                occ = _occluder_rects(boxes, k, v.type, ha, va, P, solid)
-                _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ, THICK)  # 可见轮廓一律粗实线（GB/T 4457.4）
+            _draw_asm_view(s, asm, v.type, ha, va, P, sc)
         else:
             x0, y0 = P(ulo, wlo)
             x1, y1 = P(uhi, whi)

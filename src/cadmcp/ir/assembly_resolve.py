@@ -103,6 +103,7 @@ class SourceInfo:
     mounts: dict[str, dict[str, Any]] = field(default_factory=dict)  # 零件：CS_<mount> → 接口信息
     interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
     install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
+    revolve: list[tuple[float, float, float, float]] = field(default_factory=list)  # 回转件沿零件 Z：(z0, z1, 外径, 内径)
     fits: list[dict[str, Any]] = field(default_factory=list)  # 零件：带配合公差的圆柱面 {role hole|shaft, d, tol, p0, p1(轴线段，零件坐标), name}
 
 
@@ -370,4 +371,16 @@ def interface_check(spec: AssemblySpec, source_info: Callable[[str], SourceInfo]
             out.append({"rule": "A004", "severity": "warning", "target": where,
                         "message": f"{c.source} 装在 {tgt_id}.{tgt_ref}，该处没有按接口开孔（mount），孔位未经校验",
                         "fix": f"在 {tgt_id} 中用 mount 特征（item={c.source.partition(':')[2]}）生成安装孔"})
+    return out
+
+
+def solid_boxes(inst: "Instance") -> list[tuple[Box, tuple[float, float, float, float] | None]]:
+    """装配消隐用的实体块（装配坐标）：回转件每段一个包围盒（带段参数），其余为整体包围盒。"""
+    if not inst.source.revolve:
+        return [(inst.world_bbox, None)]
+    out = []
+    for seg in inst.source.revolve:
+        z0, z1, do, _ = seg
+        r = do / 2
+        out.append((world_box(inst.transform, Box(-r, r, -r, r, z0, z1)), seg))
     return out

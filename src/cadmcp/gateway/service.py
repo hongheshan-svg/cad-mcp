@@ -318,7 +318,9 @@ class CadService:
                                               "pts": [tuple(i.xyz) for i in h.instances]}
                                              for h in p.holes if h.through and h.face in ("top", "bottom")
                                              and len(h.instances) >= 2 and not h.slot],
-                              fits=part_fits(p))
+                              fits=part_fits(p),
+                              revolve=[(*p.step_z(k), d, 0.0) for k, (_, d) in enumerate(p.shaft_steps)]
+                              if p.base_type == "shaft" and not p.gear else [])
         if kind == "asm":
             if ref not in models or models[ref].kind != "assembly":
                 raise CadError(DOC_NOT_FOUND, f"assembly {ref!r} not built in this session")
@@ -330,7 +332,7 @@ class CadService:
             return SourceInfo(source, lp.category, lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items()), lp.title, None,
                               lp.mass_kg, lp.bbox, lp.references, model=lp.model, properties=lp.properties,
                               interface_frame=(self.library.items[lp.code].get("mount") or {}).get("frame"),
-                              fits=lp.fits)
+                              fits=lp.fits, revolve=lp.revolve)
         raise CadError(CAPABILITY_UNSUPPORTED, "file: components need open_existing support (P1)",
                        hint="先把现有零件转成 spec，或等待真实 CAD 目标支持")
 

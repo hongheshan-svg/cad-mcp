@@ -25,6 +25,7 @@ class LibraryPart:
     parameters: dict[str, float] = field(default_factory=dict)
     properties: dict[str, str] = field(default_factory=dict)
     vendor: str = ""
+    revolve: list[tuple[float, float, float, float]] = field(default_factory=list)  # 回转外形 (z0, z1, 外径, 内径)
     fits: list[dict[str, Any]] = field(default_factory=list)  # 配合面（轴承内/外圈），tol="bearing" 表示由轴承标准定
 
 
@@ -71,4 +72,5 @@ class Library:
         fits = [{"role": f["role"], "d": ev(f["d"]), "tol": f.get("tol"), "name": f.get("name", f["role"]),
                  "p0": tuple(ev(c) for c in f["p0"]), "p1": tuple(ev(c) for c in f["p1"])} for f in it.get("fits", [])]
         return LibraryPart(code, it["title"], it["category"], model, mass, bb, refs, params,
-                           {k: str(v) for k, v in it.get("properties", {}).items()}, it.get("vendor", ""), fits)
+                           {k: str(v) for k, v in it.get("properties", {}).items()}, it.get("vendor", ""),
+                           [tuple(float(ev(c)) for c in seg) for seg in it.get("revolve", [])], fits)
