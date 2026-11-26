@@ -209,4 +209,4 @@ def test_shaft_removed_sections(creo, tk, tmp_path):
     zs = sorted(a["z"] for a in rs)
     assert zs[0] == pytest.approx(18.0) and 52 < zs[1] < 112
     sec_dims = [a for c, a in tk.calls if c == "drw.dim" and a["view"].startswith("V_SEC_")]
-    assert len(sec_dims) == 4 and any(a["text"].endswith("N9") for a in sec_dims)
+    assert len(sec_dims) == 4 and any(a["text"].startswith("6N9(") for a in sec_dims)

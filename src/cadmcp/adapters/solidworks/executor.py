@@ -1239,6 +1239,20 @@ class SwExecutor:
         self.readback.setdefault("sections", []).append(label)
         return {"name": sv.Name, "surface_cut_option": opts, "moved": moved}
 
+    def _set_fit(self, disp, code: str, ref: str) -> bool:
+        """尺寸公差设为"配合 + 公差"：SW 按自带 ISO 286 表算偏差并叠写在代号后（与预览一致）。
+        大写为孔、小写为轴。失败返回 False，由调用方退回文字后缀。"""
+        try:
+            dim = disp.GetDimension2(0)
+            tol = dim.Tolerance
+            # TODO(实机核对): swTolType_e.swTolFITWITHTOL 的取值（常量表缺失时用 9）
+            tol.Type = self._k("swTolFITWITHTOL", 9)
+            ok = tol.SetFitValues(code if code[0].isupper() else "", code if code[0].islower() else "")
+            return ok is not False
+        except Exception:  # noqa: BLE001
+            self.readback.setdefault("dim_fit_failed", []).append(ref)
+            return False
+
     def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str, pts=None, pos=None, orient=None,
                            arc_end=None):
         """轴类尺寸：线性（轴段长/总长/键槽长与定位）= 选两条垂直边线；直径 = 选上下两条轮廓线，
@@ -1259,6 +1273,11 @@ class SwExecutor:
         m = re.match(r"^\s*([Φφ⌀]?)\s*[0-9.]+\s*(.*)$", text)
         suffix = (m.group(2) if m else "").strip()
         prefix = "<MOD-DIAM>" if kind == "diameter" else ""
+        fm = re.match(r"^([A-Za-z]{1,2}\d{1,2})\(([^/]+)/([^)]+)\)$", suffix)
+        if fm and self._set_fit(disp, fm.group(1), ref):  # SW 自带配合公差：显示代号 + 上下叠写偏差
+            suffix = ""
+        elif fm:
+            suffix = f"{fm.group(1)}({fm.group(2)}/{fm.group(3)})"
         if kind == "diameter" or suffix:
             all_ = self._k("swDimensionTextAll", 0)
             try:  # <MOD-DIAM> 为 SW 直径符号标记，<DIM> 为尺寸值；公差带作为后缀文字

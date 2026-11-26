@@ -259,7 +259,9 @@ def test_sw_native_shaft_dimensions(sw_svc):
     edge_sel = [c[1] for c in calls if c[0] == "SelectByID2" and c[1][1] == "EDGE"]
     assert len(edge_sel) >= 2 * len(adds) and all(len(a) == 9 for a in edge_sel)
     texts = [c[1][1] for c in calls if c[0] == "SetText" and len(c[1]) == 2]
-    assert "<MOD-DIAM><DIM>k6" in texts and "<MOD-DIAM><DIM>" in texts   # 直径带公差带的文字覆盖
+    assert "<MOD-DIAM><DIM>" in texts   # 直径符号文字覆盖
+    fits = [c[1] for c in calls if c[0] == "SetFitValues"]
+    assert ("", "k6") in [tuple(f) for f in fits]   # 配合公差交给 SW 自带 ISO 286 表（代号 + 叠写偏差）
     for a in adds + [(e[2], e[3]) for e in edge_sel]:
         assert 0 < a[0] < 0.5 and 0 < a[1] < 0.5
 
@@ -349,7 +351,7 @@ def test_sw_shaft_removed_sections_and_dims(sw_svc, tmp_path):
         assert ax == bx and ay > by
     sec_dims = [r for r in log if r["op"] == "shaft_dimension" and r["args"]["view"].startswith("section:")]
     assert len(sec_dims) == 4 and all(r["ok"] for r in sec_dims)
-    assert any(c[0] == "SetText" and c[1][1] == "<DIM>N9" for c in calls)
+    assert any(c[0] == "SetFitValues" and tuple(c[1]) == ("N9", "") for c in calls)  # 槽宽 N9 走 SW 配合公差
     assert sum(1 for c in calls if c[0] == "SetArcEndCondition") == 2
     # 倒角/挡圈槽引出标注不再退回视图中心：有规划位置
     notes = [r for r in log if r["op"] == "leader_note" and r["args"]["ref"] in ("chamfer", "G1")]

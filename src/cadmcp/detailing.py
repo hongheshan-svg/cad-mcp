@@ -552,7 +552,8 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 located.update(f"{h.name}[{i.index}].{a}" for i in h.instances for a in (ha, va))
             if spec.hole_callouts:
                 first = h.instances[0]
-                dims.append(Dim(view, "callout", None, None, h.callout, f"{h.name}",
+                dims.append(Dim(view, "callout", None, None,
+                                with_deviations(h.callout) if spec.fit_deviations else h.callout, f"{h.name}",
                                 (vc(first.xyz, ha), vc(first.xyz, va))))
         # 多边形外形（L 形、凸字形等）：顶点坐标进坐标尺寸，壁厚/台阶才有尺寸（总长、总宽另有总体尺寸）
         if p.base_type == "extrude" and p.profile is not None and p.profile.shape == "polygon" and "top" in vtypes:
@@ -988,8 +989,25 @@ def _as_body(p: ResolvedPart) -> ResolvedPart:
 
 
 # ---------------- 轴类零件图 ----------------
-def _dia_text(d: float, tol: str | None) -> str:
+def tol_text(v: float, code: str) -> str:
+    from .standards import tol_text as _t
+    return _t(v, code)
+
+
+def _dia_text(d: float, tol: str | None, deviations: bool = False) -> str:
+    if deviations and tol:
+        from .standards import fit_text
+        return fit_text(d, tol)
     return f"Φ{d:g}{tol or ''}"
+
+
+_FIT_RE = re.compile(r"Φ(\d+(?:\.\d+)?)((?:[A-Z]{1,2}|[a-z]{1,2})\d{1,2})(?![\d(])")
+
+
+def with_deviations(text: str) -> str:
+    """孔标注等文字中的 Φ60H7 → Φ60H7(+0.030/0)（GB/T 1800.2 查表；表外不变）。"""
+    from .standards import fit_text
+    return _FIT_RE.sub(lambda m: fit_text(float(m.group(1)), m.group(2)), text)
 
 
 def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
@@ -1024,7 +1042,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             tol = p.shaft_tolerances[i] if p.shaft_tolerances else None
             th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["step"] == i), None)
             # 螺纹段：螺纹代号注在大径上替代 Φ（GB/T 4459.1）
-            dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(d, tol), f"step{i}_dia",
+            dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(d, tol, spec.fit_deviations),
+                            f"step{i}_dia",
                             (z + L / 2, d)))
             if len(p.shaft_steps) > 1:
                 dims.append(Dim("front", "linear", "z", L, f"{L:g}", f"step{i}_len", (z, z + L)))
@@ -1046,7 +1065,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 if abs(f["z0"] - sz0) > 1e-6:
                     dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
                                     (sz0, f["z0"])))
-                dims.append(Dim("section", "linear", "y", f["width"], f"{f['width']:g}N9", f"{f['name']}_w",
+                dims.append(Dim("section", "linear", "y", f["width"], (tol_text(f["width"], "N9") if spec.fit_deviations else f"{f['width']:g}N9"), f"{f['name']}_w",
                                 (f["d"], f["width"])))
                 dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], f"{f['d'] - f['depth']:g}",
                                 f"{f['name']}_t", (f["d"], f["depth"])))
@@ -1245,8 +1264,32 @@ LABEL_H = 3.0  # 引出标注字高
 FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", "right": "x"}
 
 
-def _tw(s: str, size: float = LABEL_H) -> float:
+_DEV_RE = re.compile(r"^(.*?)\(([+-]?\d+(?:\.\d+)?)/([+-]?\d+(?:\.\d+)?)\)(.*)$")
+DEV_RATIO = 0.7  # 极限偏差字高比尺寸数字小一号（GB/T 4458.5）
+
+
+def split_deviation(s: str):
+    """'Φ20k6(+0.015/+0.002) 通' → ('Φ20k6', '+0.015', '+0.002', ' 通')；无偏差返回 None。"""
+    m = _DEV_RE.match(s)
+    return m.groups() if m else None
+
+
+def _plain_w(s: str, size: float) -> float:
     return sum(size if ord(ch) > 0x2E80 else 0.6 * size for ch in s)
+
+
+def text_width(s: str, size: float) -> float:
+    """文字宽度估算；带极限偏差的按上下叠写计（偏差小一号）。"""
+    sp = split_deviation(s)
+    if not sp:
+        return _plain_w(s, size)
+    main, up, lo, tail = sp
+    return (_plain_w(main, size) + 0.5 + max(_plain_w(up, size * DEV_RATIO), _plain_w(lo, size * DEV_RATIO))
+            + _plain_w(tail, size))
+
+
+def _tw(s: str, size: float = LABEL_H) -> float:
+    return text_width(s, size)
 
 
 def _uv_sheet(view: "ViewPlan", bbox, uv: tuple[float, float]) -> tuple[float, float]:

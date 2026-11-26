@@ -104,3 +104,107 @@ def ext_thread(size: str) -> tuple[float, float, float, bool]:
             raise CadError(SPEC_INVALID, f"thread {size}: no coarse pitch for M{d:g}", hint="写明螺距，如 M{d:g}x1.5")
         pitch, fine = COARSE_PITCH[d], False
     return d, pitch, round(d - 1.0825 * pitch, 3), fine
+
+
+# ---------------- GB/T 1800.1/1800.2（ISO 286）极限与配合 ----------------
+# 公称尺寸分段（mm，上限，含）：≤3、>3–6、…、>400–500
+_SIZE_STEPS = (3, 6, 10, 18, 30, 50, 80, 120, 180, 250, 315, 400, 500)
+# 标准公差 IT5–IT11（µm）
+_IT = {
+    5: (4, 5, 6, 8, 9, 11, 13, 15, 18, 20, 23, 25, 27),
+    6: (6, 8, 9, 11, 13, 16, 19, 22, 25, 29, 32, 36, 40),
+    7: (10, 12, 15, 18, 21, 25, 30, 35, 40, 46, 52, 57, 63),
+    8: (14, 18, 22, 27, 33, 39, 46, 54, 63, 72, 81, 89, 97),
+    9: (25, 30, 36, 43, 52, 62, 74, 87, 100, 115, 130, 140, 155),
+    10: (40, 48, 58, 70, 84, 100, 120, 140, 160, 185, 210, 230, 250),
+    11: (60, 75, 90, 110, 130, 160, 190, 220, 250, 290, 320, 360, 400),
+}
+# 轴的基本偏差（µm）：d–h 为上偏差 es，k–p 为下偏差 ei（k 取 IT4–IT7 的值）
+_SHAFT_ES = {
+    "d": (-20, -30, -40, -50, -65, -80, -100, -120, -145, -170, -190, -210, -230),
+    "e": (-14, -20, -25, -32, -40, -50, -60, -72, -85, -100, -110, -125, -135),
+    "f": (-6, -10, -13, -16, -20, -25, -30, -36, -43, -50, -56, -62, -68),
+    "g": (-2, -4, -5, -6, -7, -9, -10, -12, -14, -15, -17, -18, -20),
+    "h": (0,) * 13,
+}
+_SHAFT_EI = {
+    "k": (0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5),
+    "m": (2, 4, 6, 7, 8, 9, 11, 13, 15, 17, 20, 21, 23),
+    "n": (4, 8, 10, 12, 15, 17, 20, 23, 27, 31, 34, 37, 40),
+    "p": (6, 12, 15, 18, 22, 26, 32, 37, 43, 50, 56, 62, 68),
+}
+
+
+def _size_index(d: float) -> int:
+    if d <= 0 or d > 500:
+        raise ValueError(f"公称尺寸 {d:g} 超出 GB/T 1800 表格范围（0–500 mm）")
+    return next(i for i, hi in enumerate(_SIZE_STEPS) if d <= hi + 1e-9)
+
+
+def limit_deviations(d: float, code: str) -> tuple[float, float] | None:
+    """公差带代号（如 H7、k6、JS7、g6）→ (上极限偏差, 下极限偏差)，单位 mm（GB/T 1800.2）。
+    支持轴 d e f g h js k m n p、孔 D E F G H JS K M N P，标准公差等级 IT5–IT11；表外返回 None。"""
+    import re as _re
+    m = _re.fullmatch(r"([A-Za-z]{1,2})(\d{1,2})", code.strip())
+    if not m:
+        return None
+    letter, grade = m.group(1), int(m.group(2))
+    if grade not in _IT:
+        return None
+    try:
+        i = _size_index(d)
+    except ValueError:
+        return None
+    it = _IT[grade][i]
+    lo = letter.lower()
+    hole = letter[0].isupper()
+    if lo == "js":
+        half = (it - 1) / 2 if it % 2 and grade >= 7 else it / 2  # IT7–IT11 且 IT 为奇数时取 (IT−1)/2（GB/T 1800.1）
+        es, ei = half, -half
+    elif lo in _SHAFT_ES:
+        es = _SHAFT_ES[lo][i]
+        ei = es - it
+        if hole:  # A–H：EI = −es
+            es, ei = -ei, -es
+    elif lo in _SHAFT_EI:
+        ei = _SHAFT_EI[lo][i] if not (lo == "k" and (grade > 7 or grade < 4)) else 0
+        es = ei + it
+        if hole and ((lo in ("k", "m", "n") and grade > 8) or (lo == "p" and grade > 7)):
+            # 高于 IT8 的 K、N：ES = 0；M：ES = −m；高于 IT7 的 P：ES = −p（无 Δ）
+            up = 0 if lo in ("k", "n") else -_SHAFT_EI[lo][i]
+            return up / 1000.0, (up - it) / 1000.0
+        if hole:  # K/M/N ≤ IT8、P ≤ IT7：ES = −ei + Δ，Δ = ITn − IT(n−1)（≤3 mm 时 Δ = 0）
+            delta = 0 if i == 0 or grade - 1 not in _IT else it - _IT[grade - 1][i]
+            if lo == "k" and grade <= 3:
+                delta = 0
+            up = -_SHAFT_EI[lo][i] + delta
+            if lo == "k" and i == 0:
+                up = 0
+            es, ei = up, up - it
+    else:
+        return None
+    return es / 1000.0, ei / 1000.0
+
+
+def fmt_deviation(v: float) -> str:
+    """极限偏差文字：零写 0，其余带符号保留三位小数（GB/T 4458.5）。"""
+    if abs(v) < 5e-7:
+        return "0"
+    t = f"{v:+.4f}"
+    return t[:-1] if t.endswith("0") else t  # 一般三位小数；js5/js6 的半微米保留第四位
+
+
+def tol_text(v: float, code: str) -> str:
+    """无 Φ 的配合尺寸（键槽宽等）：6N9 → 6N9(0/-0.030)；表外只写代号。"""
+    lim = limit_deviations(v, code)
+    return f"{v:g}{code}" + (f"({fmt_deviation(lim[0])}/{fmt_deviation(lim[1])})" if lim else "")
+
+
+def fit_text(d: float, code: str | None) -> str:
+    """Φ20k6 → Φ20k6(+0.015/+0.002)；无公差带或表外时只写代号。"""
+    if not code:
+        return f"Φ{d:g}"
+    lim = limit_deviations(d, code)
+    if lim is None:
+        return f"Φ{d:g}{code}"
+    return f"Φ{d:g}{code}({fmt_deviation(lim[0])}/{fmt_deviation(lim[1])})"

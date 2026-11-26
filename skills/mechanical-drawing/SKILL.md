@@ -23,6 +23,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 腰型孔（调节孔）`slot`：`size` 写螺钉规格（如 `"M6"`，宽度取过孔）或数值宽度，`slot_length` 为两端圆心距，`slot_angle` 为方向。
 - L 形/台阶件的内侧平面：孔、型腔、凸台写 `at`（该面所在平面的坐标），例如 L 形立板内侧面 `face: "front", at: 8`。
 - 轴类：`base.type: "shaft"`，`steps` 从左到右写每段 `length`/`diameter`，配合段写 `tolerance`（如 `k6`、`h7`），`chamfer` 为两端倒角。
+- 只写公差带代号即可，平台按 GB/T 1800.2 查表在图上附极限偏差（小一号上下叠写，如 Φ20k6 后 +0.015/+0.002；键槽宽 N9 同样）。
+  支持 IT5–IT11、轴 d–p、孔 D–P 及 js/JS，0–500 mm；表外只注代号。不想要偏差时出图设 `fit_deviations: false`。
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
   - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
   - 外螺纹 `{"feature": "thread", "step": 段号, "size": "M20"}`（细牙 `"M16x1.5"`）：该段直径须等于螺纹公称直径；

@@ -92,6 +92,23 @@ class _Svg:
               (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.2 * size, y + w / 2 if anchor == "middle" else y)
         self.texts.append((s, box))
         rot = f" transform='rotate({rotate} {x:.2f} {self.y(y):.2f})'" if rotate else ""
+        from .detailing import DEV_RATIO, _plain_w, split_deviation
+        sp = split_deviation(s)
+        if sp:  # 极限偏差：代号后上下叠写、小一号（GB/T 4458.5），整体按原锚点对齐
+            main, up, lo, tail = sp
+            ds = size * DEV_RATIO
+            Y = self.y(y)
+            wm = _plain_w(main, size)
+            x0 = x - w if anchor == "end" else x0
+            xd = x0 + wm + 0.5
+            wd = max(_plain_w(up, ds), _plain_w(lo, ds))
+            t = (f"<g{rot}><text x='{x0:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(main)}</text>"
+                 f"<text x='{xd:.2f}' y='{Y - 0.55 * size:.2f}' font-size='{ds:.2f}' {FONT}>{escape(up)}</text>"
+                 f"<text x='{xd:.2f}' y='{Y + 0.05 * size:.2f}' font-size='{ds:.2f}' {FONT}>{escape(lo)}</text>")
+            if tail:
+                t += f"<text x='{xd + wd:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(tail)}</text>"
+            self.parts.append(t + "</g>")
+            return
         self.parts.append(f"<text x='{x:.2f}' y='{self.y(y):.2f}' font-size='{size}' text-anchor='{anchor}' "
                           f"{FONT}{rot}>{escape(s)}</text>")
 
@@ -124,7 +141,8 @@ FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", 
 
 
 def _text_w(s: str, size: float) -> float:
-    return sum(size if ord(ch) > 0x2E80 else 0.6 * size for ch in s)
+    from .detailing import text_width
+    return text_width(s, size)
 
 
 HIDDEN = "3,1"  # 细虚线：不可见轮廓
