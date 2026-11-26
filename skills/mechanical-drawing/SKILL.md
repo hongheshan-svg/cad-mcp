@@ -93,3 +93,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 替换装配中的零部件（换气缸缸径/行程、换电机）：`cad_edit_existing(装配文件, [{"op":"replace_component",
   "instance":"<实例名>","source":"lib:<编码>"}])`。先 `dry_run=true` 看 E012（安装接口变了：要同步改安装板孔位）、
   E013（配合基准不存在，会断开）、E014（外形变大，查干涉）；替换前先用 `cad_calc` 确认新规格够用。
+
+## BOM 与采购
+- 总装完成后 `cad_export_bom(name)`：一个 xlsx 含多级 BOM、汇总 BOM、采购清单（外购/标准件/外协铸件）、原材料汇总、下料明细。
+- 导入 ERP 用 `profile="erp"`（父项编码 + 子项编码 + 用量），企业自定义格式在 policy.bom_profiles 配。
+- 先处理 B001（同图号不同名称，error）、B004（自制件无材料）；B002 没出图的件要补图；B003 外购件缺品牌要告诉用户；
+  B005 是 ERP 里没有的新物料，把清单交给用户建档。

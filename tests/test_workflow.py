@@ -40,8 +40,8 @@ def test_end_to_end(svc):
     r = svc.set_parameters(BASE_PLATE["name"], {"pitch": 180})
     assert set(r["rebuilt_dependents"]) >= {ASSEMBLY["name"], f"{BASE_PLATE['name']}_DRW", f"{ASSEMBLY['name']}_DRW"}
 
-    bom_file = svc.export_bom(ASSEMBLY["name"])["file"]
-    rows = list(csv.reader(open(bom_file, encoding="utf-8-sig")))
+    files = svc.export_bom(ASSEMBLY["name"], fmt="csv")["files"]
+    rows = list(csv.reader(open(files[1], encoding="utf-8-sig")))  # 汇总 BOM
     assert rows[0][0] == "序号" and len(rows) == 1 + len(asm["bom"])
 
     rel = svc.commit("A")

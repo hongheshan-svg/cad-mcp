@@ -117,7 +117,8 @@ class ResolvedAssembly:
             key = s.part_no or s.source
             if key not in rows:
                 rows[key] = {"part_no": s.part_no, "title": s.title, "spec": s.model or "", "material": s.material or "",
-                             "kind": s.kind, "qty": 0, "unit_mass_kg": round(s.mass_kg, 4), "instances": []}
+                             "kind": s.kind, "qty": 0, "unit_mass_kg": round(s.mass_kg, 4), "instances": [],
+                             "source": s.source}
             return rows[key]
 
         for inst in self.instances:

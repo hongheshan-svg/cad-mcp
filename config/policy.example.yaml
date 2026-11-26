@@ -12,4 +12,14 @@ dependents_mode: update          # 修改共用件时引用文件默认处理：
 dependents_rules:                # 按目录区分（最长路径匹配）
   - {dir: "D:/designs/已定版", mode: frozen}     # 定版项目：必须另存新图号（save_as）再改
   - {dir: "D:/designs/在制", mode: report}       # 只报告受影响文件，不改写
+# BOM 导出（cad_export_bom）
+bom_code_map: "D:/erp/物料编码.csv"     # ERP 已有物料：第一列图号/库编码，第二列物料编码（有表头）；查不到的标"新建"
+bom_code_rules:                          # 未建档物料的临时编码模板（可用 {part_no} {lib_code} {title} {material}）
+  part: "{part_no}"
+  purchased: "WG-{lib_code}"
+bom_profiles:                            # 自定义导入列（字段见 cadmcp.bom_export.FIELDS），内置 default / erp
+  my_erp:
+    skip_root: true
+    columns: [["父项编码", "parent_code"], ["子项编码", "code"], ["名称", "title"], ["规格", "spec"],
+              ["用量", "qty"], ["单位", "unit"], ["属性", "make_buy"]]
 max_import_dependents: 10000       # 修改共用件时自动纳入的引用文件上限；超过则要求走 PDM 变更流程

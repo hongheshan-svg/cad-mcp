@@ -425,18 +425,72 @@ class CadService:
         return {"ok": True, "method": "exact" if caps.get("interference.exact") == "full" else "aabb(保守，可能误报)",
                 "count": len(res), "interferences": res}
 
-    def export_bom(self, name: str) -> dict[str, Any]:
+    def export_bom(self, name: str, profile: str = "default", fmt: str = "xlsx") -> dict[str, Any]:
+        """多级 BOM + 汇总 BOM + 采购清单 + 原材料汇总 + 下料明细，按 ERP 导入格式映射列。"""
+        from .. import bom_export as bx
         m = self._get(name)
         if m.kind != "assembly":
-            raise CadError(SPEC_INVALID, f"{name} is not an assembly")
-        bom = m.resolved.bom()
-        out = self._session().out / f"{name}_BOM.csv"
-        with out.open("w", encoding="utf-8-sig", newline="") as fh:
-            w = csv.writer(fh)
-            w.writerow(["序号", "图号/编码", "名称", "规格", "材料", "类别", "数量", "单重kg"])
-            for r in bom:
-                w.writerow([r["item"], r["part_no"], r["title"], r["spec"], r["material"], r["kind"], r["qty"], r["unit_mass_kg"]])
-        return {"ok": True, "file": str(out), "lines": len(bom), "bom": bom}
+            raise CadError(SPEC_INVALID, f"{name} is not an assembly", hint="BOM 从装配导出")
+        if fmt not in ("xlsx", "csv"):
+            raise CadError(SPEC_INVALID, f"format {fmt!r}: xlsx or csv")
+        profiles = {**bx.PROFILES, **self.policy.bom_profiles}
+        if profile not in profiles:
+            raise CadError(SPEC_INVALID, f"unknown BOM profile {profile!r}", hint=f"可用：{sorted(profiles)}")
+        prof = profiles[profile]
+        bad = [f for _, f in prof["columns"] if f not in bx.FIELDS]
+        if bad:
+            raise CadError(SPEC_INVALID, f"profile {profile}: unknown fields {bad}", hint=f"可用字段：{bx.FIELDS}")
+        cmap = bx.load_code_map(self.policy.bom_code_map) if self.policy.bom_code_map else None
+        coder = bx.Coder(self.policy.bom_code_rules, cmap)
+        models = self._models()
+        drawn = {models[x].resolved.part_no for d in models.values() if d.kind == "drawing"
+                 for x in d.deps if x in models and models[x].kind != "drawing"}
+        res = bx.export(self._bom_node(f"asm:{name}"), self._session().out, name, fmt, prof, coder, drawn)
+        res["rules"] = rules.summarize(res["findings"])
+        preview = {k: res[k] for k in ("summary", "purchase", "raw_material")}
+        return {"ok": True, "files": res["files"], "file": res["files"][0], "lines": res["lines"], "profile": profile,
+                "rules": res["rules"], "findings": res["findings"],
+                "bom": res["summary"][:60], "purchase": preview["purchase"][:60], "raw_material": preview["raw_material"],
+                "multilevel": [{k: r[k] for k in ("seq", "part_no", "title", "qty", "total_qty", "make_buy")}
+                               for r in res["multilevel"][:120]]}
+
+    def _bom_node(self, source: str, _depth: int = 0) -> Any:
+        from .. import bom_export as bx
+        if _depth > 20:
+            raise CadError(SPEC_INVALID, "assembly nesting deeper than 20 (cycle?)")
+        kind, _, ref = source.partition(":")
+        models = self._models()
+        if kind == "asm":
+            a = models[ref].resolved
+            n = bx.Node(source, "assembly", a.part_no, a.title, unit_mass_kg=a.mass_kg)
+            for r in a.bom():
+                src = r.get("source") or ""
+                if src.startswith(("part:", "asm:", "lib:")):
+                    c = self._bom_node(src, _depth + 1)
+                else:
+                    c = bx.Node(src, r["kind"], r["part_no"], r["title"], r["spec"], r["material"], r["unit_mass_kg"])
+                if r.get("note"):
+                    c.note = r["note"]
+                n.children.append((c, r["qty"]))
+            return n
+        if kind == "part":
+            p = models[ref].resolved
+            n = bx.Node(source, "part", p.part_no, p.title, material=p.material, unit_mass_kg=p.mass_kg,
+                        surface_treatment=p.surface_treatment or "", part=p,
+                        spec="×".join(f"{v:g}" for v in (round(x, 1) for x in p.bbox.size)))
+            blank = models.get(f"{ref}_BLANK")
+            if p.casting and not p.casting.get("blank") and blank:
+                b = blank.resolved
+                n.children.append((bx.Node(f"part:{ref}_BLANK", "blank", b.part_no, b.title, material=b.material,
+                                           unit_mass_kg=b.mass_kg, spec=b.properties.get("毛坯类型", "铸件")), 1))
+            return n
+        lp = self.library.get(ref)
+        item = self.library.items[lp.code]
+        pn = lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items())
+        spec = " ".join(x for x in (lp.model, lp.properties.get("规格", "")) if x)
+        return bx.Node(source, lp.category, pn, lp.title, spec=spec, unit_mass_kg=lp.mass_kg,
+                       vendor=item.get("vendor", "") if item.get("vendor") != "generic" else "", lib_code=pn,
+                       material=lp.properties.get("材料", ""))
 
     def export(self, name: str, fmt: str) -> dict[str, Any]:
         m = self._get(name)

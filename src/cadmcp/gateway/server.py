@@ -251,9 +251,12 @@ def cad_check_interference(name: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=RO)
 @safe
-def cad_export_bom(name: str) -> dict[str, Any]:
-    """导出装配 BOM（CSV，UTF-8 BOM 便于 Excel 打开）。"""
-    return svc().export_bom(name)
+def cad_export_bom(name: str, profile: str = "default", format: Literal["xlsx", "csv"] = "xlsx") -> dict[str, Any]:
+    """导出装配 BOM：多级 BOM（含子装配展开、铸件毛坯）、汇总 BOM、采购清单（外购/标准件/外协）、
+    原材料汇总与下料明细（板材/棒料/型材，按常备规格取整）。
+    profile：列映射，内置 default（中文明细表）/ erp（父项编码+子项编码+用量，ERP 导入用），可在 policy.bom_profiles 自定义。
+    物料编码按 policy.bom_code_map（ERP 已有编码表）查找，查不到的标记为"新建"（B005）。"""
+    return svc().export_bom(name, profile, format)
 
 
 @mcp.tool(annotations=RO)

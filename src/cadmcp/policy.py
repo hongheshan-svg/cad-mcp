@@ -30,6 +30,10 @@ class Policy:
     # 修改共用件时对引用文件的处理，按目录区分（最长路径匹配）：update 跟着改 / report 只报告 / frozen 已定版（拒绝直接改）
     dependents_mode: str = "update"
     dependents_rules: list[tuple[Path, str]] = field(default_factory=list)
+    # BOM 导出：自定义列映射 / 编码规则 / ERP 已有物料编码表（CSV：图号或库编码, ERP 编码）
+    bom_profiles: dict[str, dict] = field(default_factory=dict)
+    bom_code_rules: dict[str, str] = field(default_factory=dict)
+    bom_code_map: Path | None = None
 
     @classmethod
     def load(cls, path: str | Path | None, workspace_root: str | Path | None = None) -> "Policy":
@@ -47,6 +51,9 @@ class Policy:
             max_import_dependents=int(data.get("max_import_dependents", 10000)),
             dependents_mode=_mode(data.get("dependents_mode", "update")),
             dependents_rules=[(Path(r["dir"]).resolve(), _mode(r["mode"])) for r in data.get("dependents_rules", [])],
+            bom_profiles=dict(data.get("bom_profiles", {})),
+            bom_code_rules=dict(data.get("bom_code_rules", {})),
+            bom_code_map=Path(data["bom_code_map"]).resolve() if data.get("bom_code_map") else None,
         )
 
     @staticmethod

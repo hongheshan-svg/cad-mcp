@@ -109,7 +109,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 | 读取 | `cad_get_model` `cad_search_library` `cad_open_existing` |
 | 修改现有模型 | `cad_inspect_existing` `cad_edit_existing` `cad_change_writeback`（改尺寸/变量/属性/材料、压缩特征、装配换件并比对安装接口；自动更新引用的图纸并查悬空标注；发布后回写原位置） |
 | 选型计算 | `cad_calc`（气缸、伺服+丝杠、同步带、螺栓组，输出计算书） |
-| 校验与输出 | `cad_validate` `cad_check_interference` `cad_export_bom` `cad_export` |
+| 校验与输出 | `cad_validate` `cad_check_interference` `cad_export_bom`（xlsx/csv：多级 BOM、汇总 BOM、采购清单、原材料汇总、下料明细；ERP 导入列映射与物料编码对照） `cad_export` |
 
 每个工具都带只读/写入注解，便于客户端审批；出错时返回的 `error.hint` 是写给 AI 看的下一步建议。出图工作流见 [`skills/mechanical-drawing/SKILL.md`](skills/mechanical-drawing/SKILL.md)。
 
