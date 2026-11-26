@@ -70,6 +70,7 @@ class Dim:
     text: str
     ref: str  # 被标注对象，用于校验
     at: tuple[float, float] | None = None  # 模型坐标（视图平面内）
+    extra: dict[str, Any] | None = None  # gtol/datum/roughness：法向 normal、框格内容 cells 等
 
 
 @dataclass
@@ -236,6 +237,74 @@ def _dedupe_notes(extra: list[str], auto: list[str], treatment: str | None) -> l
     return out
 
 
+
+# ---------------- 精度标注（基准、几何公差、粗糙度） ----------------
+FACE_N3 = {"top": (0, 0, 1), "bottom": (0, 0, -1), "front": (0, -1, 0), "back": (0, 1, 0),
+           "left": (-1, 0, 0), "right": (1, 0, 0)}
+_SLOT = {"datum": 0.22, "roughness": 0.5, "gtol": 0.78}  # 同一面上三类符号沿边错开
+
+
+def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str):
+    """面在哪个视图里积聚成边线：返回 (视图, 边上一点(u,w), 视图内外法向)。"""
+    n3 = FACE_N3[face]
+    order = sorted((v for v in views if v.type in VIEW_AXES), key=lambda v: v.type != "front")
+    for v in order:
+        ha, va = VIEW_AXES[v.type]
+        comp = []
+        for ax in (ha, va):
+            c = n3["xyz".index(ax[-1])]
+            comp.append(-c if ax[0] == "-" else c)
+        if comp == [0, 0]:
+            continue
+        (u0, u1), (w0, w1) = vrange(b, ha), vrange(b, va)
+        f = _SLOT[kind]
+        u = u1 if comp[0] > 0 else u0 if comp[0] < 0 else u0 + f * (u1 - u0)
+        w = w1 if comp[1] > 0 else w0 if comp[1] < 0 else w0 + f * (w1 - w0)
+        return v.type, (u, w), (comp[0], comp[1])
+    return None
+
+
+def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], shaft: bool) -> list[Dim]:
+    dims: list[Dim] = []
+
+    def anchor(target: str, kind: str):
+        k, _, ref = target.partition(":")
+        if k == "face":
+            return _face_anchor(ref, views, p.bbox, kind)
+        if k == "hole":
+            h = next(x for x in p.holes if x.name == ref)
+            view = hole_view(h.face, vtypes) or views[0].type
+            ha, va = VIEW_AXES.get(view, ("x", "y"))
+            inst = h.instances[0]
+            u, w = vc(inst.xyz, ha), vc(inst.xyz, va)
+            if kind == "roughness":
+                return view, (u - h.max_dia / 2, w), (-1, 0)
+            if kind == "datum":
+                return view, (u, w - h.max_dia / 2), (0, -1)
+            return view, (u, w), (0, -1)  # 框格附在孔标注下方
+        i = int(ref)
+        z0, z1 = p.step_z(i)
+        d = p.shaft_steps[i][1]
+        frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
+        return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
+
+    for d in p.datums:
+        a = anchor(d["target"], "datum")
+        if a:
+            dims.append(Dim(a[0], "datum", None, None, d["name"], f"datum:{d['name']}", a[1], {"normal": a[2]}))
+    for g in p.geotols:
+        a = anchor(g["target"], "gtol")
+        if a:
+            dims.append(Dim(a[0], "gtol", None, g["value"], g["text"], f"gtol:{g['type']}@{g['target']}", a[1],
+                            {"normal": a[2], "cells": [g["symbol"], g["zone"], *g["datums"]],
+                             **({"attach": "callout"} if g["kind"] == "hole" else {})}))
+    for r in p.roughness:
+        a = anchor(r["target"], "roughness")
+        if a:
+            dims.append(Dim(a[0], "roughness", None, r["ra"], f"Ra {r['ra']:g}", f"ra:{r['target']}", a[1],
+                            {"normal": a[2]}))
+    return dims
+
 def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: float, today: date | None):
     notes = ["技术要求："]
     notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
@@ -350,6 +419,8 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
 
     if spec.dimensions == "none":
         missing_views = set()
+    else:
+        dims += _precision_dims(p, views, vtypes, False)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
@@ -415,6 +486,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 if f["z0"] - sz0 > 1e-6:
                     dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
                                     (sz0, f["z0"])))
+    if spec.dimensions != "none":
+        dims += _precision_dims(p, views, {"front"}, True)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     return DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft")

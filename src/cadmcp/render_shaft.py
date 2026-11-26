@@ -135,6 +135,14 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                                            -abs(z - (z0 + z1) / 2)))
             x = P(zz, 0)[0]
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text)
+        elif d.kind in ("datum", "gtol", "roughness"):
+            from . import render_gdt
+            z, r = d.at
+            px, py = P(z, r)
+            if d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
+                render_gdt.fcf(s, px, py, (0, 1), d.extra["cells"], reach=y_top + 22 - py)
+            else:
+                render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
         elif d.kind == "callout" and d.at is not None:
             z, r = d.at
             px, py = P(z, r)

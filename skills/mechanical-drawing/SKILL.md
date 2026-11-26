@@ -26,6 +26,12 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
   - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
   - 轴类图纸自动采用：主视图轴线水平、键槽朝前、每个键槽一个移出断面图（标 bN9 与 d-t1）、链式轴段长度 + 总长。
+- 精度要求（有配合、定位、运动的零件必须写，不要只靠"未注公差"）：
+  - `datums`：基准，如 `{"name": "A", "target": "face:bottom"}`、`{"name": "A", "target": "step:0"}`。
+  - `tolerances`：几何公差，`type` 取 flatness/parallelism/perpendicularity/position/coaxiality/circular_runout 等，
+    方向/位置/跳动公差必须带 `datums`，形状公差不带。销孔位置度示例：`{"type": "position", "value": 0.05, "target": "hole:Pin", "datums": ["A", "B"]}`。
+  - `roughness`：个别表面 Ra，其余表面按出图的 `surface_finish`。IT6/IT7 配合轴段要标 Ra0.8/1.6（规则 G004 会提醒）。
+  - 典型做法：安装底面作基准 A（平面度），侧面基准 B；轴以两轴承位为基准 A、B，其他配合段标圆跳动。
 - 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。
 - 每个将被装配的零件都要建 `CS_` 坐标系：放在安装面上、Z 轴朝外。
 - 必填：`part_no`、`title`、`material`、`surface_treatment`（铝件常用"阳极氧化"，钢件"发黑/镀锌"）。

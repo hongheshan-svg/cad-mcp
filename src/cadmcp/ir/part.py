@@ -184,6 +184,36 @@ class RefSpec(Strict):
         return self
 
 
+# ---------- 精度：基准、几何公差、表面粗糙度 ----------
+TARGET_DOC = ("被标注对象：face:<top|bottom|front|back|left|right>（外表面）、hole:<孔特征名>（孔轴线/孔壁）、"
+              "step:<段号>（轴段圆柱面/轴线）")
+
+
+class Datum(Strict):
+    name: str = Field(pattern=r"^[A-HJ-NP-Z]$", description="基准字母（不用 I、O）")
+    target: str = Field(description=TARGET_DOC)
+
+
+GeoTolType = Literal["flatness", "straightness", "roundness", "cylindricity", "parallelism", "perpendicularity",
+                     "angularity", "position", "coaxiality", "symmetry", "circular_runout", "total_runout"]
+GEOTOL_SYMBOL = {"flatness": "⏥", "straightness": "—", "roundness": "○", "cylindricity": "⌭", "parallelism": "∥",
+                 "perpendicularity": "⊥", "angularity": "∠", "position": "⌖", "coaxiality": "◎", "symmetry": "⌯",
+                 "circular_runout": "↗", "total_runout": "⌰"}
+FORM_TOLS = {"flatness", "straightness", "roundness", "cylindricity"}  # 形状公差：不带基准
+
+
+class GeoTol(Strict):
+    type: GeoTolType
+    value: Num = Field(description="公差值 mm")
+    target: str = Field(description=TARGET_DOC)
+    datums: list[str] = Field([], description="基准字母，按主次顺序")
+
+
+class Roughness(Strict):
+    target: str = Field(description=TARGET_DOC)
+    ra: Num = Field(description="Ra 值 μm，优先 0.4/0.8/1.6/3.2/6.3/12.5")
+
+
 class PartSpec(Strict):
     kind: Literal["part"] = "part"
     name: str = Field(description="file base name, e.g. 'J2611-020-003_MountPlate'")
@@ -197,6 +227,9 @@ class PartSpec(Strict):
     features: list[Feature] = []
     references: list[RefSpec] = []
     properties: dict[str, str] = {}
+    datums: list[Datum] = Field([], description="基准；几何公差引用其字母")
+    tolerances: list[GeoTol] = Field([], description="几何公差（形位公差）")
+    roughness: list[Roughness] = Field([], description="个别表面粗糙度；其余表面按出图 surface_finish")
 
     @model_validator(mode="after")
     def _unique_names(self):

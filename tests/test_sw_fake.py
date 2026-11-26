@@ -3,7 +3,7 @@ import json
 
 import pytest
 from fake_sw import FakeConstants, FakeSw, install_fake_win32
-from test_core import L_BRACKET, SHAFT
+from test_core import L_BRACKET, PLATE_PRECISION, SHAFT
 from test_workflow import build_station
 
 from cadmcp.adapters.solidworks.adapter import DEFAULT_MATERIAL_MAP, SolidWorksAdapter
@@ -76,3 +76,12 @@ def test_sw_executor_shaft(sw_svc):
     assert names.count("FeatureRevolve2") == 2           # 轴体 + 挡圈槽
     cuts = [c[1] for c in ad.sw.calls if c[0] == "FeatureCut4"]
     assert len(cuts) == 2 and cuts[0][24] == pytest.approx((10 - 3.5) / 1000)  # 起始偏移 d/2-t1（m）
+
+
+def test_sw_executor_precision(sw_svc):
+    svc, ad = sw_svc
+    svc.change_begin("PP")
+    svc.build(PartSpec.model_validate(PLATE_PRECISION))
+    svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
+    notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
+    assert any("Φ0.05 A B" in n for n in notes) and any("其余" in n for n in notes)

@@ -284,6 +284,12 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref}))
+    for d in plan.dims:  # 精度标注：先用注释承载（P1：InsertGtol / InsertDatumTag2 / InsertSurfaceFinishSymbol3 原生符号）
+        if d.kind in ("datum", "gtol", "roughness"):
+            text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
+            ops.append(NativeOp("leader_note", {"view": d.view, "text": text, "at_model": d.at, "ref": d.ref}))
+    if plan.title_block.get("surface_finish") and plan.model_kind == "part":
+        ops.append(NativeOp("note", {"text": f"其余 √{plan.title_block['surface_finish']} (√)", "anchor": "above_notes"}))
     ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block"}))
     if plan.bom:
         ops.append(NativeOp("bom_table", {"view": plan.views[0].type, "anchor": "above_title_block",

@@ -157,6 +157,10 @@ SHAFT = {
         {"feature": "keyway", "name": "KW2", "step": 2, "length": 45},
         {"feature": "groove", "name": "G1", "type": "circlip", "step": 3, "position": "end"},
     ],
+    "datums": [{"name": "A", "target": "step:0"}, {"name": "B", "target": "step:3"}],
+    "tolerances": [{"type": "circular_runout", "value": 0.015, "target": "step:2", "datums": ["A", "B"]},
+                   {"type": "cylindricity", "value": 0.005, "target": "step:0"}],
+    "roughness": [{"target": "step:0", "ra": 0.8}, {"target": "step:2", "ra": 0.8}, {"target": "step:3", "ra": 1.6}],
 }
 
 
@@ -180,3 +184,40 @@ def test_shaft_features_and_drawing(tmp_path):
     texts = [d["text"] for d in svc.get_model("SH1_DRW")["dimensions"]]
     assert {"Φ20k6", "Φ25k6", "6N9", "16.5", "8N9", "21", "2×C1", "130"} <= set(texts)
     assert any("挡圈槽" in t for t in texts)
+
+
+def test_precision_rules_and_drawing(tmp_path):
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import DrawingSpec
+    plate = dict(PLATE_PRECISION)
+    p = resolve_part(PartSpec.model_validate(plate))
+    assert not [f for f in rules.check_part(p) if f["severity"] == "error"]
+    bad = dict(plate, tolerances=[{"type": "parallelism", "value": 0.02, "target": "face:top", "datums": ["C"]},
+                                  {"type": "position", "value": 0.1, "target": "hole:Pin"}])
+    codes = {f["rule"] for f in rules.check_part(resolve_part(PartSpec.model_validate(bad)))}
+    assert {"G001", "G002"} <= codes
+    with pytest.raises(CadError):
+        resolve_part(PartSpec.model_validate(dict(plate, roughness=[{"target": "step:0", "ra": 1.6}])))
+    # 轴：k6 段未标粗糙度 → G004
+    s = dict(SHAFT, roughness=[])
+    assert any(f["rule"] == "G004" for f in rules.check_part(resolve_part(PartSpec.model_validate(s))))
+
+    svc = CadService.from_config(None, None, str(tmp_path)); svc.change_begin("P")
+    svc.build(PartSpec.model_validate(plate))
+    r = svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    texts = [d["text"] for d in svc.get_model("PP_DRW")["dimensions"]]
+    assert "A" in texts and "∥ | 0.02 | A" in texts and "⌖ | Φ0.05 | A | B" in texts and "Ra 1.6" in texts
+
+
+PLATE_PRECISION = {
+    "name": "PP", "part_no": "PP-01", "title": "精密安装板", "material": "AL6061-T6", "surface_treatment": "阳极氧化",
+    "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 80}, "thickness": 15},
+    "features": [{"feature": "hole", "name": "Pin", "type": "simple", "size": 6, "tolerance": "H7",
+                  "positions": [[-45, -25], [45, 25]]}],
+    "datums": [{"name": "A", "target": "face:bottom"}, {"name": "B", "target": "face:left"}],
+    "tolerances": [{"type": "parallelism", "value": 0.02, "target": "face:top", "datums": ["A"]},
+                   {"type": "flatness", "value": 0.01, "target": "face:bottom"},
+                   {"type": "position", "value": 0.05, "target": "hole:Pin", "datums": ["A", "B"]}],
+    "roughness": [{"target": "face:top", "ra": 1.6}, {"target": "hole:Pin", "ra": 1.6}],
+}

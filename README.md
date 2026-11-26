@@ -119,6 +119,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 | 阶梯轴（键槽、挡圈槽、退刀槽、端部倒角、配合公差，自动出断面图） | 焊接件、铸件 |
 | 简单钣金（直边折弯、展开尺寸） | 复杂曲面 |
 | 标准件/外购件装配、BOM | Creo 从零建模（需 UDF 库或 TOOLKIT 授权） |
+| 基准、几何公差、表面粗糙度（含配合面粗糙度检查） | SolidWorks 原生公差框格（当前以注释输出） |
 
 ## 目录
 

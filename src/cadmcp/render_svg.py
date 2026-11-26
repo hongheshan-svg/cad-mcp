@@ -242,17 +242,21 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         vx1, vy1 = P(uhi, whi)
         ord_h = ord_v = 0
         has_ord_h = any(d.view == v.type and d.kind == "ordinate" and d.axis == ha for d in plan.dims)
+        prec = [d.extra["normal"] for d in plan.dims if d.view == v.type and d.kind in ("datum", "gtol", "roughness")
+                and d.extra and not d.extra.get("attach")]
+        prec_below = any(tuple(n) == (0, -1) for n in prec)
+        prec_left = any(tuple(n) == (-1, 0) for n in prec)
         for d in plan.dims:
             if d.view != v.type:
                 continue
             if d.kind == "linear" and d.axis == ha and d.at is None:
-                yy = vy0 - (22 if has_ord_h else 10)  # 坐标尺寸区之外
+                yy = vy0 - (22 if has_ord_h or prec_below else 10)  # 坐标尺寸区、基准/框格之外
                 s.line(vx0, yy, vx1, yy)
                 s.line(vx0, vy0 - 2, vx0, yy - 1.5)
                 s.line(vx1, vy0 - 2, vx1, yy - 1.5)
                 s.text((vx0 + vx1) / 2, yy + 1, d.text, 3.5, "middle")
             elif d.kind == "linear" and d.axis == va and d.at is None:
-                xx = vx0 - 10  # 纵向坐标尺寸画在右侧，左侧不冲突
+                xx = vx0 - (22 if prec_left else 10)  # 纵向坐标尺寸画在右侧；左侧让开基准符号
                 s.line(xx, vy0, xx, vy1)
                 s.line(vx0 - 2, vy0, xx - 1.5, vy0)
                 s.line(vx0 - 2, vy1, xx - 1.5, vy1)
@@ -270,6 +274,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     s.line(vx1 + 1, py, vx1 + 4 + (ord_v % 2) * 3, py, 0.18)
                     s.text(vx1 + 5 + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
                     ord_v += 1
+            elif d.kind in ("datum", "gtol", "roughness"):
+                from . import render_gdt
+                render_gdt.draw(s, d.kind, *P(*d.at), d.extra, d.text)
             elif d.kind in ("callout", "radius", "diameter"):
                 px, py = P(*d.at) if d.at is not None else (vx1, vy1)
                 tx, ty = px + 12, py + 9
@@ -278,6 +285,11 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(tx + 0.5, ty + 0.8, d.text, 3)
             rendered_refs.append(d.ref)
 
+    if part is not None and plan.title_block.get("surface_finish"):
+        from . import render_gdt
+        render_gdt.general_roughness(s, W - 5 - 180, 5 + 56 + 14 + 5 * len(plan.notes) + 6,
+                                     plan.title_block["surface_finish"])
+        rendered_refs.append("general_roughness")
     # 标题栏（右下）
     tbw, tbh = 180, 56
     x0, y0 = W - 5 - tbw, 5

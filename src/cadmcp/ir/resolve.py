@@ -14,7 +14,7 @@ from .. import materials, standards
 from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
-from .part import (CircularPattern, EdgeFinish, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
+from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
                    SheetMetalBase, ShaftBase, Boss)
 
 
@@ -126,6 +126,9 @@ class ResolvedPart:
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
     shaft_features: list[dict[str, Any]] = field(default_factory=list)  # keyway / groove
+    datums: list[dict[str, Any]] = field(default_factory=list)
+    geotols: list[dict[str, Any]] = field(default_factory=list)
+    roughness: list[dict[str, Any]] = field(default_factory=list)
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -574,7 +577,30 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             direction = tuple(ev(c) for c in r.direction) if r.direction else None
             refs[r.name] = ResolvedRef(r.name, kind, origin, tuple(ev(c) for c in r.rotate), direction)
 
+    def _target(tgt: str, what: str) -> tuple[str, str]:
+        kind, _, ref = tgt.partition(":")
+        ok = (kind == "face" and ref in FACE_NORMAL and not isinstance(base, ShaftBase)) or \
+             (kind == "hole" and any(h.name == ref for h in holes)) or \
+             (kind == "step" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(steps))
+        if not ok:
+            raise CadError(SPEC_INVALID, f"{what}: invalid target {tgt!r}",
+                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>（轴类）")
+        return kind, ref
+
+    datums = [{"name": d.name, "target": d.target, "kind": _target(d.target, f"datum {d.name}")[0]}
+              for d in spec.datums]
+    geotols = []
+    for g in spec.tolerances:
+        kind, _ = _target(g.target, f"tolerance {g.type}")
+        val = ev(g.value)
+        dia = g.type in ("position", "coaxiality") and kind in ("hole", "step")
+        geotols.append({"type": g.type, "value": val, "target": g.target, "kind": kind, "datums": list(g.datums),
+                        "symbol": GEOTOL_SYMBOL[g.type], "zone": f"{'Φ' if dia else ''}{val:g}",
+                        "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})
+    rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
+
     return ResolvedPart(
+        datums=datums, geotols=geotols, roughness=rough,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
         category=spec.category, surface_treatment=spec.surface_treatment, base_type=base.type,
         parameters=params, bbox=box, volume_mm3=volume, mass_kg=volume * 1e-9 * dens, thickness=thickness,

@@ -112,6 +112,44 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                         out.append(_f("R008", "warning", f"{h.name}[{inst.index}]",
                                       f"孔离 {bend['edge']} 折弯 {d:.2f} mm < 2t+r={limit:.2f} mm，折弯会拉变形"))
     out += _check_shaft(p)
+    out += _check_precision(p)
+    return out
+
+
+IT_GRADE_RA = {5: 0.4, 6: 0.8, 7: 1.6, 8: 1.6, 9: 3.2}  # 配合精度 → 建议最大 Ra（μm）
+
+
+def _check_precision(p: ResolvedPart) -> list[Finding]:
+    from .ir.part import FORM_TOLS
+    out: list[Finding] = []
+    letters = [d["name"] for d in p.datums]
+    for x in {n for n in letters if letters.count(n) > 1}:
+        out.append(_f("G003", "error", f"datum {x}", "基准字母重复", "每个基准用不同字母"))
+    for g in p.geotols:
+        tgt = f"{g['type']}@{g['target']}"
+        for x in g["datums"]:
+            if x not in letters:
+                out.append(_f("G001", "error", tgt, f"引用了未定义的基准 {x}", f"在 datums 中定义 {x}"))
+        if g["type"] in FORM_TOLS and g["datums"]:
+            out.append(_f("G002", "warning", tgt, "形状公差不应带基准", "去掉 datums"))
+        elif g["type"] not in FORM_TOLS and not g["datums"]:
+            out.append(_f("G002", "error", tgt, "方向/位置/跳动公差必须指定基准", "填写 datums"))
+        if any(d["target"] == g["target"] for d in p.datums if d["name"] in g["datums"]):
+            out.append(_f("G005", "error", tgt, "公差以自身为基准", "改用其他基准"))
+    # 配合轴段/孔的粗糙度：IT6/IT7 配合面必须标细粗糙度
+    ra_of = {r["target"]: r["ra"] for r in p.roughness}
+    for i, tol in enumerate(p.shaft_tolerances):
+        if not tol:
+            continue
+        digits = "".join(ch for ch in tol if ch.isdigit())
+        if not digits:
+            continue
+        need = IT_GRADE_RA.get(int(digits))
+        got = ra_of.get(f"step:{i}")
+        if need and (got is None or got > need):
+            out.append(_f("G004", "warning", f"step:{i}",
+                          f"轴段 {i} 为 {tol} 配合，粗糙度{'未标注' if got is None else f' Ra{got:g} 偏粗'}",
+                          f"在 roughness 中加 {{'target': 'step:{i}', 'ra': {need:g}}}"))
     return out
 
 
