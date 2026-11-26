@@ -57,11 +57,13 @@ def fcf(s, ax, ay, n, cells, reach: float = 10.0):
         x += w
 
 
-def roughness(s, ax, ay, n, text):
+def roughness(s, ax, ay, n, text, reach=None):
     """表面结构符号：√ 尖端触及表面（或其延长线），上方横线写 Ra 值；非朝上的面用引线引出。"""
     nx, ny = n
     if (nx, ny) != (0, 1):
-        ex, ey = ax + nx * 8, ay + ny * 8
+        from .detailing import ra_reach
+        r = ra_reach(nx, text) if reach is None else reach
+        ex, ey = ax + nx * r, ay + ny * r
         s.line(ax, ay, ex, ey, THIN)
         ax, ay = ex, ey + (0 if ny >= 0 else -9)
         if ny < 0:
@@ -104,4 +106,4 @@ def draw(s, kind, px, py, extra, text):
     elif kind == "gtol":
         fcf(s, px, py, n, extra["cells"])
     else:
-        roughness(s, px, py, n, text)
+        roughness(s, px, py, n, text, (extra or {}).get("reach"))

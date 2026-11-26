@@ -797,7 +797,12 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 lb = d.extra["label"]
                 s.line(*lb["anchor"], *lb["elbow"], 0.18)
                 s.line(*lb["elbow"], *lb["end"], 0.18)
-                s.parts.append(f"<circle cx='{lb['anchor'][0]:.2f}' cy='{s.y(lb['anchor'][1]):.2f}' r='0.5' fill='{STROKE}'/>")
+                if lb.get("on_edge"):  # 止于孔轮廓：箭头
+                    (ax_, ay_), (ex_, ey_) = lb["anchor"], lb["elbow"]
+                    n_ = math.hypot(ex_ - ax_, ey_ - ay_) or 1.0
+                    s.parts.append(_arrow_head(s, (ax_, ay_), ((ax_ - ex_) / n_, (ay_ - ey_) / n_)))
+                else:  # 止于区域内：圆点
+                    s.parts.append(f"<circle cx='{lb['anchor'][0]:.2f}' cy='{s.y(lb['anchor'][1]):.2f}' r='0.5' fill='{STROKE}'/>")
                 s.text(lb["text_at"][0], lb["text_at"][1], d.text, 3)
             elif d.kind in ("callout", "radius", "diameter"):
                 px, py = P(*d.at) if d.at is not None else (vx1, vy1)

@@ -1216,13 +1216,22 @@ def _seg_box(p1, p2, b) -> bool:
     return any(_seg_cross(p1, p2, corners[i], corners[(i + 1) % 4]) for i in range(4))
 
 
-def _ra_box(x, y, nx, ny, text):
-    """侧向表面结构符号（render_gdt.roughness）的占位框：引出 8 mm 后画 √ 与 Ra 值。"""
-    sx, sy = x + nx * 8, y + ny * 8 + (0 if ny >= 0 else -9)
+def ra_reach(nx: float, text: str, hole_r: float | None = None) -> float:
+    """侧向表面结构符号的引出长度：向左引出时符号（√ + 向右的 Ra 横线）整体须落在轮廓外，引线加长；
+    孔左侧（hole_r = 孔在图上的半径）小孔时 Ra 横线高出孔顶，不必加长。"""
+    if nx >= 0 or hole_r is not None and hole_r < 7:
+        return 8.0
+    return 8.0 + 2 * 4.2 * 0.58 + len(text) * 2.0 + 3
+
+
+def _ra_box(x, y, nx, ny, text, reach=None):
+    """侧向表面结构符号（render_gdt.roughness）的占位框：引出 reach（缺省 ra_reach）后画 √ 与 Ra 值。"""
+    r = ra_reach(nx, text) if reach is None else reach
+    sx, sy = x + nx * r, y + ny * r + (0 if ny >= 0 else -9)
     return (min(x, sx - 3), min(y, sy - 1), max(x, sx + 7 + len(text) * 2.0), max(y, sy + 9))
 
 
-def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part) -> None:
+def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part, hard=()) -> None:
     """孔的表面结构默认在孔左侧；标注排完后选边：不被任何引线穿过、不压已放标注文字的一侧（左侧优先）。"""
     if part is None:
         return
@@ -1235,17 +1244,20 @@ def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part) -> None:
             continue
         lbs = [(d2.extra or {})["label"] for d2 in plan.dims if d2.view == d.view and (d2.extra or {}).get("label")]
         v = vmap[d.view]
+        rs = h.max_dia / 2 * v.scale
 
         def bad(at_, nx):
             x, y = _uv_sheet(v, bbox, at_)
-            rb = _ra_box(x, y, nx, 0, d.text)
+            rb = _ra_box(x, y, nx, 0, d.text, ra_reach(nx, d.text, rs))
             n = sum(1 for lb in lbs if _seg_box(lb["anchor"], lb["elbow"], rb))
             n += sum(1 for lb in lbs if _box_hit(rb, (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 1,
                                                        max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + LABEL_H)) > 0)
+            n += sum(1 for hb in hard if _box_hit(rb, hb) > 0)  # 总体尺寸带、其他文字
             return n
         at2 = (d.at[0] + h.max_dia, d.at[1])
         if bad(d.at, -1) and bad(at2, 1) < bad(d.at, -1):
             d.at, d.extra = at2, {**d.extra, "normal": (1, 0)}
+        d.extra = {**d.extra, "reach": ra_reach(d.extra["normal"][0], d.text, rs)}
 
 
 def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, float, float]] | None = None,
@@ -1372,13 +1384,16 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
             cells = frame.extra.get("cells", ["", "", ""])
             fw = 7.0 + max(7.0, len(cells[1]) * 2.2 + 3) + 6.0 * len(cells[2:]) if len(cells) > 1 else 14.0
             tw, below = max(tw, fw + 1), 6.5
+        # 孔的引线从孔轮廓沿径向引出（GB/T 4458.4：指向圆心、箭头止于轮廓），大孔才能把标注引到视图外
+        rr = h_.max_dia / 2 * v.scale if d.kind == "callout" and h_ is not None and not h_.circular \
+            and v.type in VIEW_AXES and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type) else 0.0
         best = None
         for at_ in anchors:
             if at_ is not None:
                 ax, ay = _uv_sheet(v, bbox, at_)
             else:
                 ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
-            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below)
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr)
         _, ex, ey, dirn, box, at_, ax, ay = best
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
@@ -1386,15 +1401,19 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         leaders.append(((ax, ay), (ex, ey)))
         d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
                                                  "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
-                                                 "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
-    _flip_hole_roughness(plan, vmap, bbox, part)
+                                                 "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn,
+                                                 **({"on_edge": True} if rr >= 5 else {})}}
+    _flip_hole_roughness(plan, vmap, bbox, part, hard)
 
 
-def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below: float = 0.0):
-    """引出标注一个锚点的 8 方向 × 6 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。"""
-    for L in (10, 16, 24, 34, 46, 60):
+def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0):
+    """引出标注一个锚点的 8 方向 × 7 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。
+    rr ≥ 5：锚点为孔心，引线起点取在孔轮廓上（沿引线方向偏 rr）；返回的 ax, ay 为该轮廓点。"""
+    for L in (10, 16, 24, 34, 46, 60, 80):
         for ang in (45, 135, -45, -135, 25, 155, -25, -155):
-            ex, ey = ax + L * math.cos(math.radians(ang)), ay + L * math.sin(math.radians(ang))
+            c_, s_ = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+            ax, ay = (ax0 + rr * c_, ay0 + rr * s_) if rr >= 5 else (ax0, ay0)
+            ex, ey = ax + L * c_, ay + L * s_
             dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
             box = (ex, ey - 0.5 - below, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else \
                 (ex - tw, ey - 0.5 - below, ex, ey + LABEL_H + 0.5)
@@ -1402,9 +1421,13 @@ def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below: f
             if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
                 cost += 5000
             cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
-            cost += sum(120 for sb in soft if _box_hit(box, sb) > 0)
+            for sb in soft:  # 压视图：120；骑在视图轮廓线上（部分在内）更差：+250
+                a_ = _box_hit(box, sb)
+                if a_ > 0:
+                    cost += 120 + (250 if a_ < (box[2] - box[0]) * (box[3] - box[1]) - 1e-6 else 0)
             cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
             cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
+            cost += sum(300 for l1, l2 in leaders if _seg_box(l1, l2, box))  # 文字不压先放的引线
             sx_, sy_ = ax + 1.5 * math.cos(math.radians(ang)), ay + 1.5 * math.sin(math.radians(ang))  # 锚点本身可能落在别的框内
             cost += sum(300 for hb in hard if _seg_box((sx_, sy_), (ex, ey), hb))
             if best is None or cost < best[0]:
@@ -1431,7 +1454,7 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         else:
             continue
         nx, ny = (d.extra or {}).get("normal", (0, 1))
-        reach = {"datum": 10.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else 8.0}[d.kind]
+        reach = {"datum": 10.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else (d.extra or {}).get("reach") or ra_reach(nx, d.text)}[d.kind]
         pos = (ax + nx * reach, ay + ny * reach)
         if d.kind == "gtol" and (d.extra or {}).get("attach") == "callout":
             hole = d.ref.split("@hole:")[-1]
