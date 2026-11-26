@@ -89,3 +89,7 @@ def test_assembly_install_dims():
     assert {round(d.value) for d in inst.values()} == {260, 160}
     assert all(d.view == "top" and len(d.extra["sheet_pts"]) == 2 for d in inst.values())
     assert any("安装孔 4×Φ9" in n for n in plan.notes)
+    from cadmcp.render_svg import render
+    svg, out = render(plan, a)
+    assert "stroke-dasharray='3,1'" in svg  # 俯视图：安装板下的型材被遮挡，画细虚线
+    assert out["crossings"] == []

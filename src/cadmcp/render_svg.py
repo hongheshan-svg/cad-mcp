@@ -220,17 +220,15 @@ VIEW_LOOK = {"front": ("y", -1), "back": ("y", 1), "top": ("z", 1), "bottom": ("
              "left": ("x", -1), "right": ("x", 1)}  # 视向：(深度轴, 观察者所在一侧)
 
 
-def _occluders(part, body, vtype, ha, va, P):
-    """整体位于 body 之前（更靠近观察者）的其他杆件/板件在图上的投影矩形（消隐用）。"""
-    from .ir.resolve import Box
+def _occluder_rects(boxes, i, vtype, ha, va, P, solid=None):
+    """整体位于 boxes[i] 之前（更靠近观察者）的其他包围盒在图上的投影矩形（消隐用）；solid[j] 为假者不作遮挡体。"""
     ax, sg = VIEW_LOOK.get(vtype, ("z", 1))
-    bb = Box(*body["box"])
+    bb = boxes[i]
     lo, hi = getattr(bb, ax + "min"), getattr(bb, ax + "max")
     out = []
-    for o in part.weld_bodies:
-        if o is body:
+    for j, ob in enumerate(boxes):
+        if j == i or (solid is not None and not solid[j]):
             continue
-        ob = Box(*o["box"])
         olo, ohi = getattr(ob, ax + "min"), getattr(ob, ax + "max")
         if (sg > 0 and olo >= hi - 1e-6) or (sg < 0 and ohi <= lo + 1e-6):
             (u0, u1), (w0, w1) = vrange(ob, ha), vrange(ob, va)
@@ -292,12 +290,14 @@ def _draw_weld_bodies(s, part, vtype, ha, va, P):
     端视的管材画内壁（细实线，被挡时省略），圆管画圆。"""
     from .ir.resolve import Box
     depth_axis = next(a for a in "xyz" if a not in (ha[-1], va[-1]))
-    for body in sorted(part.weld_bodies, key=lambda b: b["kind"] != "plate"):
-        bb = Box(*body["box"])
+    bodies = sorted(part.weld_bodies, key=lambda b: b["kind"] != "plate")
+    boxes = [Box(*b["box"]) for b in bodies]
+    for bi, body in enumerate(bodies):
+        bb = boxes[bi]
         (u0, u1), (w0, w1) = vrange(bb, ha), vrange(bb, va)
         x0, y0 = P(u0, w0)
         x1, y1 = P(u1, w1)
-        occ = _occluders(part, body, vtype, ha, va, P)
+        occ = _occluder_rects(boxes, bi, vtype, ha, va, P)
         sec = body.get("section")
         if body["kind"] == "member" and body["axis"] == depth_axis and sec and sec["kind"] == "CHS":
             r = (x1 - x0) / 2
@@ -716,11 +716,15 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         elif part is not None and part.weld_bodies:
             _draw_weld_bodies(s, part, v.type, ha, va, P)
         elif asm is not None:
-            for inst in asm.instances:
+            boxes = [i.world_bbox for i in asm.instances]  # 按包围盒近似消隐：被前方零件挡住的轮廓画细虚线
+            solid = [i.source.kind != "standard" for i in asm.instances]  # 标准件（螺钉等）不作遮挡体
+            for k, inst in enumerate(asm.instances):
                 (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
                 x0, y0 = P(bu0, bw0)
                 x1, y1 = P(bu1, bw1)
-                s.rect(x0, y0, x1 - x0, y1 - y0, THICK if inst.source.kind in ("part", "assembly") else THIN)
+                occ = _occluder_rects(boxes, k, v.type, ha, va, P, solid)
+                _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ,
+                             THICK if inst.source.kind in ("part", "assembly") else THIN)
         else:
             x0, y0 = P(ulo, wlo)
             x1, y1 = P(uhi, whi)
