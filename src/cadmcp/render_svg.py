@@ -1147,6 +1147,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if part is not None and plan.layout == "gear":
         from .render_gear import render_gear
         render_gear(s, plan, part, rendered_refs)
+    cut_later: list[Any] = []
     for v in ([] if part is not None and (part.base_type == "shaft" or plan.layout == "gear") else plan.views):
         sc = v.scale * (0.5 if v.type == "iso" else 1)
         cx, cy = v.origin_on_sheet
@@ -1301,7 +1302,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 _draw_local(s, sec_, V)
                 rendered_refs.append(f"section:{sec_.label}")
             elif sec_.parent == v.type and part is not None:
-                _draw_cut_line(s, sec_, part, V, _dim_boxes(plan, v.type))
+                cut_later.append((sec_, V, v.type))  # 剖切符号最后画：字母避开已画好的尺寸、引线与文字
         # 尺寸
         vx0, vy0 = P(ulo, wlo)
         vx1, vy1 = P(uhi, whi)
@@ -1420,6 +1421,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(tx + 0.5, ty + 0.8, d.text, 3)
             rendered_refs.append(d.ref)
 
+    for sec_, V_, vt_ in cut_later:
+        _draw_cut_line(s, sec_, part, V_, _dim_boxes(plan, vt_))
     ht_rows: list[list[Any]] = []
     ht_h = 0.0
     if plan.hole_table and plan.hole_table_box:

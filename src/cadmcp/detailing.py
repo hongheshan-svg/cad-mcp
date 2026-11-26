@@ -733,10 +733,10 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     _hole_ra_to_section(plan, p)
     if spec.dimensions != "none":
         pitch_dim_sheet(plan, p)
+        ordinate_dim_sheet(plan, p)  # 坐标值位置先定，引出标注避开它们
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
-        ordinate_dim_sheet(plan, p)
         flat_dim_sheet(plan, p)
     return plan
 
@@ -2288,6 +2288,26 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 x, y = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
                 tx_, ty_ = x + ddx * 9, y + ddy * 9 - 1.5
                 hard.append((min(x, tx_ - 3) - 0.5, min(y, ty_ - 1.0) - 0.5, max(x, tx_ + 3) + 0.5, max(y, ty_ + 4.0) + 0.5))
+    for d in plan.dims:  # 坐标值数字（ordinate_dim_sheet 已定位；靠近剖切符号时外移 8 mm，按外移后的位置占位）
+        ex = d.extra or {}
+        if d.kind != "ordinate" or "sheet_pos" not in ex or d.view not in vmap:
+            continue
+        px_, py_ = ex["sheet_pos"]
+        tw_ = len(d.text) * 1.5 + 0.5
+        o_ = 0.0
+        for sec in plan.sections:
+            pv = vmap.get(sec.parent)
+            if pv is None or pv.type != d.view or not sec.cut_points:
+                continue
+            ha_, va_ = VIEW_AXES[pv.type]
+            for q in (sec.cut_points[0], sec.cut_points[-1]):
+                cx_, cy_ = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
+                if (ex["orient"] == "h" and abs(cx_ - px_) < 13) or (ex["orient"] == "v" and abs(cy_ - py_) < 13):
+                    o_ = 8.0
+        if ex["orient"] == "h":
+            hard.append((px_ - 2.2, py_ - o_ - tw_ / 2 - 0.3, px_ + 0.5, py_ - o_ + tw_ / 2 + 0.3))  # 竖排文字以该点居中
+        else:
+            hard.append((px_ + o_ - 0.5, py_ - 1.5, px_ + o_ + tw_, py_ + 1.5))
     leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
     labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
               and not (plan.layout == "shaft" and d.kind == "diameter")]
@@ -2305,6 +2325,16 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):  # 孔上挂了公差框格/粗糙度时不换实例
             ha_, va_ = VIEW_AXES[v.type]  # 多个同规格孔：引线可指向任一个，取最好放的
             anchors += [(vc(i.xyz, ha_), vc(i.xyz, va_)) for i in h_.instances[1:]]
+        pk_ = next((pk for pk in (part.pockets if part is not None else []) if pk["name"] == d.ref), None)
+        if d.kind == "callout" and pk_ is not None and d.at is not None and v.type in ("top", "bottom") \
+                and pk_["face"] in ("top", "bottom") and "×R" not in d.text:  # 型腔：引出点可取任一边中点（注圆角的须指在圆弧上，不换）
+            ha_, va_ = VIEW_AXES[v.type]
+            ol = list(pk_["profile"].outline)
+            # 边中点总在轮廓上（圆角型腔的角点不在），圆形等多点轮廓取均布的 8 点
+            cand_ = [((ol[k][0] + ol[(k + 1) % len(ol)][0]) / 2, (ol[k][1] + ol[(k + 1) % len(ol)][1]) / 2)
+                     for k in range(len(ol))] if len(ol) <= 8 else ol[::max(1, len(ol) // 8)]
+            anchors += [(vc((x, y, 0.0), ha_), vc((x, y, 0.0), va_)) for x, y in cand_
+                        if abs(vc((x, y, 0.0), ha_) - d.at[0]) > 1e-6 or abs(vc((x, y, 0.0), va_) - d.at[1]) > 1e-6]
         tw = _tw(d.text) + 1
         frame = next((d2 for d2 in plan.dims if d2.kind == "gtol" and (d2.extra or {}).get("attach") == "callout"
                       and d2.ref.endswith(f"hole:{d.ref}")), None)
