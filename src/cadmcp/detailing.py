@@ -480,6 +480,19 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 first = h.instances[0]
                 dims.append(Dim(view, "callout", None, None, h.callout, f"{h.name}",
                                 (vc(first.xyz, ha), vc(first.xyz, va))))
+        # 多边形外形（L 形、凸字形等）：顶点坐标进坐标尺寸，壁厚/台阶才有尺寸（总长、总宽另有总体尺寸）
+        if p.base_type == "extrude" and p.profile is not None and p.profile.shape == "polygon" and "top" in vtypes:
+            ha, va = VIEW_AXES["top"]
+            origin = {ha: vrange(b, ha)[0], va: vrange(b, va)[0]}
+            top_ = {ha: vrange(b, ha)[1], va: vrange(b, va)[1]}
+            for u, v_ in p.profile.data["points"]:
+                pt = {ha: vc((u, v_, b.zmax), ha), va: vc((u, v_, b.zmax), va)}
+                for ax in (ha, va):
+                    if abs(pt[ax] - top_[ax]) < 1e-6:
+                        continue  # 最大值 = 总体尺寸
+                    val = round(pt[ax] - origin[ax], 3)
+                    ordinates.setdefault(("top", ax, val), Dim("top", "ordinate", ax, val, f"{val:g}",
+                                                               f"ord:top.{ax}={val:g}", (pt[ha], pt[va])))
         if ordinates:
             for view in {k[0] for k in ordinates}:
                 ha, va = VIEW_AXES.get(view, ("x", "y"))
@@ -1063,6 +1076,12 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap:
             x, y = _uv_sheet(vmap[d.view], bbox, d.at)
             hard.append((x - 4, y - 14, x + 26, y + 2) if d.kind != "datum" else (x - 5, y - 14, x + 5, y + 2))
+    for s in plan.sections:  # 局部剖区域（剖面线 + 波浪线）：文字不得压在上面
+        if s.kind == "local":
+            loc = local_section_sheet(plan, s)
+            if loc:
+                xs, ys = [q[0] for q in loc["boundary"]], [q[1] for q in loc["boundary"]]
+                hard.append((min(xs) - 1, min(ys), max(xs) + 1, max(ys)))
     feat: list[tuple[float, float, float, float]] = []  # 孔、型腔投影（文字不压图形）
     if part is not None:
         for h in part.holes:
@@ -1101,33 +1120,48 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
     for d in sorted(labels, key=lambda d: -_tw(d.text)):  # 长的先放
         v = vmap[d.view]
         cx, cy = v.origin_on_sheet
-        if d.at is not None:
-            ax, ay = _uv_sheet(v, bbox, d.at)
-        else:
-            ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
+        anchors = [d.at] if d.at is not None else [None]
+        h_ = next((h for h in (part.holes if part is not None else []) if h.name == d.ref), None)
+        if d.kind == "callout" and h_ is not None and not h_.circular and v.type in VIEW_AXES \
+                and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):
+            ha_, va_ = VIEW_AXES[v.type]  # 多个同规格孔：引线可指向任一个，取最好放的
+            anchors += [(vc(i.xyz, ha_), vc(i.xyz, va_)) for i in h_.instances[1:]]
         tw = _tw(d.text) + 1
         best = None
-        for L in (10, 16, 24, 34, 46, 60):
-            for ang in (45, 135, -45, -135, 25, 155, -25, -155):
-                ex, ey = ax + L * math.cos(math.radians(ang)), ay + L * math.sin(math.radians(ang))
-                dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
-                box = (ex, ey - 0.5, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else (ex - tw, ey - 0.5, ex, ey + LABEL_H + 0.5)
-                cost = L * 1.5
-                if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
-                    cost += 5000
-                cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
-                cost += sum(40 for sb in soft if _box_hit(box, sb) > 0)
-                cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
-                cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
-                cost += sum(300 for hb in hard if _seg_box((ax, ay), (ex, ey), hb))
-                if best is None or cost < best[0]:
-                    best = (cost, ex, ey, dirn, box)
-        _, ex, ey, dirn, box = best
+        for at_ in anchors:
+            if at_ is not None:
+                ax, ay = _uv_sheet(v, bbox, at_)
+            else:
+                ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders)
+        _, ex, ey, dirn, box, at_, ax, ay = best
+        if at_ is not None and at_ != d.at:
+            d.at = (round(at_[0], 6), round(at_[1], 6))
         hard.append(box)
         leaders.append(((ax, ay), (ex, ey)))
         d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
                                                  "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
                                                  "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
+
+
+def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders):
+    """引出标注一个锚点的 8 方向 × 6 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。"""
+    for L in (10, 16, 24, 34, 46, 60):
+        for ang in (45, 135, -45, -135, 25, 155, -25, -155):
+            ex, ey = ax + L * math.cos(math.radians(ang)), ay + L * math.sin(math.radians(ang))
+            dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
+            box = (ex, ey - 0.5, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else (ex - tw, ey - 0.5, ex, ey + LABEL_H + 0.5)
+            cost = L * 1.5
+            if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
+                cost += 5000
+            cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
+            cost += sum(40 for sb in soft if _box_hit(box, sb) > 0)
+            cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
+            cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
+            cost += sum(300 for hb in hard if _seg_box((ax, ay), (ex, ey), hb))
+            if best is None or cost < best[0]:
+                best = (cost, ex, ey, dirn, box, at_, ax, ay)
+    return best
 
 
 def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:

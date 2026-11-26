@@ -93,3 +93,19 @@ def test_general_roughness_and_view_pruning_by_review():
     keep = plan_part_drawing(DrawingSpec.model_validate({"model": g.name, "views": [{"type": "front"}, {"type": "top"},
                                                                                      {"type": "left"}]}), g)
     assert "left" in {v.type for v in keep.views}   # 用户显式指定时不省略
+
+
+def test_polygon_profile_dims_and_callout_anchor_choice():
+    """L 形外形：壁厚经坐标尺寸标出；多孔引出标注可指向任一实例（选最好放的），局部剖区域文字不压。"""
+    from test_core import L_BRACKET
+
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir.resolve import resolve_part
+    p = resolve_part(PartSpec.model_validate(L_BRACKET))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    top_ords = {(d.axis, d.value) for d in plan.dims if d.view == "top" and d.kind == "ordinate"}
+    t = next(v for (a, v) in top_ords if v not in (0.0,))
+    assert 0 < t < max(p.bbox.size)                      # 壁厚坐标（L 形内角）
+    slot = next(d for d in plan.dims if d.kind == "callout" and "腰型孔" in d.text)
+    lb = slot.extra["label"]
+    assert lb["anchor"] != lb["elbow"]
