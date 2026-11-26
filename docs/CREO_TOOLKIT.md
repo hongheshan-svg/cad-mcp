@@ -87,6 +87,7 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | `drw.surface_finish` | `view`, `at`, `pos`, `ra`, `removal`（`required|prohibited`） |
 | `drw.table` | `origin`（左下角）, `columns`（`[{"title","width"}]`）, `rows`（字符串二维表）, `row_height`（默认 6）, `header_bottom`（bool：GB 明细表表头在下） |
 | `drw.section` | `parent`（画剖切线的视图，显示剖切箭头；local 可空）, `replaces`（被设为剖视的已有视图）, `label`, `kind`（full/step/half/local）, `cut_points`（模型坐标折线，在零件顶面上；full/half/local 取前两点）, `center`（视图位置，仅校验）, `boundary`（local 必填：局部区域闭合折线，图纸 mm） → `ProXSectionOffsetCreate` 建剖截面（一段=平面剖，多段=阶梯剖）后 `ProDrawingView2DSectionSet`；half 的分界面为垂直剖切线的默认基准面 |
+| `drw.removed_section` | `view`（CREOSON 已建的沿轴线观察视图，如 V_SEC_A）, `label`（剖截面名，如 A）, `z`（剖切位置：IR Z 坐标=轴向，mm）, `parent`（画剖切箭头的视图，可空）, `half_span`（剖切线半长，默认 500） → 偏移剖截面（平面 IR z=const）+ 2D 剖视 + 只显示切面（`ProDrawingView2DSectionAreaSet`） |
 | `drw.balloon` | `view`, `component`（组件路径名列表）, `item`, `at`, `pos` |
 | `drw.readback` | – → `{"dims": n, "notes": n, "tables": [{"rows": [[...]]}], "views": [...], "symbols": n}` |
 

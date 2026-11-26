@@ -40,7 +40,7 @@ cmake --build build --config Release
 | `src/util.cpp` | 参数读取、宽字符、模型/特征/基准面/视图查找、单位换算、图纸选边 |
 | `src/cmd_session.cpp` | `ping` / `model.*` |
 | `src/cmd_model.cpp` | `feat.*` / `datum.*`（IR 坐标 → Creo 坐标 `(x, z, −y)`） |
-| `src/cmd_drawing.cpp` | `drw.*` |
+| `src/cmd_drawing.cpp` | `drw.*`（含轴类移出断面 `drw.removed_section`） |
 | `src/cmd_assembly.cpp` | `asm.*`（元件按 IR 位姿放入；坐标系重合约束，失败退回固定；全局干涉） |
 
 ## 首期限制（服务端如实报错，Python 端记警告、不中断）

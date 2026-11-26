@@ -42,6 +42,17 @@ def view_name(vtype: str) -> str:
     return f"V_{vtype.upper()}"
 
 
+def section_view_name(label: str) -> str:
+    """移出断面图视图名：A-A → V_SEC_A"""
+    return "V_SEC_" + (label.split("-")[0] or "X")
+
+
+def shaft_section_z(plan, v) -> float:
+    """移出断面的轴向位置（IR Z，mm）：轴类主视图轴线水平、左端为 z=0（detailing 中断面图放在剖切位置正下方）。"""
+    main = plan.views[0]
+    return round((v.origin_on_sheet[0] - (main.origin_on_sheet[0] - main.size_mm[0] / 2)) / main.scale, 4)
+
+
 def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = None, sheet_unit_scale: float = 1.0,
                     view_map: dict[str, str] | None = None, toolkit: bool = False) -> list[NativeOp]:
     """DrawingPlan → 操作计划。op 名 `creoson.<creopyson 方法>` / `ext.<扩展命令>` / `tk.<cadmcp_tk 命令>` / `warn`（仅提示）。
@@ -77,6 +88,12 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     # 由剖视图替代的视图：扩展路径整体由扩展生成；TOOLKIT 路径先照常建投影视图，再由 drw.section 设为剖视
     replaced = set() if toolkit else {s.view for s in plan.sections if s.kind != "local"}
     for v in plan.views:
+        if toolkit and v.type == "section":  # 移出断面：沿轴线观察的一般视图，随后 drw.removed_section 设为断面
+            ops.append(NativeOp("creoson.drawing_create_gen_view", {
+                "model_view": vm.get("section", "TOP"), "point": _pt(v.origin_on_sheet, k), "drawing": "$drawing",
+                "view": section_view_name(v.label), "sheet": 1, "model": model, "scale": v.scale},
+                f"移出断面 {v.label}：沿轴线（IR Z）观察"))
+            continue
         if v.type in ("section", "flat_pattern") or v.type in replaced:
             continue
         if v.type in PROJECTED and front is not None and "front" not in replaced:
@@ -222,21 +239,29 @@ def tk_detail_ops(plan) -> list[NativeOp]:
             "剖截面 + 视图设为 2D 剖视"))
     for v in plan.views:
         if v.type == "section":
-            skip("移出断面图")
+            ops.append(NativeOp("tk.drw.removed_section", {
+                "drawing": D, "view": section_view_name(v.label), "label": v.label.split("-")[0],
+                "z": shaft_section_z(plan, v), "parent": view_name(plan.views[0].type)},
+                "垂直轴线的剖截面 + 只显示切面"))
         elif v.type == "flat_pattern":
             skip("钣金展开图")
 
     for d in plan.dims:
         ex = d.extra or {}
         vw = view_name(d.view)
-        if d.view in ("section", "flat_pattern"):  # 移出断面图/展开图首期不建（见上），其标注一并跳过
-            skip("断面图/展开图标注")
+        if d.view == "section":  # 断面图尺寸：按断面标签找视图；文字覆盖（槽宽 N9、d−t 须量到圆的远端）
+            if not ex.get("section"):
+                skip("断面图标注（未关联断面）")
+                continue
+            vw = section_view_name(ex["section"])
+        elif d.view == "flat_pattern":  # 展开图首期不建（见上），其标注一并跳过
+            skip("展开图标注")
             continue
         if d.kind in ("linear", "diameter", "ordinate") and ex.get("sheet_pts"):
             p1, p2 = ex["sheet_pts"]
             args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",
                     "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
-            if d.kind == "diameter" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
+            if d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
                 args["text"] = d.text
             ops.append(NativeOp("tk.drw.dim", args, "坐标尺寸：基准边 + 要素边" if d.kind == "ordinate"
                                 else "两条轮廓边上的点 → 线性尺寸"))

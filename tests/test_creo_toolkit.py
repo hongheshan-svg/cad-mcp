@@ -195,3 +195,18 @@ def test_local_section_boundary(creo, tk, tmp_path):
     _adapter(tk).build_drawing(plan, tmp_path / "bar.prt", tmp_path, None)
     sec = next(a for c, a in tk.calls if c == "drw.section")
     assert sec["kind"] == "local" and sec["replaces"] == "V_FRONT" and len(sec["boundary"]) == len(loc["boundary"])
+
+
+def test_shaft_removed_sections(creo, tk, tmp_path):
+    plan = _plan(SHAFT)
+    secs = [v for v in plan.views if v.type == "section"]
+    assert len(secs) == 2
+    _adapter(tk).build_drawing(plan, tmp_path / "sh1.prt", tmp_path, None)
+    gen = {kw["view"]: kw for n, kw in creo.calls if n == "drawing_create_gen_view"}
+    rs = [a for c, a in tk.calls if c == "drw.removed_section"]
+    assert len(rs) == 2 and all(a["view"] in gen and gen[a["view"]]["model_view"] == "TOP" for a in rs)
+    # 剖切位置 = 键槽中点（KW1：step0 offset 4、长 28 → z 4..32；KW2：step2 起点 52 处，长 45 居中）
+    zs = sorted(a["z"] for a in rs)
+    assert zs[0] == pytest.approx(18.0) and 52 < zs[1] < 112
+    sec_dims = [a for c, a in tk.calls if c == "drw.dim" and a["view"].startswith("V_SEC_")]
+    assert len(sec_dims) == 4 and any(a["text"].endswith("N9") for a in sec_dims)

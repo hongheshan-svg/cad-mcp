@@ -395,3 +395,12 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
 6. 翻边方向：向上翻选顶面（z=t）边、向下翻选底面（z=0）边。`check_body_extent` 会比较实体 Z 范围与规划；
    报"不符"时看是方向反了还是长度类型不是"外部虚拟交点"（需经 `GetDefinition()` 的 IEdgeFlangeFeatureData 设置）。
 7. 验收：`tests/test_sw_sheetmetal.py` 的 SM（U 形，前边上翻 30、后边下翻 25）建模后 Z 范围 −23..30 mm，展开尺寸与 SVG 展开图一致。
+
+## Creo 轴类移出断面（drw.removed_section）
+TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴线观察）建一般视图 `V_SEC_A`… →
+`drw.removed_section{view, label, z, parent}`：偏移剖截面（平面 IR z = 剖切位置）→ 2D 剖视（箭头在主视图）→
+`ProDrawingView2DSectionAreaSet` 只显示切面。断面尺寸（槽宽 N9、d−t）发到 `V_SEC_*`，文字覆盖。
+1. 出 SHAFT（tests/test_core.py）图：两个断面位置在键槽正下方、只显示切面、键槽朝上（若朝下：改 `view_map.section` 为 BOTTOM 或在起始件定义命名视图）。
+2. 剖截面为空 → `cmd_drw_removed_section` 的 flip / SIDE_2 取反；`section_only=false` → 查 `ProDrawingView2DSectionAreaSet` 返回码。
+3. d−t 尺寸：Creo 对圆边默认附着圆心，文字覆盖显示正确数值，但尺寸界线需实机确认是否到圆的远端。
+

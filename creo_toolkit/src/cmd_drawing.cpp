@@ -637,10 +637,16 @@ std::array<double, 2> view_keep_dir(const std::string& view) {
     throw CmdError("BAD_ARGS", "剖视只能替代主/后/左/右视图（视线水平），收到 " + view);
 }
 
+// trf_in 为空：折线在顶面（见上方说明）；否则用给定局部系（行 = x 轴、y 轴、z 轴、原点[mm]，Creo 坐标）
 void create_offset_xsec(ProSolid solid, const std::string& name, const std::vector<std::array<double, 3>>& cp,
-                        int flip) {
+                        int flip, const double (*trf_in)[3] = nullptr) {
     double f = model_mm_factor((ProMdl)solid);
     double trf[4][3] = {{1, 0, 0}, {0, 0, -1}, {0, 1, 0}, {0, cp[0][2] * f, 0}};
+    if (trf_in) {
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) trf[i][j] = trf_in[i][j];
+        for (int j = 0; j < 3; ++j) trf[3][j] = trf_in[3][j] * f;
+    }
     Pro2dLinedef* ents = nullptr;
     check(ProArrayAlloc(0, sizeof(Pro2dLinedef), (int)cp.size(), (ProArray*)&ents), "ProArrayAlloc(lines)");
     for (size_t i = 0; i + 1 < cp.size(); ++i) {
@@ -770,6 +776,36 @@ json cmd_drw_section(const json& a) {
     return json{{"xsec", label}, {"view", replaces}, {"kind", kind}};
 }
 
+// drw.removed_section：移出断面（轴类）。剖切面垂直于 IR Z 轴（轴线），位于 z；view 为 CREOSON 已建好的、
+// 沿轴线观察的一般视图（如 V_SEC_A）。剖截面同样用 ProXSectionOffsetCreate：
+//   局部系 x = IR +X → Creo (1,0,0)；z（扫掠方向）= IR +Y → Creo (0,0,−1)；y = z×x = Creo (0,−1,0)（= IR −Z）；
+//   原点 = IR (0, 1000, 0) → Creo (0,0,−1000)，使零件全部落在局部 z 负侧（与 create_offset_xsec 的 SIDE_2 假设一致）。
+//   折线 = 局部 y = −z 处沿 x 的一段直线 → 扫掠后即平面 IR z = const。
+// 视图：ProDrawingView2DSectionSet(FULL，箭头画在 parent) → ProDrawingView2DSectionAreaSet（只显示切面，GB 断面图）。
+json cmd_drw_removed_section(const json& a) {
+    ProDrawing d = find_drawing(arg_str(a, "drawing"));
+    std::string view = arg_str(a, "view"), label = arg_str(a, "label");
+    std::string parent = has(a, "parent") ? arg_str(a, "parent") : "";
+    double z = arg_num(a, "z");
+    double half = has(a, "half_span") ? arg_num(a, "half_span") : 500.0;
+    ProView rv = find_view(d, view);
+    ProView pv = parent.empty() ? nullptr : find_view(d, parent);
+    ProSolid solid = nullptr;
+    check(ProDrawingViewSolidGet(d, rv, &solid), "ProDrawingViewSolidGet");
+    const double trf[4][3] = {{1, 0, 0}, {0, -1, 0}, {0, 0, -1}, {0, 0, -1000}};
+    std::vector<std::array<double, 3>> cp = {{-half, -z, 0}, {half, -z, 0}};  // 局部 (x, y)
+    // 保留侧：线向 +x，从局部 +z 看右侧 = 局部 −y = IR +Z。视图从 IR +Z 往下看（TOP），保留 IR z < z0 的一侧 → flip
+    // TODO(实机核对): 断面图只显示切面，保留侧仅影响剖面线方向；若剖面为空改 flip 或 SIDE_1
+    create_offset_xsec(solid, label, cp, 1, trf);
+    ProName sname;
+    to_proname(label, sname);
+    check(ProDrawingView2DSectionSet(d, rv, sname, PRO_VIEW_SECTION_AREA_FULL, nullptr, nullptr, pv),
+          "ProDrawingView2DSectionSet");
+    // TODO(实机核对): ProDrawingView2DSectionAreaSet(ProDrawing, ProView)；已是 Area 时返回错误码，可忽略
+    ProError e = ProDrawingView2DSectionAreaSet(d, rv);
+    return json{{"xsec", label}, {"view", view}, {"section_only", e == PRO_TK_NO_ERROR}};
+}
+
 // drw.balloon：BOM 球标（首期降级为带引线的序号注释）
 json cmd_drw_balloon(const json& a) {
     ProDrawing d = find_drawing(arg_str(a, "drawing"));
@@ -861,6 +897,7 @@ void register_drawing_cmds() {
     register_cmd("drw.surface_finish", cmd_drw_surface_finish);
     register_cmd("drw.table", cmd_drw_table);
     register_cmd("drw.section", cmd_drw_section);
+    register_cmd("drw.removed_section", cmd_drw_removed_section);
     register_cmd("drw.balloon", cmd_drw_balloon);
     register_cmd("drw.readback", cmd_drw_readback);
 }
