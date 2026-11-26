@@ -137,7 +137,18 @@ def test_hub_keyway_symmetry():
     plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
     d = next(d for d in plan.dims if d.kind == "gtol" and d.view == "left")
     w = next(x for x in plan.dims if x.ref == "BORE1_KW_w")
-    assert d.extra["sheet_at"] == (w.extra["sheet_pts"][1][0], w.extra["sheet_pos"][1])
+    assert d.extra["sheet_at"] == (w.extra["sheet_pts"][1][0], w.extra["sheet_pos"][1])  # 箭头与槽宽尺寸线对齐
     svg, out = render(plan, p)
     assert not out["crossings"] and not out["collisions"]
     assert any(o.op == "gtol" and o.args["view"] == "left" for o in compile_drawing(plan, "SL1.SLDPRT"))
+
+
+def test_gear_hub_keyway_symmetry():
+    from test_gear import GEAR
+    p = resolve_part(PartSpec.model_validate(GEAR))
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), p)
+    assert any(d.kind == "gtol" and d.text.startswith("⌯") and d.view == "left" for d in plan.dims)
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    ops = compile_drawing(plan, "GR1.SLDPRT")
+    assert {o.args["type"] for o in ops if o.op == "gtol"} == {"circular_runout", "symmetry"}

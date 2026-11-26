@@ -1259,10 +1259,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             dims += hk
             for g in dims:  # 轮毂键槽对称度：箭头从右侧与槽宽尺寸线对齐，框格在端视图外圆右侧
                 if g.kind == "gtol" and (g.extra or {}).get("keyway") == k["name"]:
-                    (_, yw), (xr, _) = hk[0].extra["sheet_pos"], hk[0].extra["sheet_pts"][1]
-                    g.extra = {**g.extra, "sheet_at": (xr, yw), "normal": (1, 0),
-                               "reach": round(ex_ + D / 2 * scale + 3 - xr, 2),
-                               "sheet_pos": (round(ex_ + D / 2 * scale + 3, 2), yw)}
+                    g.extra = {**g.extra, **hub_keyway_symmetry_extra(hk, ex_, ey_, D / 2 * scale)}
             # 孔径：左下 45° 引线，箭头在孔壁上（同齿轮轴孔）
             kb = p.shaft_bores.index(b)
             rb, kk = b["d"] / 2, 0.7071
@@ -1951,6 +1948,26 @@ def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: fl
         "pick_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex, 2), round(yk, 2))],  # 孔底象限点、槽底中点
         "sheet_pos": (round(ex + rb * sc + 8, 2), round(ty, 2)), "orient": "v"}))
     return out
+
+
+def hub_keyway_symmetry_extra(hk: list, ex: float, ey: float, r_out: float) -> dict:
+    """轮毂键槽对称度框格的引线（端视图，图纸 mm）：箭头在槽宽右尺寸界线上、与尺寸线对齐，水平向右 4 mm 后折向上，
+    框格在端视图外圆上方（避开 d+t2 竖直尺寸及其外移的文字）。hk = hub_keyway_dims 的结果；r_out = 外圆图上半径。"""
+    xr, yw = hk[0].extra["sheet_pts"][1][0], hk[0].extra["sheet_pos"][1]
+    xk = round(xr + 4, 2)
+    y_frame = round(max(ey + r_out + 6, yw + 6), 2)
+    return {"sheet_at": (xr, yw), "normal": (0, 1), "elbow_h": {"from": (xr, yw), "to": (xk, yw)},
+            "reach": round(y_frame - yw, 2), "sheet_pos": (xk, y_frame)}
+
+
+def draw_elbow_fcf(s, ex_: dict) -> None:
+    """按 hub_keyway_symmetry_extra 画：水平段 + 箭头（指向尺寸界线）+ 竖直段上到框格。"""
+    from . import render_gdt
+    from .render_shaft import _arrow
+    (xa, ya), (xb, yb) = ex_["elbow_h"]["from"], ex_["elbow_h"]["to"]
+    s.line(xa, ya, xb, yb, 0.25)
+    _arrow(s, xa, ya, -1, 0)
+    render_gdt.fcf(s, xb, yb, (0, 1), ex_["cells"], reach=ex_["reach"], arrow=False)
 
 
 def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):

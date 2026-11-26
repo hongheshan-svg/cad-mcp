@@ -100,7 +100,16 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
         if kw is not None and bore is not None:
-            dims += hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev)
+            hk = hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev)
+            dims += hk
+            if g.get("blank_runout") and spec.dimensions != "none":
+                # 轮毂键槽对称度（对基准 A 轴孔，GB/T 1184 8 级按键宽）：箭头从右侧与槽宽尺寸线对齐，框格在齿顶圆右侧
+                from .precision import keyway_symmetry
+                v_ = keyway_symmetry(kw["width"])
+                cells_ = ["⌯", f"{v_:g}", "A"]
+                from .detailing import hub_keyway_symmetry_extra
+                dims.append(Dim("left", "gtol", None, v_, " | ".join(cells_), f"gtol:symmetry@{kw['name']}", None, {
+                    "cells": cells_, **hub_keyway_symmetry_extra(hk, ex, cy, g["da"] / 2 * sc)}))
         for h in parts["others"]:
             dims.append(Dim("left", "callout", None, None, h.callout, h.name, None, {}))
     # 表面结构：齿面 Ra 注在分度线上（GB/T 4459.2），轴孔 Ra 注在孔壁（剖视）

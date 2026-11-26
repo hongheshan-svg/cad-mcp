@@ -414,9 +414,9 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             if d.view == "left" and d.kind == "linear" and (d.extra or {}).get("sheet_pts"):
                 draw_sheet_linear(s, d)
                 refs.append(d.ref)
-            elif d.view == "left" and d.kind == "gtol" and (d.extra or {}).get("sheet_at"):
-                from . import render_gdt
-                render_gdt.fcf(s, *d.extra["sheet_at"], tuple(d.extra["normal"]), d.extra["cells"], reach=d.extra["reach"])
+            elif d.view == "left" and d.kind == "gtol" and (d.extra or {}).get("elbow_h"):
+                from .detailing import draw_elbow_fcf
+                draw_elbow_fcf(s, d.extra)
                 refs.append(d.ref)
             elif d.view == "left" and d.kind == "callout" and (d.extra or {}).get("label"):
                 lb = d.extra["label"]

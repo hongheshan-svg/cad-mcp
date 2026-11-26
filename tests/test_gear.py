@@ -74,7 +74,7 @@ def test_sw_gear_drawing_ops():
     dims = {o.args["ref"]: o for o in ops if o.op == "shaft_dimension"}
     assert set(dims) == {"gear_da", "gear_b", "KW_w", "KW_t"}
     assert any(o.op == "leader_note" and o.args["ref"] == "gear_bore" for o in ops)
-    assert sum(o.op == "gtol" for o in ops) == 2 and any(o.op == "datum_tag" for o in ops)
+    assert sum(o.op == "gtol" for o in ops) == 3 and any(o.op == "datum_tag" for o in ops)  # 齿顶、端面跳动 + 键槽对称度
     assert any(o.op == "warn" and "Φ80" in o.args["message"] for o in ops)
     tbl = next(o for o in ops if o.op == "table")
     assert tbl.args["columns"] == ["名称", "代号", "数值"] and len(tbl.args["rows"]) == 9
