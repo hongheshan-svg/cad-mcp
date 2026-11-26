@@ -27,7 +27,9 @@ class CreoAdapter(CadAdapter):
     cad = "creo"
 
     def __init__(self, version: str, host: str = "localhost", port: int = 9056, start_part: str = "",
-                 udf_dir: str = "", library_root: str = "", home: str | None = None):
+                 udf_dir: str = "", library_root: str = "", home: str | None = None,
+                 templates: dict[str, str] | None = None, sheet_unit_scale: float = 1.0,
+                 view_map: dict[str, str] | None = None):
         try:
             import creopyson  # type: ignore[import-not-found]
         except ImportError:
@@ -35,6 +37,7 @@ class CreoAdapter(CadAdapter):
         self.version = version
         self.ext = {"part": ".prt", "assembly": ".asm", "drawing": ".drw"}
         self.start_part, self.udf_dir, self.library_root = start_part, udf_dir, library_root
+        self.templates, self.sheet_unit_scale, self.view_map = templates or {}, sheet_unit_scale, view_map or {}  # 出图用
         self.c = creopyson.Client(ip_adress=host, port=port)
         try:
             self.c.connect()
@@ -54,7 +57,7 @@ class CreoAdapter(CadAdapter):
     def capabilities(self) -> dict[str, str]:
         caps = {c: "none" for c in CAPABILITIES}
         caps.update({"open_existing": "full", "set_parameters_existing": "full", "mass_properties": "full",
-                     "export.step": "partial", "export.pdf": "partial"})
+                     "export.step": "partial", "export.pdf": "partial", "build_drawing": "partial"})
         if self.start_part and self.udf_dir:
             caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial"})
         return caps
@@ -104,7 +107,20 @@ class CreoAdapter(CadAdapter):
         raise CadError(CAPABILITY_UNSUPPORTED, "Creo assembly build: P2（file_assemble + Csys 约束）")
 
     def build_drawing(self, plan, model_file, out_dir, model) -> BuildResult:
-        raise CadError(CAPABILITY_UNSUPPORTED, "Creo drawing build: P2（drawing_create + 模板 + 视图）")
+        from .drawing import CreoDrawingExecutor, compile_drawing
+        ops = compile_drawing(plan, str(model_file), self.templates, self.sheet_unit_scale, self.view_map)
+        ex = CreoDrawingExecutor(self.c)
+        self.c.creo_cd(str(out_dir))  # 图纸保存到输出目录
+        res = ex.run(ops, out_dir, plan.name)
+        oplog = str(out_dir / f"{plan.name}.oplog.json")
+        failed = [r for r in res["log"] if not r["ok"]]
+        if res["status"] == "errors":
+            raise CadError(NATIVE_ERROR, f"Creo drawing {plan.name} failed at op {failed[-1]['op']}",
+                           hint=f"查看 {oplog}；模板/CREOSON 连接是否正常", native_code=failed[-1]["error"])
+        regen = {"status": res["status"], "errors": [], "warnings": ex.warnings, "oplog": oplog}
+        rendered = {"views": ex.readback["views"]} if "views" in ex.readback else {}
+        drw = ex.drawing or plan.name
+        return BuildResult(out_dir / (drw if drw.lower().endswith(".drw") else drw + ".drw"), regen, extra={"rendered": rendered})
 
     def export(self, path: Path, fmt: str, out: Path) -> Path:
         if fmt == "step":
