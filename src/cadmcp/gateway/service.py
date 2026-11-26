@@ -378,8 +378,11 @@ class CadService:
     # ---------------- checks / outputs ----------------
     def _gates(self) -> dict[str, bool]:
         ms = list(self._models().values())
+        s_edits = self.sessions[self.current].edits if self.current else []
         return {
-            "has_models": bool(ms),
+            "has_models": bool(ms) or bool(s_edits),
+            "edits_ok": all(e["regen"]["status"] != "errors" and rules.summarize(e["findings"])["passed"]
+                            for e in s_edits),
             "regen_ok": all(m.regen["status"] != "errors" for m in ms),
             "rules_no_error": all(rules.summarize(m.findings)["passed"] for m in ms if m.kind != "drawing"),
             "drawings_no_error": all(rules.summarize(m.findings)["passed"] for m in ms if m.kind == "drawing"),
@@ -430,8 +433,9 @@ class CadService:
         if any(h["rev"] == revision for h in history):
             raise CadError(POLICY_DENIED, f"revision {revision} already released", hint="使用新的修订号")
         changed = sorted(n for n, m in self._models().items() if m.kind != "drawing")
-        entry = {"rev": revision, "date": _date.today().isoformat(),
-                 "description": description or ("首次发布" if not history else "更改：" + "、".join(changed)),
+        auto = "；".join(e["description"] for e in s.edits) if s.edits else \
+            ("首次发布" if not history else "更改：" + "、".join(changed))
+        entry = {"rev": revision, "date": _date.today().isoformat(), "description": description or auto,
                  "by": by}
         for n, m in list(self._models().items()):
             if m.kind != "drawing":
@@ -443,7 +447,8 @@ class CadService:
             spec = m.spec.model_copy(update={"title_block": tb, "revisions": [*history, entry]})
             self._build(spec, cascade=False)
         gates = self._gates()
-        report = {"models": [m.brief() for m in self._models().values()]}
+        report = {"models": [m.brief() for m in self._models().values()],
+                  "edits": [{k: v for k, v in e.items() if k != "checkpoint"} for e in s.edits]}
         dest = s.commit(revision, gates, report)
         hist_file.write_text(json.dumps([*history, entry], ensure_ascii=False, indent=1), encoding="utf-8")
         return {"ok": True, "release": str(dest), "gates": gates, "revision_entry": entry}
@@ -490,6 +495,133 @@ class CadService:
 
     def search_library(self, query: str = "", category: str | None = None) -> dict[str, Any]:
         return {"ok": True, "items": self.library.search(query, category)}
+
+    # ---------- 修改现有模型 ----------
+    def _work_file(self, file: str) -> Path:
+        s = self._session()
+        p = Path(file)
+        p = (p if p.is_absolute() else s.work / p).resolve()
+        if s.work.resolve() not in p.parents or not p.is_file():
+            raise CadError(DOC_NOT_FOUND, f"{file} is not in this change session's workspace",
+                           hint="先用 cad_change_begin(project, sources=[原文件或目录]) 把文件复制进工作区；可用文件："
+                                + str(sorted(str(q.relative_to(s.work)) for q in s.work.rglob('*') if q.is_file())[:20]))
+        return p
+
+    def inspect_existing(self, file: str) -> dict[str, Any]:
+        s = self._session()
+        p = self._work_file(file)
+        t = self._target(s.target_id)
+        with t.lock:
+            info = t.adapter.inspect(p)
+            used = t.adapter.where_used(p, s.work)
+        return {"ok": True, "file": str(p.relative_to(s.work)), **info,
+                "used_by": [str(q.relative_to(s.work)) for q in used]}
+
+    def edit_existing(self, file: str, edits: list[dict[str, Any]], dry_run: bool = False) -> dict[str, Any]:
+        """修改工作区中的现有模型：校验 → 执行并重建 → 对比 → 更新引用它的装配/工程图。"""
+        from ..edit import check_edits, describe, diff, parse_edits
+        s = self._session()
+        p = self._work_file(file)
+        rel = str(p.relative_to(s.work))
+        t = self._target(s.target_id)
+        parsed = parse_edits(edits)
+        with t.lock:
+            before = t.adapter.inspect(p)
+        findings = check_edits(before, parsed)
+        summ = rules.summarize(findings)
+        if not summ["passed"] or dry_run:
+            return {"ok": summ["passed"], "applied": False, "file": rel, "findings": findings,
+                    **({"hint": "修正 error 后重试；dry_run=false 才会执行"} if not summ["passed"] else {})}
+        n = s.checkpoint(f"before edit {rel}")
+        with t.lock:
+            res = t.adapter.apply_edits(p, parsed)
+        regen = res["regen"]
+        if regen["status"] == "errors":
+            s.log("edit_existing", {"file": rel, "edits": edits}, {"regen": regen})
+            return {"ok": False, "applied": False, "file": rel, "regen": regen, "findings": findings,
+                    "hint": "CAD 重建失败，文件未保存（保持修改前状态）；调整数值后重试"}
+        d = diff(before, res["after"])
+        refreshed = []
+        with t.lock:
+            for q in t.adapter.where_used(p, s.work):
+                r = t.adapter.refresh(q)
+                qr = str(q.relative_to(s.work))
+                refreshed.append({"file": qr, **r})
+                if r.get("status") == "errors":
+                    findings.append({"rule": "E011", "severity": "error", "target": qr,
+                                     "message": f"{qr} 更新失败：{r.get('errors')}"})
+                if r.get("dangling"):
+                    findings.append({"rule": "E010", "severity": "error", "target": qr,
+                                     "message": f"{qr} 有 {r['dangling']} 个悬空标注（引用的特征被压缩/删除）",
+                                     "hint": "在图上删除或重新标注；或撤销压缩（cad_change_rollback 到修改前检查点）"})
+        rec = {"file": rel, "edits": [e.model_dump() for e in parsed], "diff": d, "regen": regen,
+               "refreshed": refreshed, "findings": findings, "description": describe(rel, d), "checkpoint": n}
+        s.edits.append(rec)
+        s.log("edit_existing", {"file": rel, "edits": edits}, {"diff": d, "refreshed": [r["file"] for r in refreshed]})
+        return {"ok": True, "applied": True, **{k: v for k, v in rec.items() if k != "checkpoint"},
+                "rollback_to": n, "rules": rules.summarize(findings)}
+
+    def writeback(self, confirm: bool = False) -> dict[str, Any]:
+        """把已发布版本中改过的源文件回写到原位置（先备份原文件；原文件在此期间被别人改过则不覆盖）。"""
+        import os
+        import shutil
+
+        from ..changeset import _sha
+        s = self._session()
+        if not s.committed:
+            raise CadError(POLICY_DENIED, "commit the change first (cad_change_commit)", hint="回写只针对已发布的版本")
+        rel_dir = Path(s.committed)
+        plan, new_files = [], []
+        for q in sorted(rel_dir.rglob("*")):
+            if not q.is_file() or q.name == "change_report.json" or "_writeback_backup" in q.parts:
+                continue
+            rel = str(q.relative_to(rel_dir))
+            if rel not in s.source_paths:
+                if q.suffix.lower() not in (".json", ".md", ".svg", ".png", ".csv", ".jsonl") and "calcs" not in q.parts:
+                    new_files.append(rel)
+                continue
+            if _sha(q) == s.source_hashes[rel]:
+                continue  # 未修改
+            orig = Path(s.source_paths[rel])
+            item = {"file": rel, "to": str(orig)}
+            try:
+                self.policy.check_writeback(orig)
+            except CadError as e:
+                item.update(status="denied", reason=e.message, hint=e.hint)
+                plan.append(item)
+                continue
+            if not orig.exists():
+                item.update(status="conflict", reason="原文件已被移动或删除")
+            elif _sha(orig) != s.source_hashes[rel]:
+                item.update(status="conflict", reason="原文件在本次修改期间被别人改过，不覆盖",
+                            hint="重新 cad_change_begin 基于最新文件修改")
+            elif not os.access(orig, os.W_OK):
+                item.update(status="readonly", reason="原文件只读", hint="在 PDM 中检出（Check Out）后重试")
+            else:
+                item["status"] = "ready"
+            plan.append(item)
+        blocked = [i["file"] for i in plan if i["status"] != "ready"]
+        if confirm and blocked:  # 全部可写才执行，避免原位置出现"新图配旧零件"
+            s.log("writeback", {"files": [i["file"] for i in plan]}, {"blocked": blocked})
+            return {"ok": False, "confirmed": True, "written": False, "files": plan, "blocked_by": blocked,
+                    "new_files_not_written": new_files,
+                    "note": "有文件不能回写，为保持一致一个都没有写；处理后重试"}
+        if confirm:
+            for item in plan:
+                if item["status"] != "ready":
+                    continue
+                orig = Path(item["to"])
+                bak = rel_dir / "_writeback_backup" / item["file"]
+                bak.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(orig, bak)
+                shutil.copy2(rel_dir / item["file"], orig)
+                ok = _sha(orig) == _sha(rel_dir / item["file"])
+                item.update(status="written" if ok else "failed", backup=str(bak))
+            s.log("writeback", {"files": [i["file"] for i in plan]}, {"result": plan})
+        return {"ok": all(i["status"] in ("ready", "written") for i in plan), "confirmed": confirm, "files": plan,
+                "new_files_not_written": new_files,
+                "note": ("确认无误后用 confirm=true 执行回写" if not confirm else "已回写；PDM 中请检入（Check In）")
+                if plan else "没有需要回写的已修改源文件"}
 
     def open_existing(self, path: str, write: bool = False) -> dict[str, Any]:
         p = Path(path)

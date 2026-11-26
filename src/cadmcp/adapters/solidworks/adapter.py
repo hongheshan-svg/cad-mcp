@@ -71,7 +71,7 @@ class SolidWorksAdapter(CadAdapter):
 
     def capabilities(self) -> dict[str, str]:
         caps = {c: "partial" for c in CAPABILITIES}  # 由契约测试结果覆盖
-        caps.update({"set_parameters_existing": "none", "replace_component": "none"})
+        caps.update({"set_parameters_existing": "partial", "replace_component": "none"})
         return caps
 
     def _executor(self):
@@ -120,6 +120,62 @@ class SolidWorksAdapter(CadAdapter):
         return BuildResult(ex.saved_path, regen, extra={"rendered": {"dim_count": ex.readback.get("dim_count", 0),
                                                                      "notes": ex.readback.get("notes", [])},
                                                         "exports": ex.readback.get("exports", [])})
+
+    # ---- 修改现有模型 ----
+    def _edit_run(self, path: Path, ops, tag: str):
+        from ..native import NativeOp
+        ex = self._executor()
+        res = ex.run([NativeOp("open_document", {"path": str(path)}), *ops], path.parent, f"{path.stem}.{tag}")
+        return ex, res
+
+    def inspect(self, path: Path) -> dict[str, Any]:
+        from ..native import NativeOp
+        ex, res = self._edit_run(path, [NativeOp("inspect", {})], "inspect")
+        if res["status"] == "errors":
+            raise CadError(NATIVE_ERROR, f"inspect {path.name} failed", hint=f"查看 {path.stem}.inspect.oplog.json")
+        return ex.readback["inspect"][0]
+
+    def apply_edits(self, path: Path, edits: list[Any]) -> dict[str, Any]:
+        from ..native import NativeOp
+        ops = []
+        units = {d["name"]: d.get("unit", "mm") for d in self.inspect(path).get("dimensions", [])}
+        for e in edits:
+            if e.op == "set_dimension":
+                ops.append(NativeOp("set_dimension", {"name": e.name, "value": e.value, "unit": units.get(e.name, "mm")}))
+            elif e.op == "set_variable":
+                ops.append(NativeOp("set_variable", {"name": e.name, "value": e.value}))
+            elif e.op == "set_property":
+                ops.append(NativeOp("set_custom_properties", {"properties": {e.name: e.value}}))
+            elif e.op == "suppress":
+                ops.append(NativeOp("suppress", {"feature": e.feature, "suppressed": e.suppressed}))
+            elif e.op == "set_material":
+                ops.append(NativeOp("set_material", {"database": "", "name": e.material}))
+        ops += [NativeOp("rebuild", {}), NativeOp("collect_feature_errors", {}), NativeOp("inspect", {})]
+        ex, res = self._edit_run(path, ops, "edit")
+        regen = {"status": res["status"], "oplog": str(path.parent / f"{path.stem}.edit.oplog.json"),
+                 "errors": [f"{r['op']}: {r['error']}" for r in res["log"] if not r["ok"]]}
+        if res["status"] != "errors":
+            ex.op_save_document()
+        ex.op_close_document()  # 出错时不保存直接关闭：工作副本保持原样
+        return {"regen": regen, "after": (ex.readback.get("inspect") or [None])[-1]}
+
+    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
+        out = []
+        for q in list(search_dir.rglob("*.SLDASM")) + list(search_dir.rglob("*.SLDDRW")):
+            deps = self.sw.GetDocumentDependencies2(str(q), False, True, False) or []
+            if any(str(d).lower().endswith(path.name.lower()) for d in deps[1::2]):
+                out.append(q)
+        return out
+
+    def refresh(self, path: Path) -> dict[str, Any]:
+        from ..native import NativeOp
+        ops = [NativeOp("rebuild", {}), NativeOp("count_dangling", {}), NativeOp("save_document", {})]
+        if path.suffix.upper() == ".SLDDRW":
+            ops.append(NativeOp("export", {"format": "pdf"}))
+        ex, res = self._edit_run(path, ops, "refresh")
+        ex.op_close_document()
+        return {"status": res["status"], "dangling": ex.readback.get("dangling", 0),
+                "exports": ex.readback.get("exports", [])}
 
     def open(self, path: Path, readonly: bool) -> dict[str, Any]:
         c = self.constants

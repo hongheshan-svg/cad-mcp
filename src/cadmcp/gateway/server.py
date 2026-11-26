@@ -35,6 +35,7 @@ _svc: CadService | None = None
 
 RO = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WR = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+DW = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
 COMMIT = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
 DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False)
 
@@ -170,6 +171,37 @@ def cad_build_frame(spec: dict[str, Any]) -> dict[str, Any]:
     construction="welded" 生成方管焊接机架（section 默认 SHS40x3，feet 地脚板），作为一个焊接件零件，
     返回切割清单；之后可 cad_build_drawing 出焊接件图（焊缝符号、切割清单、焊接技术要求）。"""
     return svc().build_frame(spec)
+
+
+@mcp.tool(annotations=RO)
+@safe
+def cad_inspect_existing(file: str) -> dict[str, Any]:
+    """读出工作区中现有模型（旧零件/装配/工程图）：特征树（压缩状态、父子关系）、全部尺寸全名与数值、
+    方程式与全局变量、自定义属性、材料、质量，以及引用它的装配/工程图（used_by）。
+    文件须先用 cad_change_begin(project, sources=[...]) 复制进工作区；file 为工作区内相对路径。"""
+    return svc().inspect_existing(file)
+
+
+@mcp.tool(annotations=WR)
+@safe
+def cad_edit_existing(file: str, edits: list[dict[str, Any]], dry_run: bool = False) -> dict[str, Any]:
+    """修改现有模型。edits 为指令列表：
+    {"op":"set_dimension","name":"D1@凸台-拉伸1","value":20} / {"op":"set_variable","name":"pitch","value":180} /
+    {"op":"suppress","feature":"圆角1","suppressed":true} / {"op":"set_property","name":"Description","value":"..."} /
+    {"op":"set_material","material":"AL6061-T6"}。
+    先校验（名称存在、方程式驱动的尺寸要改变量、变化幅度）；dry_run=true 只校验。执行后重建，出错不保存；
+    成功则返回改前改后对比（尺寸/质量/包围盒），并自动更新引用它的装配和工程图、检查悬空标注。
+    每次修改前自动建检查点（rollback_to）。发布后可用 cad_change_writeback 回写原位置。"""
+    return svc().edit_existing(file, edits, dry_run)
+
+
+@mcp.tool(annotations=DW)
+@safe
+def cad_change_writeback(confirm: bool = False) -> dict[str, Any]:
+    """把已发布版本中修改过的源文件回写到原位置（共享盘 / PDM 检出目录）。confirm=false 只列出计划；
+    原文件先备份到发布目录 _writeback_backup；原文件期间被别人改过（冲突）、只读（PDM 未检出）、
+    或不在 policy.writeback_allow 中的都不会覆盖。平台新建的文件不回写，需按公司流程入库。"""
+    return svc().writeback(confirm)
 
 
 @mcp.tool(annotations=WR)

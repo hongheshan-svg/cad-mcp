@@ -22,7 +22,7 @@ MM = 0.001
 NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
-                "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list"}
+                "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling"}
 
 
 class OpFailed(Exception):
@@ -722,6 +722,125 @@ class SwExecutor:
             v = v.GetNextView()
         self.readback["dim_count"] = dims
         return {"dim_count": dims}
+
+    # ---------- 修改现有文档 ----------
+    def op_open_document(self, path: str):
+        ext = Path(path).suffix.upper()
+        dt = {".SLDPRT": self.c.swDocPART, ".SLDASM": self.c.swDocASSEMBLY, ".SLDDRW": self.c.swDocDRAWING}[ext]
+        doc = self.sw.OpenDoc6(path, dt, self.c.swOpenDocOptions_Silent, "", 0, 0)
+        if doc is None:
+            raise OpFailed(f"OpenDoc6 failed for {path}")
+        self.model = doc
+        self.saved_path = Path(path)
+        return {"title": doc.GetTitle()}
+
+    def _dim_value(self, dd, dim) -> tuple[float, str]:
+        ang = getattr(self.c, "swAngularDimension", None)
+        is_ang = ang is not None and dd.Type2 == ang
+        v = float(dim.SystemValue)
+        return (round(math.degrees(v), 6), "deg") if is_ang else (round(v / MM, 6), "mm")
+
+    def op_inspect(self):
+        """特征树（名称/类型/压缩/父特征）、尺寸（全名/值/是否从动）、方程式与全局变量、属性、材料、质量。"""
+        m = self.model
+        feats, dims = [], []
+        f = m.FirstFeature()
+        while f is not None:
+            try:
+                sup = bool(f.IsSuppressed())
+            except Exception:  # noqa: BLE001
+                sup = False
+            try:
+                parents = [x.Name for x in (f.GetParents() or [])]
+            except Exception:  # noqa: BLE001
+                parents = []
+            feats.append({"name": f.Name, "type": f.GetTypeName2(), "suppressed": sup, "parents": parents})
+            dd = f.GetFirstDisplayDimension()
+            while dd is not None:
+                dim = dd.GetDimension2(0)
+                val, unit = self._dim_value(dd, dim)
+                dims.append({"name": dim.FullName, "value": val, "unit": unit, "feature": f.Name,
+                             "driven": bool(dim.DrivenState == getattr(self.c, "swDimensionDriven", -99))})
+                dd = f.GetNextDisplayDimension(dd)
+            f = f.GetNextFeature()
+        eqm = m.GetEquationMgr()
+        equations, variables = [], []
+        for i in range(eqm.GetCount()):
+            text = str(eqm.Equation(i))
+            lhs, _, rhs = text.partition("=")
+            lhs = lhs.strip().strip('"')
+            if eqm.GlobalVariable(i):
+                variables.append({"name": lhs, "value": float(eqm.Value(i)), "equation": text})
+            else:
+                equations.append({"lhs": lhs, "rhs": rhs.strip(), "index": i})
+        mgr = m.Extension.CustomPropertyManager("")
+        props = {}
+        for n in (mgr.GetNames() or []):
+            res = mgr.Get6(n, False)
+            props[n] = str(res[2] if isinstance(res, tuple) and len(res) > 2 else res)
+        info = {"kind": {self.c.swDocPART: "part", self.c.swDocASSEMBLY: "assembly",
+                         self.c.swDocDRAWING: "drawing"}.get(m.GetType(), "?"),
+                "features": feats, "dimensions": dims, "equations": equations, "variables": variables,
+                "properties": [{"name": k, "value": v} for k, v in props.items()]}
+        if info["kind"] == "part":
+            got = m.GetMaterialPropertyName2("", "")
+            info["material"] = got[0] if got else ""
+            mp = m.Extension.CreateMassProperty()
+            info["mass_kg"] = round(float(mp.Mass), 4)
+            box = m.GetPartBox(True)
+            info["bbox_mm"] = [round((box[i + 3] - box[i]) / MM, 3) for i in range(3)] if box else None
+        self.readback.setdefault("inspect", []).append(info)
+        return {"features": len(feats), "dimensions": len(dims)}
+
+    def op_set_dimension(self, name: str, value: float, unit: str = "mm"):
+        dim = self.model.Parameter(name)
+        if dim is None:
+            raise OpFailed(f"dimension {name} not found")
+        sv = math.radians(value) if unit == "deg" else value * MM
+        err = dim.SetSystemValue3(sv, self.c.swSetValue_InThisConfiguration, None)
+        if err not in (0, None):
+            raise OpFailed(f"SetSystemValue3({name}) returned {err}")
+        return {}
+
+    def op_set_variable(self, name: str, value: float):
+        eqm = self.model.GetEquationMgr()
+        for i in range(eqm.GetCount()):
+            if eqm.GlobalVariable(i) and str(eqm.Equation(i)).split("=")[0].strip().strip('"') == name:
+                eqm.SetEquation(i, f'"{name}" = {value:g}')
+                return {"index": i}
+        raise OpFailed(f"global variable {name} not found")
+
+    def op_suppress(self, feature: str, suppressed: bool = True):
+        self.model.ClearSelection2(True)
+        if not self.model.Extension.SelectByID2(feature, "BODYFEATURE", 0, 0, 0, False, 0, None, 0):
+            raise OpFailed(f"cannot select feature {feature}")
+        ok = self.model.EditSuppress2() if suppressed else self.model.EditUnsuppress2()
+        if not ok:
+            raise OpFailed(f"{'EditSuppress2' if suppressed else 'EditUnsuppress2'} failed")
+        return {}
+
+    def op_count_dangling(self):
+        n = 0
+        v = self.model.GetFirstView()
+        while v is not None:
+            for a in (v.GetAnnotations() or []):
+                try:
+                    n += 1 if a.IsDangling() else 0
+                except Exception:  # noqa: BLE001
+                    pass
+            v = v.GetNextView()
+        self.readback["dangling"] = n
+        return {"dangling": n}
+
+    def op_save_document(self):
+        res = self.model.Save3(self.c.swSaveAsOptions_Silent, 0, 0)
+        if res is False:
+            raise OpFailed("Save3 failed")
+        return {"path": str(self.saved_path)}
+
+    def op_close_document(self):
+        self.sw.CloseDoc(self.model.GetTitle())
+        return {}
 
     # ---------- 保存/导出 ----------
     def op_save_as(self, name: str, ext: str):

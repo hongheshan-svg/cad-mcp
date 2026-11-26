@@ -16,7 +16,7 @@ ARITY = {
     "CreateSketchSlot": 14, "AddComponent5": 8, "AutoDimension": 5, "CreateDrawViewFromModelView3": 5,
     "SetUserPreferenceInteger": 3, "Add3": 4, "InsertSketch": 1, "CreateLine": 6,
     "SketchManager.CreatePoint": 3, "GetMathUtility().CreatePoint": 1,
-    "CreateFillet": 2, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
+    "CreateFillet": 2, "SetSystemValue3": 3, "Save3": 3, "GetDocumentDependencies2": 4, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
 }
 
 
@@ -68,7 +68,8 @@ class FakeMethod(Fake):
                "GetPartBox": [0, 0, 0, 0.1, 0.1, 0.01], "GetSize": (0, 0.42, 0.297),
                "GetInterferences": [], "GetDisplayDimensions": [1, 2, 3], "CreateCenterRectangle": [1, 2, 3, 4],
                "GetTitle": "doc", "RevisionNumber": "32.1.0", "SetUserPreferenceInteger": True,
-               "Select2": True, "Add2": 0, "AutoDimension": 0, "GetMaterialPropertyName2": ("6061-T6 (SS)", "SOLIDWORKS Materials")}
+               "Select2": True, "Add2": 0, "GetCount": 0, "GetNames": None, "SetSystemValue3": 0,
+               "GetDocumentDependencies2": [], "GetType": 0, "AutoDimension": 0, "GetMaterialPropertyName2": ("6061-T6 (SS)", "SOLIDWORKS Materials")}
         if name in ret:
             return ret[name]
         return Fake(root, self._path + "()")
@@ -86,6 +87,30 @@ class _Chain(Fake):
             return lambda: _Chain(self._root, self._items, nxt) if nxt < self._items else None
         if name == "GetTypeName2":
             return lambda: "RefPlane"
+        if name == "Name":
+            return f"F{self._i}"
+        if name == "GetFirstDisplayDimension":
+            return lambda: _Dim(self._root, f"D1@F{self._i}")
+        if name == "GetNextDisplayDimension":
+            return lambda dd: None
+        return super().__getattr__(name)
+
+
+class _Dim(Fake):
+    """显示尺寸 + 尺寸（GetDimension2 返回自身）。"""
+    def __init__(self, root, full):
+        super().__init__(root, "dim")
+        object.__setattr__(self, "_full", full)
+
+    def __getattr__(self, name):
+        if name == "GetDimension2":
+            return lambda i: self
+        if name == "FullName":
+            return self._full
+        if name == "SystemValue":
+            return 0.01
+        if name in ("Type2", "DrivenState"):
+            return 0
         return super().__getattr__(name)
 
 

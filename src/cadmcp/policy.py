@@ -15,9 +15,11 @@ class Policy:
     release_root: Path
     read_allow: list[Path] = field(default_factory=list)
     allow_upgrade_save: bool = False
-    commit_requires: list[str] = field(default_factory=lambda: ["regen_ok", "rules_no_error", "drawings_no_error"])
+    commit_requires: list[str] = field(default_factory=lambda: ["regen_ok", "rules_no_error", "drawings_no_error",
+                                                                 "edits_ok"])
     native_call_enabled: bool = False
     mass_tolerance: float = 0.03
+    writeback_allow: list[Path] = field(default_factory=list)  # 允许把发布结果回写的原位置（共享盘/PDM 检出目录）
 
     @classmethod
     def load(cls, path: str | Path | None, workspace_root: str | Path | None = None) -> "Policy":
@@ -31,6 +33,7 @@ class Policy:
             commit_requires=list(data.get("commit_requires", cls.__dataclass_fields__["commit_requires"].default_factory())),
             native_call_enabled=bool(data.get("native_call_enabled", False)),
             mass_tolerance=float(data.get("mass_tolerance", 0.03)),
+            writeback_allow=[Path(p).resolve() for p in data.get("writeback_allow", [])],
         )
 
     @staticmethod
@@ -42,6 +45,11 @@ class Policy:
         if not self._under(p, self.read_allow + [self.workspace_root, self.release_root]):
             raise CadError(POLICY_DENIED, f"reading {p} is not allowed",
                            hint="路径需在 policy.read_allow 中（设计库/PDM 检出目录）")
+
+    def check_writeback(self, p: Path) -> None:
+        if not self._under(p, self.writeback_allow):
+            raise CadError(POLICY_DENIED, f"writing back to {p} is not allowed",
+                           hint="管理员在 policy.writeback_allow 中加入该目录后才能回写；否则请人工把发布目录的文件放回原处")
 
     def check_write(self, p: Path) -> None:
         if not self._under(p, [self.workspace_root, self.release_root]):

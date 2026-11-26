@@ -106,3 +106,21 @@ def test_sw_executor_weldment(sw_svc):
     assert cuts and all(a[3] == FakeConstants().swEndCondBlind for a in cuts)  # 板孔不打穿到杆件
     notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
     assert any("K3 ◣ ○" in n for n in notes)
+
+
+def test_sw_edit_existing(sw_svc, tmp_path):
+    svc, ad = sw_svc
+    src = tmp_path / "designs"
+    src.mkdir()
+    (src / "Old.SLDPRT").write_bytes(b"sw-binary")
+    svc.policy.read_allow.append(src.resolve())
+    svc.change_begin("OLD", sources=[str(src / "Old.SLDPRT")])
+    info = svc.inspect_existing("Old.SLDPRT")
+    assert {"name": "D1@F2", "value": 10.0, "unit": "mm", "feature": "F2", "driven": False} in info["dimensions"]
+    r = svc.edit_existing("Old.SLDPRT", [{"op": "set_dimension", "name": "D1@F2", "value": 12},
+                                         {"op": "suppress", "feature": "F3"}])
+    assert r["applied"], r
+    sets = [c[1] for c in ad.sw.calls if c[0] == "SetSystemValue3"]
+    assert sets and sets[0][0] == pytest.approx(0.012)
+    names = [c[0] for c in ad.sw.calls]
+    assert "EditSuppress2" in names and "Save3" in names and "ForceRebuild3" in names

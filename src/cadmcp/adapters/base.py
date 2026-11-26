@@ -1,6 +1,8 @@
 """适配器接口。Gateway 负责 IR 解析/规则/出图规划；适配器只负责"编译成原生模型并测量"。"""
 from __future__ import annotations
 
+from ..errors import CAPABILITY_UNSUPPORTED, CadError
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +59,23 @@ class CadAdapter(ABC):
     @abstractmethod
     def build_drawing(self, plan: DrawingPlan, model_file: Path, out_dir: Path,
                       model: ResolvedPart | ResolvedAssembly) -> BuildResult: ...
+
+    # ---- 修改现有模型（可选能力）----
+    def inspect(self, path: Path) -> dict[str, Any]:
+        """特征树、尺寸、方程式/全局变量、属性、材料、质量。"""
+        raise CadError(CAPABILITY_UNSUPPORTED, f"{self.cad}: inspect existing models not supported")
+
+    def apply_edits(self, path: Path, edits: list[Any]) -> dict[str, Any]:
+        """执行修改并重建；返回 {regen, after}。重建出错时不保存。"""
+        raise CadError(CAPABILITY_UNSUPPORTED, f"{self.cad}: editing existing models not supported")
+
+    def where_used(self, path: Path, search_dir: Path) -> list[Path]:
+        """search_dir 中引用 path 的装配/工程图。"""
+        return []
+
+    def refresh(self, path: Path) -> dict[str, Any]:
+        """重建引用文档（装配/工程图）并保存；工程图返回悬空标注数。"""
+        raise CadError(CAPABILITY_UNSUPPORTED, f"{self.cad}: refresh not supported")
 
     @abstractmethod
     def open(self, path: Path, readonly: bool) -> dict[str, Any]: ...

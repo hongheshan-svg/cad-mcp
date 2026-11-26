@@ -83,6 +83,16 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 记录：尺寸是否全对、图面是否可直接用于加工、工程师还需要改哪些地方、改图用了多少分钟。
 **这一步的结论决定"替代画图"能否成立。**
 
+### 3b. 修改一个现有零件（约 10 分钟）
+
+复制一个**不重要的**旧零件及其工程图到 `D:\designs\test\`（确保在 policy 的 `read_allow` 中），在 Claude Code 中说：
+"打开 D:\designs\test 里的 XX 零件，把板厚改成 12，更新图纸"。平台会：
+`cad_change_begin(sources=[目录])` → `cad_inspect_existing` → `cad_edit_existing` → `cad_change_commit`。
+
+记录：inspect 读到的尺寸名是否完整（中文版特征名如"凸台-拉伸1"）、改后质量是否变化、工程图是否自动更新、
+有无悬空尺寸。需要回写时先在 policy 加 `writeback_allow`，再 `cad_change_writeback(confirm=true)`；
+**原文件会先备份到发布目录 `_writeback_backup`**。发回 `*.inspect.oplog.json`、`*.edit.oplog.json`、`*.refresh.oplog.json`。
+
 ## 4. Creo 探针（约 5 分钟）
 
 1. 启动 Creo 10，启动 CREOSON（CreosonSetup → Start，默认端口 9056）。
@@ -122,6 +132,6 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 
 1. `probe_report_sw.json`、`probe_report_creo.json`
 2. `D:\cadmcp\workspaces\c-*\work\` 下的 `*.oplog.json`、`*.PDF`、第 2 步中的截图
-3. 第 3 步的对照记录
+3. 第 3 步的对照记录、3b 的修改记录与 oplog
 4. SolidWorks 语言版本（中文/英文）、SP 号；Creo 维护版本号（如 10.0.2.0）
 5. 公司 GB 图框模板文件（`.drwdot`）、材料库名称——用于下一轮把图纸做成公司标准样式

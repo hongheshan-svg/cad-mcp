@@ -30,6 +30,8 @@ class ChangeSession:
     policy: Policy
     checkpoints: list[str] = field(default_factory=list)
     source_hashes: dict[str, str] = field(default_factory=dict)
+    source_paths: dict[str, str] = field(default_factory=dict)  # 相对名 → 原始绝对路径（回写用）
+    edits: list[dict] = field(default_factory=list)  # 对现有文件的修改记录
     committed: str | None = None
 
     @property
@@ -65,6 +67,7 @@ class ChangeSession:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(q, dest)
                 s.source_hashes[str(rel)] = _sha(q)
+                s.source_paths[str(rel)] = str(q.resolve())
         for f in s.src.rglob("*"):
             if f.is_file():
                 f.chmod(0o444)

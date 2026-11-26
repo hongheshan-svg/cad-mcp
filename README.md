@@ -107,6 +107,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 | 变更会话 | `cad_change_begin` `cad_change_status` `cad_checkpoint` `cad_change_rollback` `cad_change_commit` |
 | 建模 | `cad_build_part` `cad_build_assembly` `cad_build_frame` `cad_build_drawing` `cad_set_parameters` |
 | 读取 | `cad_get_model` `cad_search_library` `cad_open_existing` |
+| 修改现有模型 | `cad_inspect_existing` `cad_edit_existing` `cad_change_writeback`（改尺寸/变量/属性/材料、压缩特征；自动更新引用的图纸并查悬空标注；发布后回写原位置） |
 | 选型计算 | `cad_calc`（气缸、伺服+丝杠、同步带、螺栓组，输出计算书） |
 | 校验与输出 | `cad_validate` `cad_check_interference` `cad_export_bom` `cad_export` |
 
