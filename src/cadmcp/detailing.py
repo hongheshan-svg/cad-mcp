@@ -1300,6 +1300,32 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": pos, "orient": orient}
 
 
+def local_section_sheet(plan: "DrawingPlan", s) -> dict[str, Any] | None:
+    """局部剖的 CAD 原生参数（与 render_svg 的 _draw_local 同一几何）：
+    boundary = 局部区域闭合折线（图纸 mm，两条波浪线围成，上下各外扩 1 mm 保证包住轮廓），
+    cut_points = 剖切面在零件顶面上的两点（模型坐标）：H 区间 [h0, h1]、深度 D = d。"""
+    from .section import _p3
+    v = next((v for v in plan.views if v.type == s.view), None)
+    region = (s.geometry or {}).get("region")
+    if v is None or v.type not in VIEW_AXES or not region or s.bbox is None or not s.path:
+        return None
+    ha, va = VIEW_AXES[v.type]
+    pts = [_uv_sheet(v, s.bbox, (vc(q, ha), vc(q, va))) for q in region[0]]
+    ys = [y for _, y in pts]
+    lo, hi = min(ys), max(ys)
+    pts = [(x, y - 1 if abs(y - lo) < 1e-6 else y + 1 if abs(y - hi) < 1e-6 else y) for x, y in pts]
+    out: list[tuple[float, float]] = []
+    for x, y in pts:  # 去掉重复点
+        q = (round(x, 2), round(y, 2))
+        if not out or out[-1] != q:
+            out.append(q)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    h0, h1, d = s.path[0]
+    z = s.bbox.zmax
+    return {"boundary": out, "cut_points": [_p3(s.view, h0, d, z), _p3(s.view, h1, d, z)]}
+
+
 def ordinate_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     """坐标尺寸的图纸坐标（mm），与 render_svg 的坐标尺寸带一致，供 CAD 原生坐标尺寸选边：
     extra["sheet_pts"] = [基准轮廓边上一点（横向取左边线、纵向取下边线），被标注要素边上一点（孔取圆周最近点）]，

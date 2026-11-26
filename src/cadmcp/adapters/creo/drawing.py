@@ -195,7 +195,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     """DrawingPlan → 逐项 `tk.drw.*`。坐标全部是规划层已算好的图纸坐标（mm，左下角原点），与 SVG 预览一致：
     尺寸 sheet_pts/sheet_pos/orient，引线标注 extra["label"]，精度符号 sheet_at/sheet_pos，孔表 hole_table_box，
     修订表 revision_table_origin，球标 anchor/pos。缺坐标的项不发命令，汇总成一条 warn。"""
-    from ...detailing import REV_COLUMNS, revision_rows, revision_table_origin
+    from ...detailing import REV_COLUMNS, local_section_sheet, revision_rows, revision_table_origin
     ops: list[NativeOp] = []
     D = "$drawing"
     skipped: dict[str, int] = {}
@@ -205,8 +205,15 @@ def tk_detail_ops(plan) -> list[NativeOp]:
 
     # 剖视：先由 CREOSON 建好被替代的投影视图，这里设为 2D 剖视（首期 full/half；step/local 服务端报未实现）
     for s in plan.sections:
-        if s.kind == "local":
-            skip("局部剖（TOOLKIT 首期未实现）")
+        if s.kind == "local":  # 在原视图上局部剖：边界 = 规划层波浪线区域（图纸 mm）
+            loc = local_section_sheet(plan, s)
+            if loc is None:
+                skip("局部剖（缺区域几何）")
+                continue
+            ops.append(NativeOp("tk.drw.section", {
+                "drawing": D, "parent": view_name(s.parent) if s.parent else "", "replaces": view_name(s.view),
+                "label": s.label, "kind": "local", "cut_points": [list(p) for p in loc["cut_points"]],
+                "boundary": [list(p) for p in loc["boundary"]]}, "局部剖：样条边界 + 剖截面"))
             continue
         ops.append(NativeOp("tk.drw.section", {
             "drawing": D, "parent": view_name(s.parent), "replaces": view_name(s.view), "label": s.label,

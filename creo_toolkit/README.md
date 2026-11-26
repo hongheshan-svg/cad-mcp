@@ -47,8 +47,8 @@ cmake --build build --config Release
 
 - `feat.hole` 用拉伸切除实现，不建 118° 钻尖。
 - `feat.cosmetic_thread` 只建简单螺纹（不查 .hol 螺纹表），深度方向先试正向、失败再反向。
-- `drw.section` 的 half：分界面固定取垂直剖切线的默认基准面，保留哪一半用 Creo 默认；local 需要 Python 端给出 `boundary`
-  （规划层局部剖区域的图纸坐标），目前 Python 端仍跳过局部剖。
+- `drw.section` 的 half：分界面固定取垂直剖切线的默认基准面，保留哪一半用 Creo 默认；local 的 `boundary` 由规划层 `local_section_sheet` 给出
+  （波浪线围成的区域，图纸 mm，与 SVG 预览同一几何）。
 - 钣金、焊接件建模仍不走 TOOLKIT。
 - 装配：带偏移/旋转的放置只按位姿固定（不建约束）；空白装配（无 start_asm）没有 ASM_DEF_CSYS，对装配本身的坐标系约束会退回固定。
 

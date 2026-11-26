@@ -177,3 +177,21 @@ def test_toolkit_failure_only_warns(creo, tk, tmp_path):
     br = _adapter(tk).build_drawing(_plan(PLATE_PRECISION), tmp_path / "pp.prt", tmp_path, None)
     assert br.regen["status"] == "warnings" and any("drw.gtol" in w for w in br.regen["warnings"])
     assert "interface_export_pdf" in [n for n, _ in creo.calls]
+
+
+def test_local_section_boundary(creo, tk, tmp_path):
+    from test_section import BAR
+
+    from cadmcp.detailing import local_section_sheet
+    plan = _plan(BAR)
+    s = next(s for s in plan.sections if s.kind == "local")
+    loc = local_section_sheet(plan, s)
+    front = next(v for v in plan.views if v.type == "front")
+    xs = [x for x, _ in loc["boundary"]]
+    cx = front.origin_on_sheet[0] + (-90 - 0) * front.scale  # M8 孔在 x=-90（零件中心 x=0）
+    assert min(xs) < cx < max(xs) and len(loc["boundary"]) > 8
+    (x0, y0, z0), (x1, y1, z1) = loc["cut_points"]
+    assert y0 == y1 == 0 and z0 == z1 == 20 and x0 < -90 < x1   # 过孔轴线的竖直面，在顶面上
+    _adapter(tk).build_drawing(plan, tmp_path / "bar.prt", tmp_path, None)
+    sec = next(a for c, a in tk.calls if c == "drw.section")
+    assert sec["kind"] == "local" and sec["replaces"] == "V_FRONT" and len(sec["boundary"]) == len(loc["boundary"])
