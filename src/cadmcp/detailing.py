@@ -720,6 +720,8 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
     plan.hole_table, plan.hole_table_view = ht_rows, ht_view
+    if not ht_rows:
+        _balance_views(plan)
     if ht_rows:
         plan.hole_table_box = _place_table(plan, HOLE_TABLE_W, 5 * (len(ht_rows) + 1) + 8)
     plan.missing_views = sorted(missing_views)
@@ -752,6 +754,44 @@ def right_column_bottom(plan: "DrawingPlan") -> float:
 
 
 GR_W, GR_H = 48.0, 10.0  # "其余 √Ra x (√)" 占位（render_gdt.general_roughness）
+
+
+def _balance_views(plan: "DrawingPlan") -> None:
+    """视图组整体下移，使图纸上下留白均匀（工程师不会把视图全挤在左上角）。
+    视图外扩：下/左各 30 mm（总体尺寸、坐标尺寸带），上 12 mm（剖视名称），右 16 mm；
+    与右侧标题栏/技术要求栏横向重叠的视图，下沿不得低于该栏顶部。"""
+    W, H = plan.sheet_size
+    if not plan.views:
+        return
+    col_x = W - 5 - 180
+    col_top = 5 + 56 + 14 + 5 * len(plan.notes) + 6 + 16  # 同 right_column_bottom（含"其余"粗糙度）
+    proj = [v for v in plan.views if v.type != "iso"]  # 轴测图不标尺寸、不与投影对齐：原位不动
+    if not proj:
+        return
+    top_gap, bot_gap = float("inf"), float("inf")
+    for v in proj:
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        x1, y0, y1 = cx + vw / 2 + 16, cy - vh / 2 - 30, cy + vh / 2 + 12
+        top_gap = min(top_gap, H - MARGIN - 2 - y1)
+        bot_gap = min(bot_gap, y0 - ((col_top + 4) if x1 > col_x else MARGIN + 2))
+    m = (bot_gap - top_gap) / 2
+    if m <= 2:
+        return
+    m = min(m, bot_gap)
+
+    def box(v, dy, pad):
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        return (cx - vw / 2 - pad, cy - dy - vh / 2 - pad, cx + vw / 2 + pad, cy - dy + vh / 2 + pad)
+    fixed = [box(v, 0, 2) for v in plan.views if v.type == "iso"]
+    while m > 2 and any(_box_hit(box(v, m, 16), f) > 0 for v in proj for f in fixed):
+        m -= 2  # 下移后压到轴测图：少移一点
+    if m <= 2:
+        return
+    m = round(m, 1)
+    for v in proj:
+        v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - m)
 
 
 def notes_x(plan: "DrawingPlan") -> float:

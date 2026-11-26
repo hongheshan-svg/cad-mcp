@@ -73,3 +73,19 @@ def test_pocket_floor_roughness():
     bad = {**spec, "tolerances": [{"type": "flatness", "value": 0.02, "target": "pocket:PK"}]}
     with pytest.raises(CadError):
         resolve_part(PartSpec.model_validate(bad))
+
+
+def test_views_balanced_vertically():
+    """视图组上下留白均匀，不挤在左上角；轴测图原位。"""
+    import sys
+    sys.path.insert(0, "examples")
+    from cast_bracket import cast_base
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate(cast_base()))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    W, H = plan.sheet_size
+    proj = [v for v in plan.views if v.type != "iso"]
+    top = H - 7 - max(v.origin_on_sheet[1] + v.size_mm[1] / 2 + 12 for v in proj)
+    bot = min(v.origin_on_sheet[1] - v.size_mm[1] / 2 - 30 for v in proj) - 7
+    assert abs(top - bot) < 3, (top, bot)
