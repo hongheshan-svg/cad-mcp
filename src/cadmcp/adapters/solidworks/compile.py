@@ -548,6 +548,14 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                 "points": [[round(mx, 3), round(mcy + mh / 2 + 5, 3)], [round(mx, 3), round(mcy - mh / 2 - 5, 3)]]},
                 "主视图画垂直轴线的剖切线（上下伸出 5 mm）→ CreateSectionViewAt5（只显示切面）→ 解除对齐，移到规划位置"))
             continue
+        if v.type == "detail":  # 局部放大图：主视图上画圆 → CreateDetailViewAt4（放大比例、罗马数字）
+            from fractions import Fraction
+            fr = Fraction(v.scale).limit_denominator(10)
+            ops.append(NativeOp("detail_view", {
+                "label": v.label, "parent": plan.views[0].type, "circle": list(v.detail["circle"]),
+                "center": v.origin_on_sheet, "scale": [fr.numerator, fr.denominator]},
+                "父视图中 CreateCircleByRadius → 选中 → IDrawingDoc.CreateDetailViewAt4（锯齿轮廓 = GB 波浪线）"))
+            continue
         if any(s.view == v.type and s.kind != "local" for s in plan.sections):
             continue  # 由剖视图替代（在父视图之后生成）
         name, angle = (SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front"
@@ -592,6 +600,13 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                       "widths": [w for _, w in t["columns"]], "rows": [list(r) for r in t["rows"]],
                                       "title": "齿轮参数表"}, "图框右上角齿轮参数表"))
     if plan.layout == "shaft":
+        for d in plan.dims:  # 局部放大图内尺寸（槽宽、槽深）：放大图坐标下选边
+            ex = d.extra or {}
+            if d.view == "detail" and ex.get("pick_pts"):
+                ops.append(NativeOp("shaft_dimension", {"view": f"detail:{ex['detail']}", "kind": "linear", "text": d.text,
+                                                        "at": None, "ref": d.ref, "pts": ex["pick_pts"],
+                                                        "pos": ex.get("sheet_pos"), "orient": ex.get("orient")},
+                                    "放大图中选两条边线 AddDimension2"))
         for d in plan.dims:  # 左视图（套类内键槽）：选边点标注，同齿轮图
             ex = d.extra or {}
             if d.view == "left" and d.kind == "linear" and ex.get("pick_pts"):
@@ -599,7 +614,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                         "ref": d.ref, "pts": ex["pick_pts"], "pos": ex.get("sheet_pos"),
                                                         "orient": ex.get("orient")}, "键槽宽 JS9 / d+t2：选两条边线"))
         for d in plan.dims:
-            if d.view == "left":
+            if d.view in ("left", "detail"):
                 continue
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):
                 ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）

@@ -476,3 +476,13 @@ Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺�
   实机核对两个视图里键槽是否都朝上、左视图是否真是从 z=0 端看；不对就改 `SW_SHAFT_VIEW` 与左视图映射（compile.py 一处）。
 - Creo 左视图是主视图的投影视图，随主视图朝向（仍依赖 FRONT 命名视图定向为轴线水平）。
 - 轮毂槽深 t2 表（`standards.HUB_T2`）按 GB/T 1095 常用值录入，未对照原文。
+
+## 砂轮越程槽 + 局部放大图（TODO(实机核对)）
+
+样例：`tests/test_grinding_undercut.py`（GR1：两处越程槽 → 放大图 I、II，5:1）。
+- SW：`detail_view` = 主视图里 `CreateCircleByRadius` → `CreateDetailViewAt4`（12 个参数；Style/Showtype 枚举取 0；
+  锯齿轮廓）。核对放大图位置、比例 5:1、标签 I；放大图里槽宽/槽深两个尺寸能否按选边点生成（视图名 `detail:I`）。
+- Creo：`tk.drw.detail_view` → `ProDrawingViewDetailCreate`（签名、边界样条坐标系待核对）+ `ProDrawingViewScaleSet`；
+  新视图用别名 V_DET_I 登记在 TOOLKIT 会话里，后续 `drw.dim` 按别名找。CREOSON 扩展路径不建放大图（发 warn）。
+- 越程槽表 `standards.GRINDING_UNDERCUT`（GB/T 6403.5 磨外圆 b1/h/r）按手册常用值录入，未对照原文；槽底圆角 r 未建模
+  （模型和图上都是直角槽底）。

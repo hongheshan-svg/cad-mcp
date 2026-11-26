@@ -347,6 +347,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 s.text(*lb["text_at"], d.text, 3.5)
                 refs.append(d.ref)
 
+    for v in plan.views:
+        if v.type == "detail":
+            _detail_view(s, plan, part, v, segs, refs)
+
     # 断面图
     for v in plan.views[1:]:
         if v.type != "section":
@@ -401,3 +405,91 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 s.line(vx + hb, vy + r - t1, vx + r + 7.5, vy + r - t1, THIN)
                 s.line(vx, vy - r, vx + r + 7.5, vy - r, THIN)
             refs.append(d.ref)
+
+
+def _clip_circle(p0, p1, c, r):
+    """线段 p0-p1 在圆 (c, r) 内的部分（参数区间），无则 None。"""
+    (x0, y0), (x1, y1) = p0, p1
+    dx, dy = x1 - x0, y1 - y0
+    fx, fy = x0 - c[0], y0 - c[1]
+    A = dx * dx + dy * dy
+    if A < 1e-18:
+        return None
+    B = 2 * (fx * dx + fy * dy)
+    C = fx * fx + fy * fy - r * r
+    disc = B * B - 4 * A * C
+    if disc <= 0:
+        return None
+    sq = math.sqrt(disc)
+    t0, t1 = max(0.0, (-B - sq) / (2 * A)), min(1.0, (-B + sq) / (2 * A))
+    if t1 - t0 < 1e-9:
+        return None
+    return (x0 + dx * t0, y0 + dy * t0), (x0 + dx * t1, y0 + dy * t1)
+
+
+def _detail_view(s, plan, part, v, segs, refs) -> None:
+    """局部放大图（GB/T 4458.1）：主视图上细实线圆 + 引线罗马数字；放大图 = 圆内的外轮廓（粗实线）+ 材料一侧
+    的波浪线边界；上方标注 罗马数字/比例；放大图内尺寸。"""
+    from .detailing import detail_sheet, scale_label
+    from .render_svg import _text_w
+    dt = v.detail
+    if "circle" in dt:
+        cx, cy, r = dt["circle"]
+        s.circle(cx, cy, r, THIN)
+        (ax, ay), (bx, by) = dt["leader"]
+        s.line(ax, ay, bx, by, THIN)
+        s.text(*dt["label_at"], v.label, 3.5)
+    S = detail_sheet(v)
+    zc, yc, rm = dt["zc"], dt["yc"], dt["rm"]
+    pts = []  # 上半外轮廓折线（模型）
+    for a, b, rr in segs:
+        if pts and abs(pts[-1][1] - rr) > 1e-9:
+            pts.append((a, rr))
+        elif not pts:
+            pts.append((a, rr))
+        pts.append((b, rr))
+    for p0, p1 in zip(pts, pts[1:]):
+        seg = _clip_circle(p0, p1, (zc, yc), rm)
+        if seg:
+            s.line(*S(*seg[0]), *S(*seg[1]), THICK)
+    xd, yd = v.origin_on_sheet
+    rs = rm * v.scale
+    run: list = []
+    for k in range(0, 361, 2):  # 材料一侧（轮廓以下）的圆周：细波浪线
+        t = math.radians(k)
+        z, y = zc + rm * math.cos(t), yc + rm * math.sin(t)
+        if y < radius_at_seg(segs, z) - 1e-6:
+            w = rs + 0.5 * math.sin(k * math.pi / 15)
+            run.append((xd + w * math.cos(t), yd + w * math.sin(t)))
+        elif run:
+            if len(run) > 1:
+                s.poly(run, THIN, close=False)
+            run = []
+    if len(run) > 1:
+        s.poly(run, THIN, close=False)
+    top = yd + rs
+    s.text(xd, top + 8.5, v.label, 3.5, "middle")
+    s.line(xd - 5, top + 7.2, xd + 5, top + 7.2, THIN)
+    s.text(xd, top + 3, scale_label(v.scale), 3.5, "middle")
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "detail" or ex.get("detail") != v.label:
+            continue
+        (xa, ya), (xb, yb) = ex["sheet_pts"]
+        px, py = ex["sheet_pos"]
+        if ex["orient"] == "h":  # 槽宽：注在槽底下方（材料内），数字在尺寸线上方
+            for x in (xa, xb):
+                s.line(x, ya - 1, x, py - 1.5, THIN)
+            s.line(xa, py, xb, py, THIN)
+            _arrow(s, xa, py, -1, 0)
+            _arrow(s, xb, py, 1, 0)
+            s.text(px, py + 0.8, d.text, 3.5, "middle")
+        else:  # 槽深：自由侧，尺寸界线自槽底角水平引出，箭头在外，数字在尺寸线向上的延长线左侧
+            sg = 1 if px > xa else -1
+            s.line(xa + sg * 1, ya, px + sg * 1.5, ya, THIN)
+            tw = _text_w(d.text, 3.5)
+            s.line(px, ya - 4, px, py + tw / 2 + 1, THIN)
+            _arrow(s, px, ya, 0, 1)
+            _arrow(s, px, yb, 0, -1)
+            s.text(px - 1, py, d.text, 3.5, "middle", -90)
+        refs.append(d.ref)

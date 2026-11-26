@@ -20,7 +20,7 @@ ARITY = {
     "InsertBomTable4": 10, "InsertBOMBalloon2": 6, "MoveRow": 3, "SetHeader": 2, "GetComponents2": 2,
     "SetColumnTitle2": 3, "SetColumnCustomProperty": 2, "AutoBalloon5": 1, "Text": 2, "Text2": 3,
     "InsertWeldSymbol3": 0, "CreateSectionViewAt5": 7, "SetText": 6, "SetPeripheral": 1, "SetProcess": 2,
-    "InsertTableAnnotation2": 7, "SetColumnWidth": 3, "CreateBreakOutSection": 1,
+    "InsertTableAnnotation2": 7, "SetColumnWidth": 3, "CreateBreakOutSection": 1, "CreateDetailViewAt4": 12,
     "InsertDatumTag2": 0, "InsertGtol": 0, "SetFrameSymbols2": 9, "SetFrameValues2": 6, "SetLabel": 1,
     "InsertSurfaceFinishSymbol3": 14,
     "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader

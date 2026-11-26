@@ -833,6 +833,37 @@ json cmd_drw_removed_section(const json& a) {
     return json{{"xsec", label}, {"view", view}, {"section_only", e == PRO_TK_NO_ERROR}};
 }
 
+// drw.detail_view：局部放大图（GB/T 4458.1）。父视图中 circle（图纸 mm：圆心 + 半径）内的区域按 scale 放大，
+// 放到 center（图纸 mm）；view 为别名（后续 drw.dim 用它找视图）。参考点 = 圆内最近的模型边。
+// TODO(实机核对): ProDrawingViewDetailCreate(drawing, parent, ref_sel, ProCurvedata* boundary, ProPoint3d location,
+//   ProView*) 签名与 boundary 的坐标系（图纸 / 父视图）；ProDrawingViewScaleSet 对局部放大图是否生效
+json cmd_drw_detail_view(const json& a) {
+    ProDrawing d = find_drawing(arg_str(a, "drawing"));
+    ProView pv = find_view(d, arg_str(a, "parent"));
+    std::string alias = arg_str(a, "view");
+    if (!has(a, "circle") || !a["circle"].is_array() || a["circle"].size() < 3)
+        throw CmdError("BAD_ARGS", "circle 须为 [cx, cy, r]（图纸 mm）");
+    Pt c{a["circle"][0].get<double>(), a["circle"][1].get<double>()};
+    double r = a["circle"][2].get<double>();
+    Pt at = arg_pt2(a, "center");
+    double scale = arg_num(a, "scale");
+    std::vector<Pt> ring;
+    const double pi = 3.14159265358979323846;
+    for (int k = 0; k < 24; ++k) ring.push_back({c[0] + r * std::cos(2 * pi * k / 24), c[1] + r * std::sin(2 * pi * k / 24)});
+    ProSelection ref = pick_edge_at(d, pv, c, r);
+    ProCurvedata curve;
+    make_boundary_spline(d, ring, &curve);
+    ProPoint3d loc;
+    sheet_mm_to_drw(d, at, loc);
+    ProView dv = nullptr;
+    ProError e = ProDrawingViewDetailCreate(d, pv, ref, &curve, loc, &dv);
+    ProSelectionFree(&ref);
+    check(e, "ProDrawingViewDetailCreate");
+    ProError es = ProDrawingViewScaleSet(d, dv, scale);
+    register_view_alias(alias, dv);
+    return json{{"view", alias}, {"scale_set", es == PRO_TK_NO_ERROR}};
+}
+
 // drw.balloon：BOM 球标（首期降级为带引线的序号注释）
 json cmd_drw_balloon(const json& a) {
     ProDrawing d = find_drawing(arg_str(a, "drawing"));
@@ -953,6 +984,7 @@ void register_drawing_cmds() {
     register_cmd("drw.table", cmd_drw_table);
     register_cmd("drw.section", cmd_drw_section);
     register_cmd("drw.removed_section", cmd_drw_removed_section);
+    register_cmd("drw.detail_view", cmd_drw_detail_view);
     register_cmd("drw.balloon", cmd_drw_balloon);
     register_cmd("drw.readback", cmd_drw_readback);
     register_cmd("drw.show_axes", cmd_drw_show_axes);

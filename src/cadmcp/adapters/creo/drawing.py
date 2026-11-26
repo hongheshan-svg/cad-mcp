@@ -42,6 +42,11 @@ def view_name(vtype: str) -> str:
     return f"V_{vtype.upper()}"
 
 
+def detail_view_name(label: str) -> str:
+    """局部放大图视图别名：I → V_DET_I"""
+    return "V_DET_" + label
+
+
 def section_view_name(label: str) -> str:
     """移出断面图视图名：A-A → V_SEC_A"""
     return "V_SEC_" + (label.split("-")[0] or "X")
@@ -96,8 +101,8 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
                 "view": section_view_name(v.label), "sheet": 1, "model": model, "scale": v.scale},
                 f"移出断面 {v.label}：沿轴线（IR Z）观察"))
             continue
-        if v.type in ("section", "flat_pattern") or v.type in replaced:
-            continue
+        if v.type in ("section", "flat_pattern", "detail") or v.type in replaced:
+            continue  # 局部放大图：TOOLKIT 路径由 tk.drw.detail_view 建（依附父视图），扩展路径暂不支持
         if v.type in PROJECTED and front is not None and "front" not in replaced:
             ops.append(NativeOp("creoson.drawing_create_proj_view", {
                 "parent_view": view_name("front"), "point": _pt(v.origin_on_sheet, k), "drawing": "$drawing",
@@ -131,6 +136,8 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
             ops.append(NativeOp("ext.cadmcp_section_view", {
                 "drawing": "$drawing", "label": v.label, "kind": "removed", "target": v.target,
                 "parent": view_name("front"), "center": _pt(v.origin_on_sheet, k)}, "移出断面图"))
+    if any(v.type == "detail" for v in plan.views):
+        ops.append(NativeOp("warn", {"message": "局部放大图只在 TOOLKIT 路径生成（tk.drw.detail_view），扩展路径未建"}))
     ops.append(NativeOp("creoson.drawing_regenerate", {"drawing": "$drawing"}, "再生后视图才有边界"))
 
     # 尺寸：CREOSON 不能逐个建驱动/草绘尺寸 → 扩展"显示模型尺寸"
@@ -281,6 +288,11 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 "drawing": D, "view": section_view_name(v.label), "label": v.label.split("-")[0],
                 "z": shaft_section_z(plan, v), "parent": view_name(plan.views[0].type)},
                 "垂直轴线的剖截面 + 只显示切面"))
+        elif v.type == "detail" and v.detail and "circle" in v.detail:
+            ops.append(NativeOp("tk.drw.detail_view", {
+                "drawing": D, "parent": view_name(plan.views[0].type), "view": detail_view_name(v.label),
+                "circle": list(v.detail["circle"]), "center": _xy(v.origin_on_sheet), "scale": v.scale},
+                f"局部放大图 {v.label}：父视图中圆形边界 → ProDrawingViewDetailCreate"))
         elif v.type == "flat_pattern":
             skip("钣金展开图")
     for v in plan.views:  # 孔/圆柱中心线：显示零件基准轴（轴类主视图也要轴线）
@@ -296,6 +308,8 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 skip("断面图标注（未关联断面）")
                 continue
             vw = section_view_name(ex["section"])
+        elif d.view == "detail":
+            vw = detail_view_name(ex.get("detail", ""))
         elif d.view == "flat_pattern":  # 展开图首期不建（见上），其标注一并跳过
             skip("展开图标注")
             continue

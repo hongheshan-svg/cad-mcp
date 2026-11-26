@@ -86,6 +86,8 @@ class ViewPlan:
     target: str = ""  # 断面图对应的特征
     full_section: dict | None = None  # 原位全剖（空心轴/套类主视图）：{boundary 图纸 mm 矩形, depth 模型 mm, cut_points 模型}
     breaks: list = field(default_factory=list)  # 断开画法：去掉的模型 z 区间 [(a, b)]（轴类主视图），每处在图上留 BREAK_GAP
+    detail: dict | None = None  # 局部放大图：{zc, yc 模型 mm（放大区域中心）, rm 模型半径, circle (cx, cy, r) 主视图图纸 mm,
+    #                             label_at 主视图罗马数字位置, leader [(x, y), (x, y)]}
 
 
 @dataclass
@@ -1074,7 +1076,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
     extra_top = 3.0 if g_steps else 0.0
-    row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + ([sec_d] if kws else [])
+    dets = [f for f in p.shaft_features if f["kind"] == "groove" and f["type"] == "grinding"]  # 小结构 → 局部放大图
+    row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + \
+        ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
     W, H = SHEETS[sheet]
@@ -1087,7 +1091,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     views = [front]
     if hub_kws:
         views.append(ViewPlan("left", scale, (D * scale, D * scale), (x0 + wv + GAP + 4 + D * scale / 2, cy_main)))
-    cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
+    dgeo = [detail_geom(f, scale) for f in dets]
+    row_half = max([sec_d * scale / 2] + [ds_ * rm_ for ds_, rm_ in dgeo])
+    cy_sec = cy_main - D * scale / 2 - 44 - row_half - 6
     # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
     used = {d["name"] for d in p.datums} | {"I", "O"}
     letters = [c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in used]
@@ -1096,6 +1102,20 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         zc = (f["z0"] + f["z1"]) / 2
         views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (shaft_sx(front, Ltot, zc), cy_sec),
                               label=label, target=f["name"]))
+    # 局部放大图（GB/T 4458.1）：放在被放大部位下方的一行，避开断面图；罗马数字从左到右
+    taken = [(v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2) for v in views[1:]]
+    for k, (f, (ds_, rm_)) in enumerate(sorted(zip(dets, dgeo), key=lambda t: t[0]["z0"])):
+        zc = (f["z0"] + f["z1"]) / 2
+        w = 2 * rm_ * ds_
+        x = shaft_sx(front, Ltot, zc)
+        for _ in range(len(taken) + 1):
+            hit = [b_ for a_, b_ in taken if x - w / 2 - GAP / 2 < b_ and x + w / 2 + GAP / 2 > a_]
+            if not hit:
+                break
+            x = max(hit) + GAP / 2 + w / 2 + 1
+        taken.append((x - w / 2, x + w / 2))
+        views.append(ViewPlan("detail", ds_, (w, w), (x, cy_sec), label=ROMAN[k], target=f["name"],
+                              detail={"zc": zc, "yc": f["d"] / 2, "rm": rm_}))
     dims: list[Dim] = []
     if spec.dimensions != "none":
         z = 0.0
@@ -1157,6 +1177,12 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], f"{f['d'] - f['depth']:g}",
                                 f"{f['name']}_t", (f["d"], f["depth"])))
             else:
+                if f in dets:  # 越程槽：形状与尺寸见局部放大图；紧靠轴肩时位置不必再注
+                    sz1 = p.step_z(f["step"])[1]
+                    if f["z0"] - sz0 > 1e-6 and sz1 - f["z1"] > 1e-6:
+                        dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
+                                        (sz0, f["z0"])))
+                    continue
                 dims.append(Dim("front", "callout", None, None, f["callout"], f["name"], ((f["z0"] + f["z1"]) / 2, f["d"] / 2)))
                 if f["z0"] - sz0 > 1e-6:
                     dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
@@ -1166,6 +1192,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
+    for v in views:  # 局部放大图：视图位置已定后算主视图圆圈/编号与放大图内尺寸的图纸坐标
+        if v.type == "detail":
+            dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none")
     if hub_kws and spec.dimensions != "none":  # 视图位置已定（含上方让位下移）后再算端视图尺寸的图纸坐标
         lv = next(v for v in views if v.type == "left")
         ex_, ey_ = lv.origin_on_sheet
@@ -1739,6 +1768,46 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     return _dia_text(p.shaft_steps[j][1], tj, deviations)
 
 
+def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float, with_dims: bool) -> list[Dim]:
+    """局部放大图：主视图上细实线圆 + 引线罗马数字（引向未被轴肩占据的一侧上方）；放大图内注槽宽 b（槽底下方）
+    与槽深 h（自由侧，箭头在外，数字在尺寸线延长线上）。"""
+    f = next(x for x in p.shaft_features if x["name"] == v.target)
+    dt = v.detail
+    zc, yc, rm = dt["zc"], dt["yc"], dt["rm"]
+    sc = front.scale
+    cx, cy, r = shaft_sx(front, Ltot, zc), front.origin_on_sheet[1] + yc * sc, rm * sc
+    sz0, sz1 = p.step_z(f["step"])
+    i = f["step"]
+    d_next = p.shaft_steps[i + 1][1] if i + 1 < len(p.shaft_steps) else 0.0
+    shoulder_right = abs(f["z1"] - sz1) < 1e-6 and d_next > f["d"]
+    sx = -1 if shoulder_right else 1  # 自由侧方向（−1 = 左）
+    k = 0.7071
+    a = (cx + sx * r * k, cy + r * k)
+    b = (cx + sx * (r + 5) * k, cy + (r + 5) * k)
+    dt.update({"circle": (round(cx, 2), round(cy, 2), round(r, 2)), "leader": [(round(a[0], 2), round(a[1], 2)), (round(b[0], 2), round(b[1], 2))],
+               "label_at": (round(b[0] + sx * 1.2 + (0 if sx > 0 else -text_width(v.label, 3.5)), 2), round(b[1] - 1.2, 2)),
+               "free_side": sx})
+    if not with_dims:
+        return []
+    S = detail_sheet(v)
+    h = (f["d"] - f["d2"]) / 2
+    y2 = f["d2"] / 2
+    (xa, ya), (xb, _) = S(f["z0"], y2), S(f["z1"], y2)
+    ys = S(zc, yc)[1]
+    out = [Dim("detail", "linear", "z", f["width"], f"{f['width']:g}", f"{f['name']}_w", None, {
+        "detail": v.label, "sheet_pts": [(round(xa, 2), round(ya, 2)), (round(xb, 2), round(ya, 2))],
+        "sheet_pos": (round((xa + xb) / 2, 2), round(ya - 7, 2)), "orient": "h", "below": True,
+        "pick_pts": [(round(xa, 2), round((ya + ys) / 2, 2)), (round(xb, 2), round((ya + ys) / 2, 2))]})]
+    zf = f["z0"] if sx < 0 else f["z1"]  # 自由侧槽壁
+    xf = S(zf, y2)[0]
+    xl = xf + sx * 6
+    out.append(Dim("detail", "linear", "y", h, f"{h:g}", f"{f['name']}_h", None, {
+        "detail": v.label, "sheet_pts": [(round(xf, 2), round(ya, 2)), (round(xf, 2), round(ys, 2))],
+        "sheet_pos": (round(xl, 2), round(ys + 4 + text_width(f"{h:g}", 3.5) / 2, 2)), "orient": "v", "small": True,
+        "pick_pts": [(round((xa + xb) / 2, 2), round(ya, 2)), (round(xf + sx * 3, 2), round(ys, 2))]}))
+    return out
+
+
 def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev) -> list[Dim]:
     """端视图上的轮毂键槽尺寸（GB/T 1095）：槽宽 b（JS9）与 d + t2（上偏差按 b）。键槽在端视图上方。
     ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。"""
@@ -1986,6 +2055,25 @@ def unbreak_z(p: ResolvedPart, z: float) -> float:
 
 def shaft_view_width(v: "ViewPlan", Ltot: float) -> float:
     return (Ltot - sum(b - a for a, b in v.breaks)) * v.scale + len(v.breaks) * BREAK_GAP
+
+
+DETAIL_SCALES = (2.0, 2.5, 4.0, 5.0, 10.0)  # GB/T 14690 放大比例
+ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII")
+
+
+def detail_geom(f: dict, scale: float) -> tuple[float, float]:
+    """局部放大图（环槽）：放大比例 ds（槽深放大后 ≥ 2 mm，且至少为主视图 2 倍）与区域模型半径 rm（图上半径 ≤ 28 mm）。"""
+    h = (f["d"] - f["d2"]) / 2
+    ds = next((k for k in DETAIL_SCALES if h * k >= 2.0 and k >= 2 * scale), DETAIL_SCALES[-1])
+    rm = min(f["width"] / 2 + 3.0, 28.0 / ds, 0.8 * f["d"] / 2)
+    return ds, rm
+
+
+def detail_sheet(v: "ViewPlan"):
+    """放大图内模型 (z, y) → 图纸 (x, y)。"""
+    xd, yd = v.origin_on_sheet
+    zc, yc, ds = v.detail["zc"], v.detail["yc"], v.scale
+    return lambda z, y: (xd + (z - zc) * ds, yd + (y - yc) * ds)
 
 
 def shaft_sx(v: "ViewPlan", Ltot: float | None, z: float) -> float:

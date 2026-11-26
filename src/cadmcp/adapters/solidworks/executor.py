@@ -24,7 +24,7 @@ NON_CRITICAL = {"check_body_extent", "probe_gdt_constants", "datum_tag", "gtol",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks"}
+                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks", "detail_view"}
 
 
 class OpFailed(Exception):
@@ -1244,6 +1244,31 @@ class SwExecutor:
             raise OpFailed("CreateBreakOutSection failed（轮廓需封闭且在视图内）")
         self.readback.setdefault("sections", []).append(label)
         return {"segments": len(segs), "depth_mm": depth}
+
+    def op_detail_view(self, label: str, parent: str, circle, center, scale):
+        """局部放大图：父视图中画圆（图纸坐标 mm）→ 选中 → IDrawingDoc.CreateDetailViewAt4 放到 center；
+        锯齿轮廓（JaggedOutline）近似 GB/T 4458.1 的波浪线边界。登记为 views["detail:<label>"]。"""
+        pv = self.views.get(parent)
+        if pv is None:
+            raise OpFailed(f"parent view {parent} not on sheet")
+        self.model.ActivateView(pv.Name)
+        cx, cy, r = circle
+        c = self.model.SketchManager.CreateCircleByRadius(cx * MM, cy * MM, 0, r * MM)
+        if c is None:
+            raise OpFailed("detail circle CreateCircleByRadius failed")
+        self.model.ClearSelection2(True)
+        c.Select4(False, None)
+        # TODO(实机核对): CreateDetailViewAt4(X, Y, Z, Style, Scale1, Scale2, LabelIn, Showtype, FullOutline,
+        #   JaggedOutline, NoOutline, ShapeIntensity)；swDetViewStyle_e / swDetCircleShowType_e 取值
+        style = self._k("swDetViewSTANDARD", 0)
+        show = self._k("swDetCircleCIRCLE", 0)
+        dv = self.model.CreateDetailViewAt4(center[0] * MM, center[1] * MM, 0, style, float(scale[0]), float(scale[1]),
+                                            label, show, False, True, False, 3)
+        if dv is None:
+            raise OpFailed(f"CreateDetailViewAt4 failed（局部放大 {label}）")
+        self.views[f"detail:{label}"] = dv
+        self.readback.setdefault("details", []).append(label)
+        return {"name": dv.Name, "scale": f"{scale[0]}:{scale[1]}"}
 
     # 移出断面图只显示切面（断面），候选枚举名按类型库实际名称查找。TODO(实机核对): swCreateSectionViewAtOptions_e 成员名
     SURFACE_CUT_NAMES = ("swCreateSectionView_DisplayOnlySurfaceCut", "swCreateSectionView_DisplaySurfaceCut",

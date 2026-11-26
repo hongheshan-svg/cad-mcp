@@ -758,12 +758,26 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 if f.type == "circlip":
                     d2, m = standards.circlip_groove(d)
                     label = f"挡圈槽 Φ{d2:g}×{m:g}（GB/T 894-{d:g}）"
+                elif f.type == "grinding":
+                    gb, gh, _ = standards.grinding_undercut(d)
+                    m = ev(f.width) if f.width is not None else gb
+                    d2 = d - 2 * (ev(f.depth) if f.depth is not None else gh)
+                    label = f"越程槽 {m:g}×{(d - d2) / 2:g}"
                 else:
                     m = ev(f.width) if f.width is not None else 2.0
                     d2 = d - 2 * (ev(f.depth) if f.depth is not None else 0.5)
                     label = f"退刀槽 {m:g}×{(d - d2) / 2:g}"
-                pos = {"start": 0.0, "end": L - m}.get(f.position) if isinstance(f.position, str) else ev(f.position)
-                if f.type == "circlip" and f.position == "end":
+                position = f.position
+                if position is None:  # 越程槽靠轴肩（相邻较大轴段）一端；其余缺省 end
+                    position = "end"
+                    if f.type == "grinding":
+                        dl = steps[f.step - 1][1] if f.step > 0 else 0.0
+                        dr = steps[f.step + 1][1] if f.step + 1 < len(steps) else 0.0
+                        position = "start" if dl > max(dr, d) else "end"
+                pos = {"start": 0.0, "end": L - m}.get(position) if isinstance(position, str) else ev(position)
+                if not 0 <= pos <= L - m + 1e-9:
+                    raise CadError(SPEC_INVALID, f"groove {f.name}: 槽（宽 {m:g}）超出轴段 {f.step}（长 {L:g}）")
+                if f.type == "circlip" and position == "end":
                     pos = L - m - 1.0 if L - m - 1.0 > 0 else L - m  # 挡圈槽离轴段端面留 1mm 以上（挡圈承载边）
                 volume -= math.pi / 4 * (d * d - d2 * d2) * m
                 shaft_feats.append({"kind": "groove", "type": f.type, "name": f.name, "step": f.step, "d": d,

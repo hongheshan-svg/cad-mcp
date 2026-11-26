@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
+#include <map>
 
 extern "C" {
 #include <ProArray.h>
@@ -361,7 +362,16 @@ void sheet_mm_to_drw(ProDrawing d, const std::array<double, 2>& mm, ProPoint3d o
     out[2] = 0.0;
 }
 
+static std::map<std::string, ProView>& view_aliases() {
+    static std::map<std::string, ProView> m;
+    return m;
+}
+
+void register_view_alias(const std::string& alias, ProView v) { view_aliases()[alias] = v; }
+
 ProView find_view(ProDrawing d, const std::string& view_name) {
+    auto it = view_aliases().find(view_name);  // 别名优先（TOOLKIT 建的视图名由 Creo 指定，不一定能改）
+    if (it != view_aliases().end()) return it->second;
     ProView* views = nullptr;
     // TODO(实机核对): ProDrawingViewsCollect(ProDrawing, ProView** array)；用 ProArrayFree 释放
     check(ProDrawingViewsCollect(d, &views), "ProDrawingViewsCollect");

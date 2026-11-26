@@ -448,3 +448,14 @@ def test_sw_sleeve_hub_keyway(sw_svc):
     svc.build(PartSpec.model_validate(spec))
     r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
+
+
+def test_sw_grinding_undercut_detail(sw_svc):
+    """越程槽：环槽切除 + 局部放大图（CreateDetailViewAt4）+ 放大图内尺寸，规则检查通过。"""
+    from test_grinding_undercut import GR
+    svc, ad = sw_svc
+    svc.change_begin("GR")
+    svc.build(PartSpec.model_validate(GR))
+    r = svc.build(DrawingSpec.model_validate({"model": "GR1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    assert [c for c in ad.sw.calls if c[0] == "CreateDetailViewAt4"]

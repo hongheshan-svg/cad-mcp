@@ -27,6 +27,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   支持 IT5–IT11、轴 d–p、孔 D–P 及 js/JS，0–500 mm；表外只注代号。不想要偏差时出图设 `fit_deviations: false`。
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
   - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
+    磨削的配合面（轴承位 Ra 0.8 以下）靠轴肩时加砂轮越程槽 `type: "grinding"`（GB/T 6403.5 按轴径查 b×h，缺省放在靠轴肩一端）：
+    主视图画圆圈 + 罗马数字，自动出局部放大图（5:1 等）注槽宽、槽深。
   - 外螺纹 `{"feature": "thread", "step": 段号, "size": "M20"}`（细牙 `"M16x1.5"`）：该段直径须等于螺纹公称直径；
     螺距按 GB/T 193 查，默认 6g、全段螺纹，`length` 指定螺纹长度（自动标注），`side` 为 start/end（缺省：首段在左端、其余在右端）。
     图上以螺纹代号代替 Φ 标在大径上（GB/T 4459.1），SW/Creo 生成装饰螺纹。螺纹收尾处通常配退刀槽 `undercut`。
@@ -85,7 +87,7 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 不满意随时 `cad_checkpoint` / `cad_change_rollback`。
 
 ## 能力边界（如实告诉用户）
-- 当前 spec 支持：板/块类机加工件、阶梯轴（键槽、挡圈槽、退刀槽、外螺纹）、简单钣金（直边折弯）、
+- 当前 spec 支持：板/块类机加工件、阶梯轴（键槽、挡圈槽、退刀槽、越程槽、外螺纹）、简单钣金（直边折弯）、
   型钢焊接件、铸件（含毛坯图）、标准件/外购件装配。
 - 直齿圆柱齿轮（外齿、渐开线标准齿廓）：底座写 `extrude` + `circle`（直径 = 齿顶圆 da = m(z+2+2x)，厚度 = 齿宽），
   加 `gear: {module, teeth, shift?, accuracy?, tip_tolerance?, flank_ra?, mate?}`；轴孔写中心 `hole`（带 H7），

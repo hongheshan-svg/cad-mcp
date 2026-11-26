@@ -50,6 +50,7 @@ bool find_datum_plane(ProSolid s, const std::string& name, ProModelitem* surf_ou
 // 图纸 mm（左下角原点）↔ 图纸单位坐标（ProPoint3d，sheet 坐标系）
 void sheet_mm_to_drw(ProDrawing d, const std::array<double, 2>& mm, ProPoint3d out);
 ProView find_view(ProDrawing d, const std::string& view_name);   // 视图名，如 V_FRONT
+void register_view_alias(const std::string& alias, ProView v);    // 本会话内建的视图（如局部放大图）按别名查找
 // 在视图内找投影离图纸点最近的模型边（容差 tol_mm 图纸 mm），构造可用于尺寸/注释附着的 ProSelection
 // 找不到 → PRO_TK_E_NOT_FOUND。调用方负责 ProSelectionFree。
 ProSelection pick_edge_at(ProDrawing d, ProView v, const std::array<double, 2>& sheet_mm, double tol_mm = 1.5);

@@ -82,6 +82,15 @@ def hub_keyway(d: float, width: float | None = None) -> tuple[float, float]:
     return float(b), HUB_T2[b]
 
 
+# GB/T 6403.5 回转面砂轮越程槽（磨外圆）：轴径上限 → (b1, h, r)。TODO(核对原文)：按常用手册值录入
+GRINDING_UNDERCUT = [(10, 1.0, 0.2, 0.5), (50, 3.0, 0.4, 1.0), (100, 5.0, 0.8, 2.0), (1e9, 8.0, 1.2, 3.0)]
+
+
+def grinding_undercut(d: float) -> tuple[float, float, float]:
+    """轴径 d 的砂轮越程槽 (b, h, r)。"""
+    return next((b, h, r) for hi, b, h, r in GRINDING_UNDERCUT if d <= hi)
+
+
 def keyway(d: float) -> tuple[float, float, float]:
     for lo, hi, b, h, t1 in KEYWAY:
         if lo < d <= hi:

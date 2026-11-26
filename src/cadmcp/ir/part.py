@@ -223,14 +223,16 @@ class Keyway(Strict):
 
 
 class Groove(Strict):
-    """轴上环槽：circlip=轴用弹性挡圈槽（GB/T 894 查表），undercut=退刀槽（宽×深）。"""
+    """轴上环槽：circlip=轴用弹性挡圈槽（GB/T 894 查表），undercut=退刀槽（宽×深），
+    grinding=砂轮越程槽（GB/T 6403.5 磨外圆，按轴径查 b×h；缺省放在靠轴肩的一端，配局部放大图）。"""
     feature: Literal["groove"]
     name: str
-    type: Literal["circlip", "undercut"]
+    type: Literal["circlip", "undercut", "grinding"]
     step: int
-    position: Literal["start", "end"] | Num = Field("end", description="槽在轴段中的位置：start/end 或距轴段起点的距离")
-    width: Num | None = Field(None, description="undercut 默认 2")
-    depth: Num | None = Field(None, description="undercut 默认 0.5")
+    position: Literal["start", "end"] | Num | None = Field(
+        None, description="槽在轴段中的位置：start/end 或距轴段起点的距离；缺省 end（grinding 缺省靠轴肩一端）")
+    width: Num | None = Field(None, description="undercut 默认 2；grinding 默认查表")
+    depth: Num | None = Field(None, description="undercut 默认 0.5；grinding 默认查表")
 
 
 class ShaftThread(Strict):
