@@ -1111,7 +1111,10 @@ def _cross_holes(base, steps, feats, bores, chamfer, ev) -> list[dict[str, Any]]
             callout = f"Φ{d:g}{tol} 通" if through else f"Φ{d:g}{tol}↓{depth:g}"
         wall = 2 * math.sqrt(max(D * D / 4 - hole * hole / 4, 0)) - (2 * r_in if r_in else 0)
         vol = math.pi * hole * hole / 4 * (wall if through else drill)
+        if h.at_assembly:
+            callout += " 配作"
         out.append({"name": name, "step": i, "z": z, "d": d, "hole": hole, "D": D, "through": through,
+                    "at_assembly": h.at_assembly,
                     "depth": depth, "drill": drill, "thread": thread, "tol": tol, "callout": callout, "volume": vol,
                     "pos": pos})
     return out

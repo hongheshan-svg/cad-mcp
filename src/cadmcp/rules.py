@@ -261,7 +261,7 @@ def _check_shaft_design(p: ResolvedPart) -> list[Finding]:
                           "按配合选 k6/m6/n6（过渡）或 h7/js6"))
     for h in p.cross_holes:
         g = grade(tols[h["step"]])
-        if g and g[1] <= 7:
+        if g and g[1] <= 7 and not h.get("at_assembly"):
             out.append(_f("S007", "warning", h["name"],
                           f"横孔开在配合面 Φ{steps[h['step']][1]:g}{tols[h['step']]} 上：削弱配合、孔口毛刺划伤配合件",
                           "移到非配合段，或确认是装配后配钻的销孔（技术要求注明）"))

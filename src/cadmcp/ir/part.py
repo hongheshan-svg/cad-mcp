@@ -51,6 +51,7 @@ class CrossHole(Strict):
     depth: Num | None = Field(None, description="孔深（螺孔为螺纹深）；省略 = 通孔")
     drill_depth: Num | None = Field(None, description="螺孔底孔深；缺省 = 螺纹深 + 0.5d（取整）")
     tolerance: str | None = Field(None, description="光孔公差带（如 H7）；螺孔缺省 6H")
+    at_assembly: bool = Field(False, description="装配时与相配件一起配钻（配铰）：标注加\"配作\"，技术要求注明，零件图上不注定位尺寸")
 
 
 class EndHole(Strict):

@@ -444,6 +444,11 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
             uniq = [f"{x}（{names.count(x)} 处）" if names.count(x) > 1 else x for x in dict.fromkeys(names)]
             notes.append(f"{n}. {'、'.join(uniq)} 轴颈表面（图中粗点画线处）{text}。")
             n += 1
+    asm = [h for h in getattr(p, "cross_holes", []) if h.get("at_assembly")]
+    if asm:
+        what = "、".join(h["callout"].replace(" 配作", "") for h in asm)
+        notes.append(f"{n}. {what} 孔与相配件装配后配钻{'铰' if any(h['tol'] for h in asm) else ''}。")
+        n += 1
     if p.shoulder_fillets:
         notes.append(f"{n}. 未注轴肩圆角 R{p.shoulder_fillets[0]['R']:g}。")
         n += 1
@@ -1177,6 +1182,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             if not h["thread"]:
                 text = _dia_text(h["d"], h["tol"] or None, spec.fit_deviations) + text[len(f"Φ{h['d']:g}{h['tol']}"):]
             dims.append(Dim("front", "callout", None, h["d"], text, f"xh:{h['name']}", (h["z"], 0.0)))
+            if h["at_assembly"]:  # 配作孔：位置由装配确定，零件图不注定位尺寸
+                continue
             sz0 = p.step_z(h["step"])[0]
             if h["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1:  # 轴端段：从轴端面定位
                 dims.append(Dim("front", "linear", "z", Ltot - h["z"], f"{Ltot - h['z']:g}", f"{h['name']}_pos", (h["z"], Ltot)))

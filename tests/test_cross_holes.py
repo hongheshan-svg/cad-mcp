@@ -84,3 +84,17 @@ def test_native_ops():
     tk = {o.args["feature"]: o.args for o in creo_part(sp, p) if o.args.get("feature", "").startswith("XH")}
     assert tk["XH1"]["plane"] == {"ref": "RIGHT", "offset": 16} and tk["XH1"]["depth"] == 32
     assert tk["XH2"]["direction"] == "normal" and "XH2_THR" in tk
+
+
+def test_at_assembly_pin_hole():
+    """配作销孔：标注加“配作”，不注定位尺寸，技术要求注明配钻铰；不报 S007。"""
+    from cadmcp import rules
+    sp = {**XS, "base": {**XS["base"], "cross_holes": [{"step": 0, "diameter": 6, "tolerance": "H7", "at_assembly": True}]}}
+    p = _p(sp)
+    plan = plan_part_drawing(DrawingSpec(model="XS1", fit_deviations=False), p)
+    assert next(d.text for d in plan.dims if d.ref == "xh:XH1") == "Φ6H7 通 配作"
+    assert not any(d.ref == "XH1_pos" for d in plan.dims)
+    assert any("配钻铰" in n for n in plan.notes)
+    assert not any(f["rule"] == "S007" for f in rules.check_part(p))
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
