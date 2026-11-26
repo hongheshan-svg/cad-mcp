@@ -714,7 +714,28 @@ def _draw_local(s, sec, V):
         s.poly([V(q) for q in w], THIN, close=False)
 
 
-def _draw_cut_line(s, sec, part, V):
+def _box_overlap(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _dim_boxes(plan, vtype) -> list[tuple[float, float, float, float]]:
+    """规划层已定位尺寸（总体/节距/安装）的文字框与尺寸线（图纸坐标），供后画的符号避让。"""
+    out = []
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != vtype or not ex.get("sheet_pos") or not ex.get("sheet_pts"):
+            continue
+        (x1, y1), (x2, y2) = ex["sheet_pts"][0], ex["sheet_pts"][-1]
+        px, py = ex["sheet_pos"]
+        tw = _text_w(d.text, 3.5)
+        if ex.get("orient") == "h":
+            out += [(px - tw / 2 - 1, py - 1, px + tw / 2 + 1, py + 4.5), (min(x1, x2), py - 0.5, max(x1, x2), py + 0.5)]
+        else:
+            out += [(px - 4.5, py - tw / 2 - 1, px + 1, py + tw / 2 + 1), (px - 0.5, min(y1, y2), px + 0.5, max(y1, y2))]
+    return out
+
+
+def _draw_cut_line(s, sec, part, V, avoid=None):
     """剖切符号（GB/T 4458.6）：起止和转折处画粗短画，起止处画箭头表示投射方向，并注字母。"""
     from .section import AX, FRAME
     pts = [V(q) for q in sec.cut_points]
@@ -736,8 +757,19 @@ def _draw_cut_line(s, sec, part, V):
         s.line(*a, *b, W)
         s.line(*a, a[0] + dx * 6, a[1] + dy * 6, THIN)
         s.parts.append(_arrow_head(s, (a[0] + dx * 6, a[1] + dy * 6), (dx, dy)))
-        # 字母在箭头外端、与粗短画外端对齐（剖切线已伸出轮廓 6 mm，字母不压视图轮廓，也不外扩到总体尺寸线上）
-        s.text(a[0] + dx * 9, a[1] + dy * 9 - 1.5, sec.label, 5, "middle")
+        # 字母在箭头外端（剖切线已伸出轮廓 6 mm，字母不压视图轮廓）；与尺寸文字/尺寸线冲突时改放箭头旁
+        ux_, uy_ = b[0] - a[0], b[1] - a[1]
+        L_ = math.hypot(ux_, uy_) or 1.0
+        ux_, uy_ = -ux_ / L_, -uy_ / L_  # 粗短画朝外的方向
+        cands = [(a[0] + dx * 9, a[1] + dy * 9 - 1.5), (a[0] + dx * 4 + ux_ * 4, a[1] + dy * 4 + uy_ * 4 - 1.5),
+                 (a[0] + dx * 9 + ux_ * 4, a[1] + dy * 9 + uy_ * 4 - 1.5)]
+
+        def bad(c):
+            bx = (c[0] - 1.6, c[1] - 1.0, c[0] + 1.6, c[1] + 4.0)
+            return sum(_box_overlap(bx, o) for o in (avoid or []) + [t[1] for t in s.texts]) + \
+                sum(_seg_hits_box(*ln, *bx) for ln in s.leaders + s.thins)
+        tx_, ty_ = min(cands, key=lambda c: (bad(c), cands.index(c)))
+        s.text(tx_, ty_, sec.label, 5, "middle")
     for i in range(1, len(pts) - 1, 2):  # 阶梯转折：每个转角画 L 形粗短画（两臂各 4），转角外侧注字母
         a, b = pts[i], pts[i + 1]
         for corner, along, other in ((a, pts[i - 1], b), (b, pts[i + 2], a)):
@@ -751,8 +783,13 @@ def _draw_cut_line(s, sec, part, V):
             dl = min(_seg_dist(c, pts[j], pts[j + 1]) for j in range(len(pts) - 1))
             return min(dh - 2.0, dl - 1.5)
 
-        cands = [(a[0] + sx * 4.5, a[1] + sy * 4.5) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
-        tx, ty = max(cands, key=clearance)
+        def hits(c):  # 字母框（与 Svg.text 同算法）被已画的线穿过的条数
+            w_ = _text_w(sec.label, 3.5)
+            bx0, by0, bx1, by1 = c[0] - w_ / 2 + 0.4, c[1] - 1.2 - 0.7 + 0.4, c[0] + w_ / 2 - 0.4, c[1] - 1.2 + 2.8 - 0.4
+            return sum(_seg_hits_box(*ln, bx0, by0, bx1, by1) for ln in s.leaders + s.outlines + s.thins)
+
+        cands = [(a[0] + sx * r_, a[1] + sy * r_) for r_ in (4.5, 6.5) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
+        tx, ty = max(cands, key=lambda c: (-hits(c), clearance(c) - (c != cands[0] and math.dist(c, a) > 5) * 0.5))
         s.text(tx, ty - 1.2, sec.label, 3.5, "middle")
 
 
@@ -1256,7 +1293,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 _draw_local(s, sec_, V)
                 rendered_refs.append(f"section:{sec_.label}")
             elif sec_.parent == v.type and part is not None:
-                _draw_cut_line(s, sec_, part, V)
+                _draw_cut_line(s, sec_, part, V, _dim_boxes(plan, v.type))
         # 尺寸
         vx0, vy0 = P(ulo, wlo)
         vx1, vy1 = P(uhi, whi)

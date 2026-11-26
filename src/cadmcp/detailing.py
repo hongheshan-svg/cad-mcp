@@ -2180,6 +2180,11 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         b_ = plan.hole_table_box
         hard.append((b_[0] - 2, b_[1] - 2, b_[2] + 2, b_[3] + 14 if b_[0] > W / 2 else b_[3] + 2))
     soft = []
+    for v in plan.views:  # 轴测图等非正投影视图：整块不放文字
+        if v.type not in VIEW_AXES and v.type in ("iso", "flat_pattern"):
+            cx, cy = v.origin_on_sheet
+            w, h = v.size_mm
+            hard.append((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
     for v in vmap.values():
         cx, cy = v.origin_on_sheet
         w, h = v.size_mm
@@ -2266,9 +2271,23 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         if pv is None:
             continue
         ha_, va_ = VIEW_AXES[pv.type]
-        for q in sec.cut_points:
+        for k_, q in enumerate(sec.cut_points):
             x, y = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
-            hard.append((x - 6, y - 6, x + 6, y + 6))
+            r_ = 6 if k_ in (0, len(sec.cut_points) - 1) else 10  # 转折处：字母在斜角 4.5–6.5 mm 处
+            hard.append((x - r_, y - r_, x + r_, y + r_))
+        if sec.cut_points:  # 起止处箭头 + 字母（与 render_svg._draw_cut_line 同算法：沿投射方向 9 mm）
+            from .section import AX, FRAME
+            q0 = sec.cut_points[0]
+            q1 = list(q0)
+            q1[AX[FRAME[sec.view][1]]] += 1.0
+            p0 = _uv_sheet(pv, bbox, (vc(q0, ha_), vc(q0, va_)))
+            p1 = _uv_sheet(pv, bbox, (vc(tuple(q1), ha_), vc(tuple(q1), va_)))
+            n_ = math.dist(p0, p1) or 1.0
+            ddx, ddy = (p1[0] - p0[0]) / n_, (p1[1] - p0[1]) / n_
+            for q in (sec.cut_points[0], sec.cut_points[-1]):
+                x, y = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
+                tx_, ty_ = x + ddx * 9, y + ddy * 9 - 1.5
+                hard.append((min(x, tx_ - 3) - 0.5, min(y, ty_ - 1.0) - 0.5, max(x, tx_ + 3) + 0.5, max(y, ty_ + 4.0) + 0.5))
     leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
     labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
               and not (plan.layout == "shaft" and d.kind == "diameter")]
