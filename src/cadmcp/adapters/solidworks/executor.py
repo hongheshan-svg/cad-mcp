@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 import traceback
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Any
 from ..native import NativeOp
 
 MM = 0.001
-NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
+NON_CRITICAL = {"hole_tags", "hole_table", "broken_out_section", "section_cut", "cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
@@ -802,13 +803,36 @@ class SwExecutor:
         self.readback.setdefault("sections", []).append(label)
         return {"name": sv.Name, "segments": len(segs)}
 
+    def op_broken_out_section(self, view: str, label: str, points, depth: float):
+        """局部剖：在视图中画封闭轮廓（图纸坐标）、选中后 CreateBreakOutSection。"""
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        self.model.ActivateView(v.Name)
+        sm = self.model.SketchManager
+        ring = list(points) + [points[0]]
+        segs = []
+        for a, b in zip(ring, ring[1:]):
+            seg = sm.CreateLine(a[0] * MM, a[1] * MM, 0, b[0] * MM, b[1] * MM, 0)
+            if seg is None:
+                raise OpFailed("break-out profile CreateLine failed")
+            segs.append(seg)
+        self.model.ClearSelection2(True)
+        for sg in segs:
+            sg.Select4(True, None)
+        ok = self.model.CreateBreakOutSection(depth * MM)
+        if not ok:
+            raise OpFailed("CreateBreakOutSection failed（轮廓需封闭且在视图内）")
+        self.readback.setdefault("sections", []).append(label)
+        return {"segments": len(segs), "depth_mm": depth}
+
     def op_section_view(self, label: str, parent: str, z: float, center):
         raise OpFailed("section view: P1 实机实现（在主视图画垂直剖切线 + CreateSectionViewAt5，移出放置）")
 
     def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str):
         raise OpFailed("shaft dimension: P1 实机实现（按轴肩边线选边标注 / 直径标注加公差带）")
 
-    def op_leader_note(self, view: str, text: str, at_model, ref: str):
+    def op_leader_note(self, view: str, text: str, at_model, ref: str, text_pos=None, anchor=None):
         v = self.views.get(view)
         if v is None:
             raise OpFailed(f"view {view} not on sheet")
@@ -817,10 +841,65 @@ class SwExecutor:
         if note is None:
             raise OpFailed("InsertNote failed")
         ann = note.GetAnnotation()
-        pos = v.Position  # 视图中心（图纸坐标，m）
-        ann.SetPosition2(pos[0] + 0.03, pos[1] + 0.02, 0)
+        if text_pos is not None:  # 规划层排好的位置（图纸 mm）；引线关联到模型边线需先选中边线（P1）
+            ann.SetPosition2(text_pos[0] * MM, text_pos[1] * MM, 0)
+        else:
+            pos = v.Position  # 视图中心（图纸坐标，m）
+            ann.SetPosition2(pos[0] + 0.03, pos[1] + 0.02, 0)
         self.readback.setdefault("notes", []).append(ref)
         return {}
+
+    def op_hole_tags(self, view: str, tags):
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        self.model.ActivateView(v.Name)
+        n = 0
+        for t in tags:
+            note = self.model.InsertNote(t["text"])
+            if note is None:
+                continue
+            note.GetAnnotation().SetPosition2(t["at"][0] * MM, t["at"][1] * MM, 0)
+            n += 1
+        if n < len(tags):
+            raise OpFailed(f"孔号注释只插入 {n}/{len(tags)}")
+        return {"tags": n}
+
+    def _set_cell(self, tbl, r: int, c: int, text: str) -> None:
+        """ITableAnnotation.Text(row, col) 是带参数的属性：晚绑定下用 PROPERTYPUT 写入。"""
+        try:
+            import pythoncom
+            ole = tbl._oleobj_
+            ole.Invoke(ole.GetIDsOfNames("Text"), 0, getattr(pythoncom, "DISPATCH_PROPERTYPUT", 4), 0, r, c, text)
+        except ImportError:  # 非 Windows（假对象测试）：只记录调用
+            tbl.Text(r, c)
+
+    def op_hole_table(self, box, columns, widths, rows):
+        x0, y0 = box[0] * MM, box[1] * MM
+        tbl = self.model.InsertTableAnnotation2(False, x0, y0, self._k("swBOMConfigurationAnchor_BottomLeft", 3), "",
+                                                len(rows) + 1, len(columns))
+        if tbl is None:
+            raise OpFailed("InsertTableAnnotation2 failed")
+        for c, (name, w) in enumerate(zip(columns, widths)):
+            self._set_cell(tbl, 0, c, name)
+            try:
+                tbl.SetColumnWidth(c, w * MM, 0)
+            except Exception:  # noqa: BLE001
+                pass
+        for r, row in enumerate(rows, 1):
+            for c, val in enumerate(row):
+                self._set_cell(tbl, r, c, str(val))
+        got = []
+        for r in range(1, len(rows) + 1):  # 回读（D017）
+            cells = [str(tbl.Text(r, c)).strip() for c in range(3)]
+            if re.fullmatch(r"[A-Z]+\d+", cells[0]):
+                got.append(cells)
+        if got:
+            self.readback["hole_table_rows"] = got
+        note = self.model.InsertNote("孔表")
+        if note is not None:
+            note.GetAnnotation().SetPosition2(x0, (box[3] + 2) * MM, 0)
+        return {"rows": len(rows), "read": len(got)}
 
     def op_note(self, text: str, anchor: str):
         note = self.model.InsertNote(text)

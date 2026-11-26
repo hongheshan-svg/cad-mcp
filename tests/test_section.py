@@ -89,3 +89,45 @@ def test_section_none_warns_and_explicit_half_left(svc):
     with pytest.raises(Exception):
         svc.build(DrawingSpec.model_validate({"model": MP["name"], "views": [{"type": "front"}],
                                               "sections": [{"kind": "full"}]}))
+
+
+BAR = {"name": "LB-001_Bar", "part_no": "LB-001", "title": "压条", "material": "Q235",
+       "base": {"type": "extrude", "profile": {"shape": "rect", "width": 240, "height": 40}, "thickness": 20},
+       "features": [
+           {"feature": "hole", "name": "M8", "type": "tapped", "size": "M8", "depth": 16, "thread_depth": 12,
+            "positions": [[-90, 0]]},
+           {"feature": "hole", "name": "Pass", "type": "simple", "size": 9, "positions": [[40, 0], [100, 0]]}]}
+
+
+def test_auto_local_section_for_concentrated_features(svc):
+    p = resolve_part(PartSpec.model_validate(BAR))
+    s = sx.auto_section(p)
+    assert s.kind == "local" and s.parent == "" and s.features == ["M8"]
+    h0, h1, d = s.path[0]
+    assert h0 < -90 - 4 and h1 > -90 + 4 and h1 - h0 < 0.35 * 240 and d == 0
+    svc.change_begin("B")
+    svc.build(PartSpec.model_validate(BAR))
+    d_ = svc.build(DrawingSpec.model_validate({"model": BAR["name"], "title_block": {"designer": "AI"}}))
+    assert not [f for f in d_["rules"]["findings"] if f["rule"] in ("D015", "D016")]
+    plan = svc._get(BAR["name"] + "_DRW").resolved
+    sec = plan.sections[0]
+    assert sec.cut_points == [] and next(v for v in plan.views if v.type == "front").label in (None, "")
+    g = sec.geometry
+    assert len(g["breaks"]) == 2 and g["region"] and g["thin"] and g["thick"]   # 波浪线 + 螺纹线
+    for w in g["breaks"]:                                                        # 波浪线在区间两端摆动
+        hs = [q[0] for q in w]
+        assert max(hs) - min(hs) > 0.5 * sec.wave_amp
+    ops = compile_drawing(plan, "x.SLDPRT")
+    assert any(o.op == "model_view" and o.args["view"] == "front" for o in ops)   # 视图保留
+    bo = next(o for o in ops if o.op == "broken_out_section")
+    assert bo.args["depth"] == pytest.approx(20.0) and len(bo.args["points"]) > 8   # 深度：前表面 y=-20 到 y=0
+
+
+def test_explicit_local_section_needs_through(svc):
+    svc.change_begin("B")
+    svc.build(PartSpec.model_validate(BAR))
+    svc.build(DrawingSpec.model_validate({"model": BAR["name"], "sections": [{"kind": "local", "through": ["Pass"]}]}))
+    plan = svc._get(BAR["name"] + "_DRW").resolved
+    assert plan.sections[0].kind == "local" and plan.sections[0].path[0][0] < 40 < plan.sections[0].path[0][1]
+    with pytest.raises(Exception):
+        svc.build(DrawingSpec.model_validate({"model": BAR["name"], "sections": [{"kind": "local"}]}))

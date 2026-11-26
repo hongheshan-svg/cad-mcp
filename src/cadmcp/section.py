@@ -19,7 +19,7 @@ TOL = 0.5
 @dataclass
 class SectionPlan:
     label: str
-    kind: str  # full | step | half
+    kind: str  # full | step | half | local
     view: str  # 被剖视替代的视图：front | left
     parent: str  # 画剖切线的视图
     path: list[tuple[float, float, float]]  # [(h0, h1, d)]：H 区间内在 D=d 处剖切
@@ -28,6 +28,7 @@ class SectionPlan:
     geometry: dict[str, Any] = field(default_factory=dict)
     cut_points: list[tuple[float, float, float]] = field(default_factory=list)  # 剖切线（模型坐标，顶面上）
     bbox: Any = None  # 零件包围盒（视图投影用）
+    wave_amp: float = 1.0  # 局部剖波浪线幅值（模型 mm；规划时按比例换算成图纸上约 1.2 mm）
 
 
 def _p3(view: str, h: float, d: float, z: float) -> tuple[float, float, float]:
@@ -96,6 +97,28 @@ def _interesting(p) -> list[tuple[str, list[tuple[float, float]], str]]:
     return out
 
 
+LOCAL_SPAN = 0.35  # 内部结构集中在视图宽度的这个比例内 → 局部剖
+
+
+def _local_range(p, view: str, reps: list[tuple[float, float]], lo_h: float, hi_h: float) -> tuple[float, float]:
+    """局部剖区间：代表孔/型腔的 H 范围外扩半径 + 余量，不超出零件。reps = [(H 坐标, 半宽)]。"""
+    m = 3.0 + 0.1 * (hi_h - lo_h) ** 0.5
+    h0 = max(lo_h + 1, min(h - r for h, r in reps) - m)
+    h1 = min(hi_h - 1, max(h + r for h, r in reps) + m)
+    return h0, h1
+
+
+def _half_width(p, name: str) -> float:
+    for h in p.holes:
+        if h.name == name:
+            return h.max_dia / 2
+    for pk in p.pockets:
+        if pk["name"] == name:
+            u0, u1, _, _ = pk["profile"].bbox2d
+            return (u1 - u0) / 2
+    return 3.0
+
+
 def needs_section(p) -> bool:
     return p.base_type == "extrude" and p.profile is not None and bool(_interesting(p))
 
@@ -118,6 +141,13 @@ def auto_section(p, label: str = "A") -> SectionPlan | None:
     allf = {n for n, _, _ in feats}
     best = max(cands, key=lambda c: (len(covers(c)), -abs(c - mid_d)))
     if covers(best) == allf:
+        reps = []
+        for n, pts, _ in feats:
+            hs = [pt[hi_] for pt in pts if abs(pt[di_] - best) < TOL]
+            reps.append((min(hs, key=lambda h: abs(h - (lo_h + hi_h) / 2)), _half_width(p, n)))
+        h0, h1 = _local_range(p, view, reps, lo_h, hi_h)
+        if h1 - h0 < LOCAL_SPAN * (hi_h - lo_h):  # 内部结构只在一小段：局部剖，视图其余部分保留外形
+            return SectionPlan(label, "local", view, "", [(h0, h1, best)], features=sorted(allf))
         return SectionPlan(label, "full", view, "top", [(lo_h, hi_h, best)], features=sorted(allf))
     chosen, left = [best], allf - covers(best)
     while left and len(chosen) < 3:
@@ -168,17 +198,25 @@ def explicit_section(p, sp, label: str) -> SectionPlan:
     lo_d, hi_d = (b.ymin, b.ymax) if da == "y" else (b.xmin, b.xmax)
     hi_, di_ = AX[ha], AX[da]
     pts: list[tuple[float, float]] = []
+    widths: list[float] = []
     if sp.through:
         names = set(sp.through)
         for h in p.holes:
             if h.name in names:
                 pts += [(i.xyz[hi_], i.xyz[di_]) for i in h.instances[:1]]
+                widths.append(h.max_dia / 2)
         for pk in p.pockets:
             if pk["name"] in names:
                 u0, u1, v0, v1 = pk["profile"].bbox2d
                 c = ((u0 + u1) / 2, (v0 + v1) / 2, 0)
                 pts.append((c[hi_], c[di_]))
+                widths.append((u1 - u0) / 2 if hi_ == 0 else (v1 - v0) / 2)
     ats = [float(a) for a in (sp.at or [])] or [round(pt[1], 3) for pt in pts] or [(lo_d + hi_d) / 2]
+    if sp.kind == "local":
+        if not pts:
+            raise ValueError("局部剖需要 through 指定要剖开的孔/型腔")
+        h0, h1 = _local_range(p, view, list(zip([q[0] for q in pts], widths)), lo_h, hi_h)
+        return SectionPlan(label, "local", view, "", [(h0, h1, ats[0])], features=sorted(sp.through))
     if sp.kind in ("full", "half") or len(set(ats)) == 1:
         path = [(lo_h, hi_h, ats[0])]
     else:
@@ -280,6 +318,8 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
                     out["thin"] += [[pt(0, -rm), pt(td, -rm)], [pt(0, rm), pt(td, rm)]]
                     if not h.through or td < h.depth - 1e-6:
                         out["thick"].append([pt(td, -rm), pt(td, rm)])
+    if sec.kind == "local":
+        _local_breaks(out, sec, view, zlo, zhi)
     if sec.kind == "half":  # 只保留剖开一半上的线
         keep = lambda pl: any(q[hi_] >= sec.half_from - 1e-6 for q in pl) and \
             not all(abs(q[hi_] - sec.half_from) < 1e-6 for q in pl)  # noqa: E731
@@ -290,8 +330,50 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
     return out
 
 
+def _wave(h: float, d: float, view: str, z0: float, z1: float, amp: float, phase: float) -> list:
+    """波浪线（局部剖分界，GB/T 4457.4 细实线）：沿 z 方向的正弦折线。"""
+    n = max(1, round((z1 - z0) / (7 * amp)))  # 每个周期约 7 倍幅值
+    k = 12 * n
+    return [_p3(view, h + amp * math.sin(phase + 2 * math.pi * n * i / k), d, z0 + (z1 - z0) * i / k) for i in range(k + 1)]
+
+
+def _local_breaks(out: dict[str, list], sec: SectionPlan, view: str, zlo: float, zhi: float) -> None:
+    """局部剖：实体两端的竖直边换成波浪线（细实线，不画成轮廓），region 为擦除原视图的区域。"""
+    h0, h1, d = sec.path[0]
+    hi_ = AX[FRAME[view][0]]
+    a = sec.wave_amp
+    w0, w1 = _wave(h0, d, view, zlo, zhi, a, 0.0), _wave(h1, d, view, zlo, zhi, a, math.pi)
+
+    def h_at(w, z):  # 波浪线在高度 z 处的 H
+        for q0, q1 in zip(w, w[1:]):
+            if q0[2] - 1e-9 <= z <= q1[2] + 1e-9:
+                t = 0 if q1[2] == q0[2] else (z - q0[2]) / (q1[2] - q0[2])
+                return q0[hi_] + t * (q1[hi_] - q0[hi_])
+        return w[-1][hi_]
+
+    solids = []
+    for poly in out["solid"]:
+        hs = [q[hi_] for q in poly]
+        zs = [q[2] for q in poly]
+        a_, b_, z0, z1 = min(hs), max(hs), min(zs), max(zs)
+        left = [q for q in w0 if z0 - 1e-9 <= q[2] <= z1 + 1e-9] if abs(a_ - h0) < 1e-6 else \
+            [_p3(view, a_, d, z0), _p3(view, a_, d, z1)]
+        right = [q for q in w1 if z0 - 1e-9 <= q[2] <= z1 + 1e-9] if abs(b_ - h1) < 1e-6 else \
+            [_p3(view, b_, d, z0), _p3(view, b_, d, z1)]
+        if abs(a_ - h0) < 1e-6:
+            left = [_p3(view, h_at(w0, z0), d, z0)] + left + [_p3(view, h_at(w0, z1), d, z1)]
+        if abs(b_ - h1) < 1e-6:
+            right = [_p3(view, h_at(w1, z0), d, z0)] + right + [_p3(view, h_at(w1, z1), d, z1)]
+        solids.append(right + left[::-1])  # 下 → 右侧上行 → 上 → 左侧下行
+    out["solid"] = solids
+    out["breaks"] = [w0, w1]
+    out["region"] = [w0 + w1[::-1]]
+
+
 def cut_line(p, sec: SectionPlan) -> list[tuple[float, float, float]]:
-    """剖切线（在俯视图上）：顶面上的折线点，两端伸出外形 4 mm。"""
+    """剖切线（在俯视图上）：顶面上的折线点，两端伸出外形 4 mm。局部剖剖切位置明显，不画剖切符号。"""
+    if sec.kind == "local":
+        return []
     ha, da = FRAME[sec.view]
     z = p.bbox.zmax
     pts = []

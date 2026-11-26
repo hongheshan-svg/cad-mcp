@@ -118,7 +118,7 @@ class SolidWorksAdapter(CadAdapter):
                               getattr(model, "shaft_features", None))
         ex, regen = self._run(ops, out_dir, plan.name)
         rendered = {"dim_count": ex.readback.get("dim_count", 0), "notes": ex.readback.get("notes", [])}
-        for k in ("bom_rows", "balloon_items", "cut_list_rows", "weld_symbols", "sections"):  # 回读到才核对（D011~D014）
+        for k in ("bom_rows", "balloon_items", "cut_list_rows", "weld_symbols", "sections", "hole_table_rows"):  # 回读到才核对（D011~D014）
             if ex.readback.get(k):
                 rendered[k] = ex.readback[k]
         return BuildResult(ex.saved_path, regen, extra={"rendered": rendered,

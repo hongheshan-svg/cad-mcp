@@ -237,10 +237,10 @@ def _sub_segments(a, b, cuts):
     return [((a[0] + ux * s0, a[1] + uy * s0), (a[0] + ux * s1, a[1] + uy * s1)) for s0, s1 in out]
 
 
-def _draw_section(s, sec, V, v, cx, cy):
+def _draw_section(s, sec, V, v, cx, cy, g=None):
     """剖视图：剖面线（45° 细实线，间距 3，GB/T 4457.5 金属材料）只画在实体剖面区，孔/型腔为空；
     孔口处不画轮廓线；阶梯剖转折处不画线；半剖以中心线为界。"""
-    g = sec.geometry
+    g = g or sec.geometry
     solid = [[V(q) for q in poly] for poly in g["solid"]]
     voids = [[V(q) for q in poly] for poly in g["voids"]]
     mid = f"sec{sec.label}{id(sec) % 10000}"
@@ -291,7 +291,29 @@ def _draw_section(s, sec, V, v, cx, cy):
         s.poly([V(q) for q in pl], THICK, close=False)
     if half_x is not None and allpts:
         s.line(half_x, y0 - 3, half_x, y1 + 3, 0.18, "4,1,1,1")
-    s.text(cx, cy + v.size_mm[1] / 2 + 5, f"{sec.label}-{sec.label}", 5, "middle")
+    if v is not None:
+        s.text(cx, cy + v.size_mm[1] / 2 + 5, f"{sec.label}-{sec.label}", 5, "middle")
+
+
+def _draw_local(s, sec, V):
+    """局部剖：擦除原视图在波浪线区域内的线（含虚线），再画剖面；波浪线为细实线，不画成轮廓。"""
+    g = sec.geometry
+    for poly in g["region"]:
+        pts = [V(q) for q in poly]
+        s.parts.append("<path d='M " + " L ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in pts) + " Z' fill='white' stroke='none'/>")
+    from .section import AX, FRAME
+    hi_ = AX[FRAME[sec.view][0]]
+    h0, h1, _ = sec.path[0]
+    amp = sec.wave_amp
+    on_break = lambda q: abs(q[hi_] - h0) <= amp + 1e-6 or abs(q[hi_] - h1) <= amp + 1e-6  # noqa: E731
+    g2 = dict(g)
+    # 轮廓边中落在波浪线上的（两端点都在波浪线带内且非水平）不画粗线
+    g2["openings"] = list(g["openings"]) + [
+        (poly[k], poly[(k + 1) % len(poly)]) for poly in g["solid"] for k in range(len(poly))
+        if on_break(poly[k]) and on_break(poly[(k + 1) % len(poly)]) and abs(poly[k][2] - poly[(k + 1) % len(poly)][2]) > 1e-9]
+    _draw_section(s, sec, V, None, 0, 0, g2)
+    for w in g["breaks"]:
+        s.poly([V(q) for q in w], THIN, close=False)
 
 
 def _draw_cut_line(s, sec, part, V):
@@ -331,6 +353,29 @@ def _arrow_head(s, tip, d):
     px, py = -d[1] * 0.8, d[0] * 0.8
     pts = [(x, y), (bx + px, by + py), (bx - px, by - py)]
     return f"<polygon points='{' '.join(f'{a:.2f},{s.y(b):.2f}' for a, b in pts)}' fill='{STROKE}'/>"
+
+
+def _draw_hole_table(s, x0, y_bottom, rows, out_rows) -> float:
+    """孔表（技术要求上方）：表头在上，孔号 / X / Y / 规格。返回占用高度。"""
+    cols = [("孔号", 14), ("X", 22), ("Y", 22), ("规格", 122)]
+    rh = 5
+    top = y_bottom + rh * (len(rows) + 1)
+    y = top - rh
+    xx = x0
+    for name, w in cols:
+        s.rect(xx, y, w, rh, THIN)
+        s.text(xx + 1.5, y + 1.4, name, 2.8)
+        xx += w
+    for r in rows:
+        y -= rh
+        xx = x0
+        for (_, w), val in zip(cols, [r["tag"], f"{r['x']:g}", f"{r['y']:g}", r["size"]]):
+            s.rect(xx, y, w, rh, THIN)
+            s.text(xx + 1.5, y + 1.4, str(val), 2.5)
+            xx += w
+        out_rows.append([r["tag"], r["x"], r["y"], r["size"]])
+    s.text(x0, top + 2, "孔表", 3.5)
+    return top - y_bottom + 8
 
 
 def _draw_cut_list(s, x0, y_bottom, rows, out_rows=None) -> float:
@@ -439,7 +484,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         def V(p3, ha=ha, va=va, P=P):
             return P(vc(p3, ha), vc(p3, va))
 
-        sec = next((x for x in plan.sections if x.view == v.type), None)
+        sec = next((x for x in plan.sections if x.view == v.type and x.kind != "local"), None)
         if sec is not None:
             _draw_section(s, sec, V, v, cx, cy)
             rendered_refs.append(f"section:{sec.label}")
@@ -533,7 +578,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.line(c[0], c[1] - h.max_dia * 0.7 * sc, c[0], c[1] + h.max_dia * 0.7 * sc, 0.18, "4,1,1,1")
 
         for sec_ in plan.sections:
-            if sec_.parent == v.type and part is not None:
+            if sec_.kind == "local" and sec_.view == v.type:
+                _draw_local(s, sec_, V)
+                rendered_refs.append(f"section:{sec_.label}")
+            elif sec_.parent == v.type and part is not None:
                 _draw_cut_line(s, sec_, part, V)
         # 尺寸
         vx0, vy0 = P(ulo, wlo)
@@ -577,6 +625,26 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             elif d.kind in ("datum", "gtol", "roughness"):
                 from . import render_gdt
                 render_gdt.draw(s, d.kind, *P(*d.at), d.extra, d.text)
+            elif d.kind == "tag":
+                px, py = P(*d.at)
+                hr = next((h.max_dia / 2 * sc for h in (part.holes if part else []) for i in h.instances
+                           if abs(vc(i.xyz, ha) - d.at[0]) < 1e-6 and abs(vc(i.xyz, va) - d.at[1]) < 1e-6), 1.0)
+                s.text(px + hr * 0.75 + 0.6, py + hr * 0.75 + 0.4, d.text, 2.5)
+            elif d.kind == "origin":
+                px, py = P(*d.at)
+                s.line(px, py, px + 8, py, THIN)
+                s.line(px, py, px, py + 8, THIN)
+                s.parts.append(_arrow_head(s, (px + 8, py), (1, 0)))
+                s.parts.append(_arrow_head(s, (px, py + 8), (0, 1)))
+                s.text(px + 9, py - 1, "X", 2.5)
+                s.text(px - 1, py + 9, "Y", 2.5)
+                s.text(px - 9, py - 4, d.text, 2.5)
+            elif d.kind in ("callout", "radius", "diameter") and d.extra and "label" in d.extra:
+                lb = d.extra["label"]
+                s.line(*lb["anchor"], *lb["elbow"], 0.18)
+                s.line(*lb["elbow"], *lb["end"], 0.18)
+                s.parts.append(f"<circle cx='{lb['anchor'][0]:.2f}' cy='{s.y(lb['anchor'][1]):.2f}' r='0.5' fill='{STROKE}'/>")
+                s.text(lb["text_at"][0], lb["text_at"][1], d.text, 3)
             elif d.kind in ("callout", "radius", "diameter"):
                 px, py = P(*d.at) if d.at is not None else (vx1, vy1)
                 tx, ty = px + 12, py + 9
@@ -585,10 +653,18 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(tx + 0.5, ty + 0.8, d.text, 3)
             rendered_refs.append(d.ref)
 
+    ht_rows: list[list[Any]] = []
+    ht_h = 0.0
+    if plan.hole_table and plan.hole_table_box:
+        bx0, by0, bx1, by1 = plan.hole_table_box
+        _draw_hole_table(s, bx0, by0, plan.hole_table, ht_rows)
+        rendered_refs.append("hole_table")
+        if bx0 > W / 2:  # 孔表在右侧栏：粗糙度移到孔表上方
+            ht_h = by1 + 4
     if part is not None and plan.title_block.get("surface_finish"):
         from . import render_gdt
-        render_gdt.general_roughness(s, W - 5 - 180, 5 + 56 + 14 + 5 * len(plan.notes) + 6
-                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0),
+        render_gdt.general_roughness(s, W - 5 - 180, ht_h or (5 + 56 + 14 + 5 * len(plan.notes) + 6
+                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0)),
                                      plan.title_block["surface_finish"])
         rendered_refs.append("general_roughness")
     # 标题栏（右下）
@@ -650,6 +726,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions()}
     if asm is not None:
         out.update(bom_rows=bom_rows, balloon_items=balloon_items)
+    if plan.hole_table:
+        out["hole_table_rows"] = ht_rows
     if plan.layout == "weldment":
         out.update(cut_list_rows=cut_rows, balloon_items=balloon_items,
                    weld_symbols=sum(1 for r in rendered_refs if r.startswith("weld:")))

@@ -170,3 +170,13 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 2. A-A 剖视图位于原主视图位置、投射方向正确（从前向后看）；方向反了记录下来（需加 ChangeDirection 选项）。
 3. 阶梯剖转折处没有分界线；沉孔、螺纹孔、盲孔、型腔都剖到；剖面线为 45°。
 4. 再试 `sections: [{"kind": "half", "through": ["Pilot"]}]`：SW 能否用 L 形线生成半剖；不行记录报错。
+
+### 局部剖、孔表、引出标注位置（D016 / D017）
+1. 局部剖：tests/test_section.py 里的 BAR（压条，单个 M8 螺纹孔）出图，主视图应在螺纹孔处局部剖开。
+   核对 oplog 中 broken_out_section：轮廓是否画在视图里（图纸坐标），CreateBreakOutSection 的深度（m）是否剖到孔中心；
+   如果 SW 要求轮廓为样条，记录报错（届时改用 CreateSpline2）。
+2. 孔表：tests/test_hole_table.py 的 GRID（21 个孔）出图，俯视图应只有孔号（A1…C4）和 X0 Y0 原点，
+   右侧技术要求上方有 4 列孔表。核对：表格是否生成、单元格文字是否写入（`_set_cell` 用 PROPERTYPUT 写 Text(row, col)），
+   回读不一致会报 D017。表格位置/列宽不对请截图。
+3. 引出标注：孔标注、4×R 圆角、型腔标注的文字位置应与预览 SVG 一致（leader_note 的 text_pos）；
+   引线目前没有关联到模型边线（P1），记录 SW 中引线的实际样子。

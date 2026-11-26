@@ -356,6 +356,22 @@ def section_ops(plan) -> list[NativeOp]:
     from ...detailing import _project
     ops = []
     for s in plan.sections:
+        if s.kind == "local":  # 局部剖：视图内画封闭轮廓（波浪线 + 上下边外扩）→ CreateBreakOutSection(深度)
+            from ...section import AX, FRAME
+            view = next(v for v in plan.views if v.type == s.view)
+            region = s.geometry["region"][0]
+            ha, da = FRAME[s.view]
+            zlo, zhi = min(q[2] for q in region), max(q[2] for q in region)
+            grow = 2.0 / view.scale  # 上下伸出外形 2 mm，确保轮廓包住剖开部分
+            pts3 = [(*q[:2], q[2] - grow if q[2] <= zlo + 1e-6 else q[2] + grow if q[2] >= zhi - 1e-6 else q[2])
+                    for q in region]
+            pts = [_project(view, SimpleNamespace(bbox=s.bbox), q) for q in pts3]
+            lo_d = s.bbox.ymin if da == "y" else s.bbox.xmin
+            ops.append(NativeOp("broken_out_section", {
+                "view": s.view, "label": s.label, "points": [[round(x, 3), round(y, 3)] for x, y in pts],
+                "depth": round(s.path[0][2] - lo_d, 3)},
+                "视图中画封闭折线（波浪线近似）并选中 → IDrawingDoc.CreateBreakOutSection(深度 m，自视图前表面算起)"))
+            continue
         parent = next(v for v in plan.views if v.type == s.parent)
         target = next(v for v in plan.views if v.type == s.view)
         pts = [_project(parent, SimpleNamespace(bbox=s.bbox), q) for q in s.cut_points]
@@ -392,7 +408,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                  "z": (f["z0"] + f["z1"]) / 2 if f else 0.0,
                                                  "center": v.origin_on_sheet}, "移出断面图（剖切线垂直轴线）"))
             continue
-        if any(s.view == v.type for s in plan.sections):
+        if any(s.view == v.type and s.kind != "local" for s in plan.sections):
             continue  # 由剖视图替代（在父视图之后生成）
         name, angle = SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front" else SW_VIEW[v.type]
         ops.append(NativeOp("model_view", {"view": v.type, "sw_view": name, "model": model_file,
@@ -414,7 +430,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                         "at": d.at, "ref": d.ref}))
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
-            ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref}))
+            lb = (d.extra or {}).get("label")
+            ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref,
+                                                **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else {})}))
     for d in plan.dims:  # 焊缝符号：原生 InsertWeldSymbol3，失败时退回带引线注释
         if d.kind == "weld":
             ex = d.extra or {}
@@ -426,6 +444,16 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                 "at": [v / 1000 for v in ex.get("sheet_at", (0, 0))], "pos": [v / 1000 for v in ex.get("sheet_pos", (0, 0))],
                 "at_model": d.at, "fallback_text": text, "ref": d.ref},
                 "选中焊缝处模型边线 → InsertWeldSymbol3 → SetText 角焊缝/焊脚/处数，周围焊、尾部焊接方法"))
+    if plan.hole_table:
+        ops.append(NativeOp("hole_tags", {"view": plan.hole_table_view, "tags": [
+            {"text": d.text, "at": d.extra["sheet_at"], "origin": d.kind == "origin"}
+            for d in plan.dims if d.kind in ("tag", "origin") and d.view == plan.hole_table_view]},
+            "孔号注释放在孔旁；坐标原点标 X0 Y0"))
+        ops.append(NativeOp("hole_table", {"box": plan.hole_table_box, "columns": ["孔号", "X", "Y", "规格"],
+                                           "widths": [14, 22, 22, 122],
+                                           "rows": [[r["tag"], f"{r['x']:g}", f"{r['y']:g}", r["size"]]
+                                                    for r in plan.hole_table]},
+                            "InsertTableAnnotation2 通用表格逐格写入 → 回读核对（D017）"))
     if plan.cut_list:
         ops.append(NativeOp("weldment_cut_list", {"view": plan.views[0].type, "anchor": "above_title_block",
                                                   "rows": [{k: r[k] for k in ("item", "kind", "spec", "qty", "length_mm",

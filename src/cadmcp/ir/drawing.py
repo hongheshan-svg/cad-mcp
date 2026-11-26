@@ -17,7 +17,8 @@ class ViewSpec(Strict):
 
 class SectionSpec(Strict):
     """剖视图（GB/T 4458.6）。剖切线画在俯视图上；剖视图替代主视图（或左视图）的位置。"""
-    kind: Literal["full", "half", "step"] = Field("full", description="全剖 / 半剖（对称件）/ 阶梯剖（多个平行剖切面）")
+    kind: Literal["full", "half", "step", "local"] = Field(
+        "full", description="全剖 / 半剖（对称件）/ 阶梯剖（多个平行剖切面）/ 局部剖（只剖开 through 特征附近，波浪线分界，视图保留）")
     view: Literal["front", "left"] = Field("front", description="被剖视替代的视图")
     at: list[Num] = Field([], description="剖切面位置（主视图剖视为 Y 坐标，左视图剖视为 X 坐标）；阶梯剖可给多个")
     through: list[str] = Field([], description="剖切面穿过这些特征（孔/型腔名）的中心；比 at 更常用")
@@ -37,7 +38,8 @@ class DrawingSpec(Strict):
     dimensions: Literal["auto", "model", "none"] = Field(
         "auto", description="auto = company dimensioning rules (overall + ordinate holes); model = import model dims")
     hole_callouts: bool = True
-    hole_table: bool = False
+    hole_table: Literal["auto"] | bool = Field(
+        "auto", description="孔表：auto = 一个视图孔数 ≥16 或坐标值过多时，用孔号 + 孔表代替逐孔坐标标注")
     general_tolerance: str = "GB/T 1804-m"
     surface_finish: str | None = "Ra 3.2"
     notes: list[str] = Field([], description="额外技术要求。平台已自动生成：未注公差、锐边倒钝去毛刺、表面处理（来自零件）、钣金折弯半径——不要重复写")

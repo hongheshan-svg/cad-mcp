@@ -101,6 +101,10 @@ class DrawingPlan:
     bom: list[dict[str, Any]] = field(default_factory=list)
     balloons: list[dict[str, Any]] = field(default_factory=list)
     sections: list[Any] = field(default_factory=list)  # section.SectionPlan（剖视图）
+    hole_table: list[dict[str, Any]] = field(default_factory=list)  # 孔表行：tag/x/y/size
+    hole_table_view: str = ""
+    hole_table_box: tuple[float, float, float, float] | None = None  # 孔表占位（图纸 mm：x0, y0, x1, y1）
+    extra_findings: list[dict[str, Any]] = field(default_factory=list)  # 规划阶段发现的问题
     section_skipped: bool = False  # 有内部结构但 sections="none"
     revisions: list[dict[str, str]] = field(default_factory=list)
     flat_pattern: tuple[float, float] | None = None
@@ -404,8 +408,10 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 dims.append(Dim(view, "linear", "z", L, f"{L:g}", f"step{i}_len", (0, z + L / 2)))
                 z += L
         if p.profile and p.profile.data.get("corner_radius"):
-            dims.append(Dim("top", "radius", None, p.profile.data["corner_radius"],
-                            f"4×R{p.profile.data['corner_radius']:g}", "corner_radius"))
+            r_ = p.profile.data["corner_radius"]
+            u0_, u1_, v0_, v1_ = p.profile.bbox2d
+            dims.append(Dim("top", "radius", None, r_, f"4×R{r_:g}", "corner_radius",
+                            (u1_ - r_ * 0.293, v1_ - r_ * 0.293)))  # 右上圆角弧中点
         # 孔：坐标尺寸（以左下角为基准，机加工常用）+ 孔标注
         missing_views: set[str] = set()
         ordinates: dict[tuple[str, str, float], Dim] = {}
@@ -453,10 +459,22 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         for pk in p.pockets:
             pr = pk["profile"]
             txt = f"{pr.bbox2d[1] - pr.bbox2d[0]:g}×{pr.bbox2d[3] - pr.bbox2d[2]:g}" + ("" if pk["through"] else f" 深{pk['depth']:g}")
-            dims.append(Dim(hole_view(pk["face"], vtypes) or views[0].type, "callout", None, None, txt, pk["name"]))
+            pv = hole_view(pk["face"], vtypes) or views[0].type
+            at_ = None
+            if pv in VIEW_AXES and pk["face"] in ("top", "bottom"):
+                pha, pva = VIEW_AXES[pv]
+                z_ = b.zmax if pk["face"] == "top" else b.zmin
+                pts_ = [(vc((x, y, z_), pha), vc((x, y, z_), pva)) for x, y in pr.outline]
+                at_ = max(pts_, key=lambda q: q[0] + q[1])  # 型腔轮廓右上角
+            dims.append(Dim(pv, "callout", None, None, txt, pk["name"], at_))
         for f in p.finishes:
             txt = f"C{f['size']:g}" if f["type"] == "chamfer" else f"R{f['size']:g}"
-            dims.append(Dim("front" if "front" in vtypes else views[0].type, "callout", None, None, txt, f["name"]))
+            fv = "front" if "front" in vtypes else views[0].type
+            at_ = None
+            if fv in VIEW_AXES:
+                fha, fva = VIEW_AXES[fv]
+                at_ = (vrange(b, fha)[1], vrange(b, fva)[1])  # 视图右上角棱边
+            dims.append(Dim(fv, "callout", None, None, txt, f["name"], at_))
 
     if spec.dimensions == "none":
         missing_views = set()
@@ -472,17 +490,116 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                     else (bd["flat_pos"], fv0 * 0.6 + (fv0 + fv1) / 2 * 0.4)
                 dims.append(Dim("flat_pattern", "callout", None, bd["angle"],
                                 f"{word} {bd['angle']:g}° R{bd['radius']:g}", f"bend{i}", at))
+    ht_rows, ht_view = ([], "") if spec.dimensions == "none" else _hole_table(dims, p, views, spec)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
+    plan.hole_table, plan.hole_table_view = ht_rows, ht_view
+    if ht_rows:
+        plan.hole_table_box = _place_table(plan, HOLE_TABLE_W, 5 * (len(ht_rows) + 1) + 8)
     plan.missing_views = sorted(missing_views)
     plan.revisions = list(spec.revisions)
     _plan_sections(plan, spec, p)
+    if spec.dimensions != "none":
+        place_labels(plan, p.bbox, part=p)
     return plan
 
 
 
 # ---------------- 焊接件图 ----------------
+HOLE_TABLE_MIN = 16      # 一个视图孔数达到此值用孔表
+HOLE_TABLE_ORD = 14      # 或某方向坐标值个数超过此值
+
+
+HOLE_TABLE_W = 180.0
+
+
+def right_column_bottom(plan: "DrawingPlan") -> float:
+    """右侧栏（标题栏、技术要求、切割清单、"其余"粗糙度）已占到的高度。"""
+    return 5 + 56 + 14 + 5 * len(plan.notes) + 6 + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0) + 16
+
+
+def _place_table(plan: "DrawingPlan", w: float, h: float) -> tuple[float, float, float, float]:
+    """表格放置：右侧栏技术要求上方 → 左下空白区；都放不下仍放右侧栏并标记（D018）。"""
+    W, H = plan.sheet_size
+    def rects(views):
+        out = []
+        for v in views:
+            cx, cy = v.origin_on_sheet
+            vw, vh = v.size_mm
+            out.append((cx - vw / 2 - 28, cy - vh / 2 - 28, cx + vw / 2 + 16, cy + vh / 2 + 10))  # 含尺寸带
+        return out
+
+    yb = right_column_bottom(plan)
+    cands = [(W - 5 - w, yb, W - 5, yb + h), (15.0, 12.0, 15.0 + w, 12.0 + h)]
+
+    def fits(c, rs):
+        return c[3] <= H - 10 and not any(_box_hit(c, r) > 0 for r in rs) and \
+            not (c is cands[1] and c[2] > W - 5 - 180 - 4)
+
+    for c in cands:
+        if fits(c, rects(plan.views)):
+            return c
+    main = [v for v in plan.views if v.type != "iso"]
+    if len(main) < len(plan.views):  # 轴测图是辅助视图：让位给孔表
+        for c in cands:
+            if fits(c, rects(main)):
+                plan.views[:] = main
+                plan.dims[:] = [d for d in plan.dims if d.view != "iso"]
+                return c
+    plan.extra_findings.append({"rule": "D018", "severity": "warning",
+                                "message": f"孔表（{len(plan.hole_table)} 行）放不下，与视图重叠",
+                                "fix": "指定更大图幅（sheet），或减少视图"})
+    return cands[0]
+
+
+def _hole_table(dims: list[Dim], p: ResolvedPart, views: list[ViewPlan], spec: DrawingSpec):
+    """孔表：每组孔一个字母、每孔一个编号（A1…），坐标相对视图左下角基准；该视图的坐标尺寸与孔标注由孔表代替。
+    直接修改 dims；返回 (行, 视图)。"""
+    if spec.hole_table is False:
+        return [], ""
+    vtypes = {v.type for v in views}
+    by_view: dict[str, list] = {}
+    for h in p.holes:
+        v = hole_view(h.face, vtypes)
+        if v in VIEW_AXES and not h.slot:
+            by_view.setdefault(v, []).append(h)
+    if not by_view:
+        return [], ""
+    view = max(by_view, key=lambda v: sum(len(h.instances) for h in by_view[v]))
+    holes = by_view[view]
+    n = sum(len(h.instances) for h in holes)
+    ords = [d for d in dims if d.view == view and d.kind == "ordinate"]
+    many_ord = max((sum(1 for d in ords if d.axis == ax) for ax in VIEW_AXES[view]), default=0) > HOLE_TABLE_ORD
+    if spec.hole_table == "auto" and n < HOLE_TABLE_MIN and not many_ord:
+        return [], ""
+    ha, va = VIEW_AXES[view]
+    b = p.bbox
+    o = (vrange(b, ha)[0], vrange(b, va)[0])
+    vp = next(v for v in views if v.type == view)
+    rows: list[dict[str, Any]] = []
+    tags: list[Dim] = []
+    names = {h.name for h in holes}
+    for gi, h in enumerate(holes):
+        letter = "ABCDEFGHJKLMNPQRSTUVWXYZ"[gi % 24] + ("" if gi < 24 else str(gi // 24))
+        insts = sorted(h.instances, key=lambda i: (round(vc(i.xyz, ha), 3), round(vc(i.xyz, va), 3)))
+        size = re.sub(r"^\d+×", "", h.callout).replace(" 均布", "")
+        for k, inst in enumerate(insts, 1):
+            u, w = vc(inst.xyz, ha), vc(inst.xyz, va)
+            tag = f"{letter}{k}"
+            rows.append({"tag": tag, "x": round(u - o[0], 2), "y": round(w - o[1], 2), "size": size, "group": h.name})
+            sx, sy = _uv_sheet(vp, b, (u, w))
+            off = h.max_dia / 2 * vp.scale * 0.75
+            tags.append(Dim(view, "tag", None, None, tag, f"tag:{tag}", (u, w),
+                            {"sheet_at": (round(sx + off + 0.6, 2), round(sy + off + 0.4, 2))}))
+    dims[:] = [d for d in dims if not (d.view == view and (d.kind == "ordinate" or d.ref in names
+                                                        or d.ref.split(".")[0] in names and d.ref.endswith(".pcd")))]
+    dims += tags
+    dims.append(Dim(view, "origin", None, None, "X0 Y0", f"origin:{view}", o,
+                    {"sheet_at": tuple(round(c, 2) for c in _uv_sheet(vp, b, o))}))
+    return rows, view
+
+
 def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:
     """剖视图：auto 时有内部结构就把主视图画成全剖/阶梯剖；逐个指定时按指定。剖视图替代原视图位置并标 X-X。"""
     from . import section as sx
@@ -500,16 +617,24 @@ def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> N
                 secs.append(s)
     else:
         for i, sp in enumerate(spec.sections):
-            if sp.view not in vt or "top" not in vt:
+            if sp.view not in vt or ("top" not in vt and sp.kind != "local"):
                 raise CadError(SPEC_INVALID, f"section {i}: drawing needs views {sp.view!r} and 'top'",
                                hint="剖切线画在俯视图上，剖视图替代主视图/左视图；在 views 中加入它们")
-            secs.append(sx.explicit_section(p, sp, sp.label or "ABCDEFGH"[i]))
+            try:
+                secs.append(sx.explicit_section(p, sp, sp.label or "ABCDEFGH"[i]))
+            except ValueError as e:
+                raise CadError(SPEC_INVALID, f"section {i}: {e}", hint='例：{"kind": "local", "through": ["M8"]}') from e
+    n_local = 0
     for s in secs:
+        if s.kind == "local":  # 局部剖不用字母
+            n_local += 1
+            s.label = f"局部{n_local}"
+            s.wave_amp = 1.0 / next(v.scale for v in plan.views if v.type == s.view)
         s.geometry = sx.geometry(p, s)
         s.cut_points = sx.cut_line(p, s)
         s.bbox = p.bbox
         for v in plan.views:
-            if v.type == s.view:
+            if v.type == s.view and s.kind != "local":
                 v.label = f"{s.label}-{s.label}"
     plan.sections = secs
 
@@ -594,6 +719,11 @@ def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None
     for r in rows:
         r["_r"]["item"] = r["item"]
     plan.cut_list.sort(key=lambda r: r["item"])
+    # 孔标注合并、切割清单与焊缝符号加入后重新排布引出标注，避开序号和焊缝符号
+    reserved = [(b_["pos"][0] - 6, b_["pos"][1] - 6, b_["pos"][0] + 6, b_["pos"][1] + 6) for b_ in plan.balloons if "pos" in b_]
+    reserved += [(d.extra["sheet_pos"][0] - 2, d.extra["sheet_pos"][1] - 3, d.extra["sheet_pos"][0] + 32,
+                  d.extra["sheet_pos"][1] + 8) for d in plan.dims if d.kind == "weld"]
+    place_labels(plan, p.bbox, reserved, part=p)
     return plan
 
 
@@ -795,6 +925,134 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size) -> tuple[lis
     return new_bom, balloons
 
 
+LABEL_H = 3.0  # 引出标注字高
+FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", "right": "x"}
+
+
+def _tw(s: str, size: float = LABEL_H) -> float:
+    return sum(size if ord(ch) > 0x2E80 else 0.6 * size for ch in s)
+
+
+def _uv_sheet(view: "ViewPlan", bbox, uv: tuple[float, float]) -> tuple[float, float]:
+    ha, va = VIEW_AXES[view.type]
+    (ulo, uhi), (wlo, whi) = vrange(bbox, ha), vrange(bbox, va)
+    cx, cy = view.origin_on_sheet
+    return cx + (uv[0] - (ulo + uhi) / 2) * view.scale, cy + (uv[1] - (wlo + whi) / 2) * view.scale
+
+
+def _box_hit(a, b) -> float:
+    ox, oy = min(a[2], b[2]) - max(a[0], b[0]), min(a[3], b[3]) - max(a[1], b[1])
+    return ox * oy if ox > 0 and oy > 0 else 0.0
+
+
+def _seg_cross(p1, p2, p3, p4) -> bool:
+    def o(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    return o(p1, p2, p3) * o(p1, p2, p4) < 0 and o(p3, p4, p1) * o(p3, p4, p2) < 0
+
+
+def _seg_box(p1, p2, b) -> bool:
+    corners = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+    return any(_seg_cross(p1, p2, corners[i], corners[(i + 1) % 4]) for i in range(4))
+
+
+def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, float, float]] | None = None,
+                 part: ResolvedPart | None = None) -> None:
+    """引出标注排布（孔标注/半径/型腔/倒角等）：对每个标注在 8 个方向 × 5 个距离中选位置，
+    硬约束：不压其他文字、不出图框、不进标题栏/技术要求区、不压坐标尺寸带；软约束：少压视图、引线不交叉、引线短。
+    结果写入 Dim.extra["label"] = {anchor, elbow, text_at, dir}（图纸坐标 mm），预览与 CAD 共用。"""
+    W, H = plan.sheet_size
+    vmap = {v.type: v for v in plan.views if v.type in VIEW_AXES}
+    hard: list[tuple[float, float, float, float]] = list(reserved or [])
+    hard.append((W - 5 - 180, 0, W, 5 + 56 + 14 + 5 * len(plan.notes) + 14
+                 + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0)
+                 + (7 * (len(plan.bom) + 1) if plan.bom else 0)))
+    if plan.hole_table_box:
+        b_ = plan.hole_table_box
+        hard.append((b_[0] - 2, b_[1] - 2, b_[2] + 2, b_[3] + 14 if b_[0] > W / 2 else b_[3] + 2))
+    soft = []
+    for v in vmap.values():
+        cx, cy = v.origin_on_sheet
+        w, h = v.size_mm
+        soft.append((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+        if any(d.view == v.type and d.kind == "ordinate" for d in plan.dims):  # 坐标尺寸带（下方、右侧）
+            hard.append((cx - w / 2 - 2, cy - h / 2 - 14, cx + w / 2 + 2, cy - h / 2))
+            hard.append((cx + w / 2, cy - h / 2 - 2, cx + w / 2 + 12, cy + h / 2 + 2))
+        hard.append((cx - w / 2 - 2, cy - h / 2 - 26, cx + w / 2 + 2, cy - h / 2 - 8))  # 总体尺寸（下）
+        hard.append((cx - w / 2 - 26, cy - h / 2 - 2, cx - w / 2 - 6, cy + h / 2 + 2))  # 总体尺寸（左）
+        if v.label:
+            hard.append((cx - 10, cy + h / 2 + 2, cx + 10, cy + h / 2 + 9))
+    for d in plan.dims:  # 精度符号大致占位
+        if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap:
+            x, y = _uv_sheet(vmap[d.view], bbox, d.at)
+            hard.append((x - 4, y - 14, x + 26, y + 2) if d.kind != "datum" else (x - 5, y - 14, x + 5, y + 2))
+    feat: list[tuple[float, float, float, float]] = []  # 孔、型腔投影（文字不压图形）
+    if part is not None:
+        for h in part.holes:
+            for v in vmap.values():
+                if FACE_AXIS.get(h.face) != FACE_AXIS.get(v.type):
+                    continue
+                ha_, va_ = VIEW_AXES[v.type]
+                for inst in h.instances:
+                    x, y = _uv_sheet(v, bbox, (vc(inst.xyz, ha_), vc(inst.xyz, va_)))
+                    r = h.max_dia / 2 * v.scale + 1
+                    feat.append((x - r, y - r, x + r, y + r))
+                if h.circular:
+                    from .ir.resolve import face_point
+                    c = h.circular
+                    cxyz = face_point(h.face, (c["center_u"], c["center_v"]), bbox, h.at)
+                    x, y = _uv_sheet(v, bbox, (vc(cxyz, ha_), vc(cxyz, va_)))
+                    r = c["pcd"] / 2 * v.scale
+                    feat.append((x - r, y - r, x + r, y + r))
+        for pk in part.pockets:
+            for v in vmap.values():
+                if pk["face"] in ("top", "bottom") and v.type in ("top", "bottom"):
+                    ha_, va_ = VIEW_AXES[v.type]
+                    pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
+                    feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
+    for sec in plan.sections:  # 剖切符号与字母
+        pv = vmap.get(sec.parent)
+        if pv is None:
+            continue
+        ha_, va_ = VIEW_AXES[pv.type]
+        for q in sec.cut_points:
+            x, y = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
+            hard.append((x - 6, y - 6, x + 6, y + 6))
+    leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
+              and not (plan.layout == "shaft" and d.kind == "diameter")]
+    for d in sorted(labels, key=lambda d: -_tw(d.text)):  # 长的先放
+        v = vmap[d.view]
+        cx, cy = v.origin_on_sheet
+        if d.at is not None:
+            ax, ay = _uv_sheet(v, bbox, d.at)
+        else:
+            ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
+        tw = _tw(d.text) + 1
+        best = None
+        for L in (10, 16, 24, 34, 46, 60):
+            for ang in (45, 135, -45, -135, 25, 155, -25, -155):
+                ex, ey = ax + L * math.cos(math.radians(ang)), ay + L * math.sin(math.radians(ang))
+                dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
+                box = (ex, ey - 0.5, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else (ex - tw, ey - 0.5, ex, ey + LABEL_H + 0.5)
+                cost = L * 1.5
+                if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
+                    cost += 5000
+                cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
+                cost += sum(40 for sb in soft if _box_hit(box, sb) > 0)
+                cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
+                cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
+                cost += sum(300 for hb in hard if _seg_box((ax, ay), (ex, ey), hb))
+                if best is None or cost < best[0]:
+                    best = (cost, ex, ey, dirn, box)
+        _, ex, ey, dirn, box = best
+        hard.append(box)
+        leaders.append(((ax, ay), (ex, ey)))
+        d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
+                                                 "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
+                                                 "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
+
+
 def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
     """图上明细表、序号与方案（= 装配 BOM）是否一致：D011 明细表行、D012 序号缺失/重复/无对应行。"""
     out = []
@@ -901,6 +1159,7 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         out += check_bom_association(plan, rendered)
     if rendered is not None and plan.layout == "weldment":
         out += check_weldment_drawing(plan, rendered)
+    out += [{k: v for k, v in x.items()} for x in plan.extra_findings]
     if plan.section_skipped:
         f("D015", "warning", "零件有沉孔/螺纹孔/盲孔/型腔等内部结构，主视图未剖开，只能靠虚线和标注表达",
           "sections 用 auto 或指定剖切位置")
@@ -908,7 +1167,19 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         done = set(rendered.get("sections", [])) | {r[8:] for r in rendered.get("dim_refs", []) if r.startswith("section:")}
         for sec in plan.sections:
             if sec.label not in done:
-                f("D016", "error", f"剖视图 {sec.label}-{sec.label} 未生成", "查看 oplog 中 section_cut 的失败原因")
+                f("D016", "error", f"剖视图 {sec.label if sec.kind == 'local' else sec.label + '-' + sec.label} 未生成",
+                  "查看 oplog 中 section_cut / broken_out_section 的失败原因")
+    if rendered is not None and plan.hole_table and "hole_table_rows" in rendered:
+        want = {(r["tag"], r["x"], r["y"]) for r in plan.hole_table}
+        got = set()
+        for r in rendered["hole_table_rows"]:
+            try:
+                got.add((str(r[0]), round(float(r[1]), 2), round(float(r[2]), 2)))
+            except (TypeError, ValueError, IndexError):
+                pass
+        if want != got:
+            f("D017", "error", f"孔表与孔位不一致：缺 {sorted(want - got)[:4]}，多/错 {sorted(got - want)[:4]}",
+              "重新出图；检查表格写入（oplog 中 hole_table）")
     if plan.model_kind == "part" and not any("公差" in n for n in plan.notes):
         f("D008", "warning", "缺少未注公差说明")
     return out

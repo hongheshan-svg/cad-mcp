@@ -139,3 +139,22 @@ def test_sw_replace_component_op():
     ex.op_replace_component("CYL-1", r"D:\lib\CYL-SC40x50.SLDPRT", False)
     call = next(c for c in sw.calls if c[0] == "ReplaceComponents2")
     assert call[1] == (r"D:\lib\CYL-SC40x50.SLDPRT", "", False, 0, True)  # 重新附加配合
+
+
+def test_sw_hole_table_and_local_section(sw_svc):
+    from test_hole_table import GRID
+    from test_section import BAR
+    svc, ad = sw_svc
+    svc.change_begin("G")
+    svc.build(PartSpec.model_validate(GRID))
+    svc.build(DrawingSpec.model_validate({"model": GRID["name"], "title_block": {"designer": "AI"}}))
+    tbl = [c[1] for c in ad.sw.calls if c[0] == "InsertTableAnnotation2"]
+    assert len(tbl) == 1 and tbl[0][5:] == (22, 4)                    # 表头 + 21 行，4 列
+    notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
+    assert "A1" in notes and "X0 Y0" in notes and "孔表" in notes
+    svc.change_begin("B")
+    svc.build(PartSpec.model_validate(BAR))
+    d = svc.build(DrawingSpec.model_validate({"model": BAR["name"], "title_block": {"designer": "AI"}}))
+    bo = [c[1] for c in ad.sw.calls if c[0] == "CreateBreakOutSection"]
+    assert bo and bo[0][0] == pytest.approx(0.020)
+    assert not [f for f in d["rules"]["findings"] if f["rule"] == "D016"]
