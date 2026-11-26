@@ -1257,6 +1257,12 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     ha_, va_ = VIEW_AXES[v.type]
                     pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
                     feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
+    for s in plan.sections:  # 全剖/阶梯剖视图满布剖面线：文字压在上面须断开剖面线，尽量放到视图外
+        if s.kind != "local" and s.view in vmap:
+            v = vmap[s.view]
+            cx, cy = v.origin_on_sheet
+            w, h = v.size_mm
+            feat.append((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
     if part is not None and getattr(part, "weld_bodies", None):  # 焊接件：杆件/板件投影（文字不压型材）
         for body in part.weld_bodies:
             bb = Box(*body["box"])

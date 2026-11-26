@@ -483,14 +483,26 @@ def _draw_cut_list(s, x0, y_bottom, rows, out_rows=None) -> float:
 
 def _iso_top_features(s, iso, part, ztop):
     """轴测图上补画顶面可见的孔口与型腔（俯视可见面）；底面特征被遮挡不画。"""
+    b = part.bbox
+    # 相机方向 (-1,-1,1)：可见面为顶面、前面（y 最小）、左面（x 最小）；对面打通的通孔在可见面上也有孔口
+    vis = {"top": ("bottom", 2, b.zmax), "front": ("back", 1, b.ymin), "left": ("right", 0, b.xmin)}
     for h in part.holes:
-        if not (h.face == "top" or (h.through and h.face == "bottom")):
+        if h.slot:
             continue
-        r = (h.max_dia if h.face == "top" else h.drill) / 2
-        for i in h.instances:
-            x0, y0 = i.xyz[0], i.xyz[1]
-            ring = [(x0 + r * math.cos(2 * math.pi * k / 36), y0 + r * math.sin(2 * math.pi * k / 36)) for k in range(36)]
-            s.poly([iso(x, y, ztop) for x, y in ring], THICK)
+        for face, (opp, ax, val) in vis.items():
+            if not (h.face == face or (h.through and h.face == opp)):
+                continue
+            r = (h.max_dia if h.face == face else h.drill) / 2
+            u, w = [k for k in range(3) if k != ax]
+            for i in h.instances:
+                ring = []
+                for k in range(36):
+                    q = list(i.xyz)
+                    q[ax] = val
+                    q[u] += r * math.cos(2 * math.pi * k / 36)
+                    q[w] += r * math.sin(2 * math.pi * k / 36)
+                    ring.append(iso(*q))
+                s.poly(ring, THICK)
     for pk in part.pockets:
         if not (pk["face"] == "top" or (pk.get("through") and pk["face"] == "bottom")):
             continue
