@@ -22,7 +22,7 @@ FIELDS = {
     "part_no": "图号/编码", "code": "物料编码", "title": "名称", "spec": "规格型号", "material": "材料",
     "make_buy": "物料属性", "kind": "类别", "qty": "单位用量", "total_qty": "总用量", "unit": "单位",
     "unit_mass_kg": "单重kg", "total_mass_kg": "总重kg", "surface_treatment": "表面处理", "vendor": "供应商/品牌",
-    "code_status": "编码状态", "note": "备注",
+    "code_status": "编码状态", "note": "备注", "drawing_item": "装配图序号",
 }
 
 PROFILES: dict[str, dict[str, Any]] = {
@@ -33,7 +33,8 @@ PROFILES: dict[str, dict[str, Any]] = {
     # 通用 ERP 导入格式（父子项结构）：多数 ERP 的 BOM 导入模板都是 父项编码 + 子项编码 + 用量
     "erp": {"columns": [["父项物料编码", "parent_code"], ["子项物料编码", "code"], ["子项名称", "title"],
                         ["规格型号", "spec"], ["材质", "material"], ["物料属性", "make_buy"], ["计量单位", "unit"],
-                        ["用量", "qty"], ["层级", "level"], ["图号", "part_no"], ["备注", "note"]],
+                        ["用量", "qty"], ["层级", "level"], ["图号", "part_no"], ["装配图序号", "drawing_item"],
+                        ["备注", "note"]],
             "skip_root": True},
 }
 
@@ -62,6 +63,7 @@ class Node:
     lib_code: str | None = None
     part: Any = None  # ResolvedPart（自制零件）
     children: list[tuple["Node", int]] = field(default_factory=list)
+    item: int | None = None  # 在父装配的装配图上的序号（有装配图时）
 
 
 def _ceil_std(v: float, table: list[float]) -> float:
@@ -117,10 +119,14 @@ def multilevel(root: Node, coder: Coder) -> list[dict[str, Any]]:
              "make_buy": MAKE_BUY.get(n.kind, n.kind), "kind": n.kind, "qty": qty, "total_qty": total,
              "unit": UNIT.get(n.kind, "件"), "unit_mass_kg": round(n.unit_mass_kg, 4),
              "total_mass_kg": round(n.unit_mass_kg * total, 3), "surface_treatment": n.surface_treatment,
-             "vendor": n.vendor, "note": n.note, "_node": n}
+             "vendor": n.vendor, "note": n.note, "drawing_item": n.item if n.item is not None else "", "_node": n}
         rows.append(r)
-        for i, (c, q) in enumerate(n.children, 1):
-            walk(c, q, total * q, level + 1, f"{seq}.{i}" if seq else str(i), r)
+        kids = n.children
+        if kids and all(c.item is not None for c, _ in kids):  # 父装配有装配图：序号与图纸一致
+            kids = sorted(kids, key=lambda cq: cq[0].item)
+        for i, (c, q) in enumerate(kids, 1):
+            no = c.item if c.item is not None else i
+            walk(c, q, total * q, level + 1, f"{seq}.{no}" if seq else str(no), r)
 
     walk(root, 1, 1, 0, "", None)
     return rows
@@ -133,8 +139,9 @@ def summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         a = agg.setdefault(r["code"] or r["part_no"], {**{k: v for k, v in r.items() if not k.startswith("_")},
                                                          "total_qty": 0, "where_used": []})
         a["total_qty"] += r["total_qty"]
-        if r["parent_no"] not in a["where_used"]:
-            a["where_used"].append(r["parent_no"])
+        wu = r["parent_no"] + (f"（序号{r['drawing_item']}）" if r["drawing_item"] != "" else "")
+        if wu not in a["where_used"]:
+            a["where_used"].append(wu)
     order = {"自制": 0, "外协": 1, "外购": 2, "标准件": 3}
     out = sorted(agg.values(), key=lambda r: (order.get(r["make_buy"], 9), r["part_no"]))
     for i, r in enumerate(out, 1):

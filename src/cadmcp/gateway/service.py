@@ -463,6 +463,10 @@ class CadService:
         if kind == "asm":
             a = models[ref].resolved
             n = bx.Node(source, "assembly", a.part_no, a.title, unit_mass_kg=a.mass_kg)
+            # 装配图上的序号（序号按气泡顺时针编号，BOM 跟图纸走）
+            drw = next((d.resolved for d in models.values() if d.kind == "drawing"
+                        and getattr(d.resolved, "model", None) == ref and d.resolved.bom), None)
+            items = {r["part_no"]: r["item"] for r in drw.bom} if drw else {}
             for r in a.bom():
                 src = r.get("source") or ""
                 if src.startswith(("part:", "asm:", "lib:")):
@@ -471,6 +475,7 @@ class CadService:
                     c = bx.Node(src, r["kind"], r["part_no"], r["title"], r["spec"], r["material"], r["unit_mass_kg"])
                 if r.get("note"):
                     c.note = r["note"]
+                c.item = items.get(r["part_no"])
                 n.children.append((c, r["qty"]))
             return n
         if kind == "part":

@@ -77,3 +77,18 @@ def test_custom_profile_rejects_unknown_field(svc, tmp_path):
         svc.export_bom(top["name"], profile="mine")
     svc.policy.bom_profiles = {"mine": {"columns": [["编码", "code"], ["数量", "total_qty"]]}}
     assert svc.export_bom(top["name"], profile="mine")["ok"]
+
+
+def test_bom_follows_drawing_item_numbers(svc, tmp_path):
+    top = _top(svc, tmp_path)
+    svc.build(DrawingSpec.model_validate({"model": ASSEMBLY["name"]}))
+    plan = svc._get(ASSEMBLY["name"] + "_DRW").resolved
+    drawing = {r["part_no"]: r["item"] for r in plan.bom}
+    r = svc.export_bom(top["name"])
+    station = next(x for x in r["multilevel"] if x["part_no"] == "CS01-000")
+    kids = [x for x in r["multilevel"] if x["seq"].startswith(station["seq"] + ".") and x["seq"].count(".") == 1]
+    for x in kids:  # 工位下一层的序号 = 工位装配图上的序号
+        assert x["seq"] == f"{station['seq']}.{drawing[x['part_no']]}"
+    assert [int(x["seq"].split(".")[1]) for x in kids] == sorted(drawing.values())
+    cyl = next(x for x in r["bom"] if x["part_no"].startswith("CYL-SC32x50"))
+    assert f"CS01-000（序号{drawing[cyl['part_no']]}）" in cyl["note"]
