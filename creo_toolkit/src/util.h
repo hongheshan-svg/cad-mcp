@@ -54,4 +54,12 @@ ProView find_view(ProDrawing d, const std::string& view_name);   // 视图名，
 // 找不到 → PRO_TK_E_NOT_FOUND。调用方负责 ProSelectionFree。
 ProSelection pick_edge_at(ProDrawing d, ProView v, const std::array<double, 2>& sheet_mm, double tol_mm = 1.5);
 
+// ---- 以下为核心模块新增的辅助函数（不改动上面既有签名）----
+std::string model_name(ProMdl m);                       // 模型名（不含扩展名）
+std::string model_type_name(ProMdl m);                  // "part" | "assembly" | "drawing" | "other"
+std::string creo_release();                             // Creo 版本字符串，取不到返回 "unknown"
+std::vector<ProFeature> list_features(ProSolid s);      // 按特征顺序列出全部特征
+std::string feature_name(ProFeature* f);                // 特征名，无名返回 ""
+double sheet_mm_factor(ProDrawing d);                   // 1 mm 等于多少图纸单位
+
 }  // namespace cadmcp
