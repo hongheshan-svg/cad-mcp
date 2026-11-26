@@ -395,8 +395,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                                              "row_height": g["row_height"], "header_bottom": False}, "齿轮参数表"))
     texts = list(plan.notes)
     if texts:  # 技术要求：首行在上，文字块左下角
-        ops.append(NativeOp("tk.drw.note", {"drawing": D, "text": "\n".join(texts), "at": [x0, y0 + TITLE_H + 11]},
-                            "技术要求"))
+        from ...detailing import notes_x
+        ops.append(NativeOp("tk.drw.note", {"drawing": D, "text": "\n".join(texts),
+                                            "at": [notes_x(plan), y0 + TITLE_H + 11]}, "技术要求（避开视图时右移，同 SVG）"))
     above = y0 + TITLE_H + 12 + 5 * len(texts)  # 标题栏上方表格的底边（同 render_svg）
     sf = plan.title_block.get("surface_finish")
     if sf and plan.model_kind == "part":
