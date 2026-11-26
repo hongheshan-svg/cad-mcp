@@ -104,7 +104,7 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             top = kw["top"]
             yk = cy + top * sc
             tw_ = dev(tol_text(w, "JS9"))
-            tx = ex - 3 - text_width(tw_, 3.5) / 2  # 文字放在竖直中心线左侧，不压中心线
+            tx = ex - w / 2 * sc - 1.5 - text_width(tw_, 3.5) / 2  # 文字放在左尺寸界线之外，不压中心线与界线
             yw = (yk + cy + (rb * rb - w * w / 4) ** 0.5 * sc) / 2  # 键槽侧壁中点
             dims.append(Dim("left", "linear", "x", w, tw_, f"{kw['name']}_w", None, {
                 "sheet_pts": [(round(ex - w / 2 * sc, 2), round(yk, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
@@ -112,7 +112,10 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "sheet_pos": (round(tx, 2), round(yk + 8, 2)), "orient": "h"}))
             t = hub_t2_tol(w)
             tt = dev(f"{top + rb:g}(+{t:g}/0)")
-            ty = max(cy + (top - rb) / 2 * sc, cy + text_width(tt, 3.5) / 2 + 1.5)  # 文字不压水平中心线
+            half = text_width(tt, 3.5) / 2
+            ty = max(cy + (top - rb) / 2 * sc, cy + half + 1.5)  # 文字不压水平中心线
+            if ty + half > yk - 1:  # 也不压槽底的尺寸界线：放不下就移到尺寸界线之外（上方），尺寸线延长
+                ty = yk + 1.5 + half
             dims.append(Dim("left", "linear", "y", top + rb, tt, f"{kw['name']}_t", None, {
                 "sheet_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
                 "pick_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex, 2), round(yk, 2))],  # 孔底象限点、槽底中点

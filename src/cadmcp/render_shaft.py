@@ -20,23 +20,35 @@ def _arrow(s, x, y, dx, dy, size=2.2):
 
 
 def _hdim(s, xa, xb, y_from_a, y_from_b, y, text):
-    """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。"""
+    """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。文字比两界线间距宽时移到右界线之外，尺寸线延长到文字下。"""
+    from .render_svg import _text_w
     for x, yf in ((xa, y_from_a), (xb, y_from_b)):
         s.line(x, yf + (1 if y > yf else -1), x, y + (1.5 if y > yf else -1.5), THIN)
-    s.line(xa, y, xb, y, THIN)
+    tw = _text_w(text, 3.5)
+    if tw > abs(xb - xa) - 1:
+        x1 = max(xa, xb)
+        s.line(min(xa, xb), y, x1 + 1.5 + tw, y, THIN)
+        s.text(x1 + 1.5, y + 0.8, text, 3.5)
+    else:
+        s.line(xa, y, xb, y, THIN)
+        s.text((xa + xb) / 2, y + 0.8, text, 3.5, "middle")
     _arrow(s, xa, y, -1, 0)
     _arrow(s, xb, y, 1, 0)
-    s.text((xa + xb) / 2, y + 0.8, text, 3.5, "middle")
 
 
-def _vdim(s, x, ya, yb, text, text_left=True):
-    """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外。"""
+def _vdim(s, x, ya, yb, text, text_left=True, overflow="up"):
+    """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外
+    （overflow = up | down，由规划层 shaft_dia_overflow 决定）。"""
     from .render_svg import _text_w
     tw = _text_w(text, 3.5)
     ym = (ya + yb) / 2
     if tw > yb - ya - 2:
-        s.line(x, yb, x, yb + tw + 3, THIN)
-        ym = yb + 2 + tw / 2
+        if overflow == "down":
+            s.line(x, ya, x, ya - tw - 3, THIN)
+            ym = ya - 2 - tw / 2
+        else:
+            s.line(x, yb, x, yb + tw + 3, THIN)
+            ym = yb + 2 + tw / 2
     s.line(x, ya, x, yb, THIN)
     _arrow(s, x, ya, 0, -1)
     _arrow(s, x, yb, 0, 1)
@@ -149,7 +161,9 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             i = int(d.ref[4:].split("_")[0])
             zz = shaft_dia_z(part, i)
             x = P(zz, 0)[0]
-            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text)
+            from .detailing import shaft_dia_overflow
+            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text,
+                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
             z, r = d.at

@@ -53,3 +53,31 @@ def test_large_hole_label_leaves_view_from_contour():
     outside = x1 < vx0 or x0 > vx1 or y0 > vy1 or y1 < vy0
     inside = vx0 < x0 and x1 < vx1 and vy0 < y0 and y1 < vy1
     assert outside or inside  # 不骑在视图轮廓线上
+
+
+def test_dimension_lines_through_text_are_detected():
+    """D022 也查尺寸线/尺寸界线（线宽 = 细实线）压字；竖排数字贴着界线不算。"""
+    from cadmcp.render_svg import THIN, _Svg
+    s = _Svg(100, 100)
+    s.text(50, 50, "Ra 0.8", 3)
+    s.line(52, 40, 52, 60, THIN)
+    assert s.crossings() == ["Ra 0.8"]
+    s2 = _Svg(100, 100)
+    s2.text(35.5, 50, "0", 2.5, "middle", -90)
+    s2.line(36, 40, 36, 60, THIN)
+    assert s2.crossings() == []
+
+
+def test_narrow_section_width_text_moves_outside():
+    """键槽宽 6N9 带偏差比槽宽长：文字移到尺寸界线外，不被界线穿过；轴端键槽从轴端面定位。"""
+    import sys
+    sys.path.insert(0, "tests")
+    from test_gear import GS, _p
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    p = _p(GS)
+    plan = plan_part_drawing(DrawingSpec(model="GS1"), p)
+    pos = next(d for d in plan.dims if d.ref == "KW_pos")
+    assert pos.at == (140, 146)
+    assert not render(plan, p)[1]["crossings"]

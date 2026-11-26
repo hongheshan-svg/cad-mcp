@@ -158,3 +158,14 @@ def test_gear_shaft_native_ops():
     assert tk.args["op"] == "cut" and tk.args["plane"] == {"ref": "TOP", "offset": 40}
     ops = compile_drawing(plan_part_drawing(DrawingSpec(model="GS1"), p), "GS1.SLDPRT")
     assert any(o.op == "table" and o.args["title"] == "齿轮参数表" for o in ops)
+
+
+def test_shaft_fit_steps_without_geotol_warn():
+    from cadmcp.rules import check_part
+    p = _p(GS)
+    g6 = [f for f in check_part(p) if f["rule"] == "G006"]
+    assert g6 and g6[0]["severity"] == "warning" and "step:2" in g6[0]["target"]
+    spec = {**GS, "datums": [{"name": "A", "target": "step:0"}, {"name": "B", "target": "step:4"}],
+            "tolerances": [{"type": "circular_runout", "value": 0.012, "target": f"step:{i}", "datums": ["A", "B"]}
+                           for i in (0, 2, 4, 5)]}
+    assert not [f for f in check_part(_p(spec)) if f["rule"] == "G006"]

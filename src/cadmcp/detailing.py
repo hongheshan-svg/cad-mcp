@@ -352,6 +352,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         z0, z1 = p.step_z(i)
         d = p.shaft_steps[i][1]
         frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
+        if kind == "gtol":
+            frac = shaft_gtol_frac(p, i, views[0].scale if views else 1.0)
         if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号（剖切线在键槽中点）
             cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
             if cuts:
@@ -361,6 +363,24 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
                        and z0 - 1 <= (f["z0"] + f["z1"]) / 2 <= z1 + 1]
             if grooves:
                 frac = max((0.7, 0.5, 0.3, 0.2), key=lambda t: round(min(abs(z0 + t * (z1 - z0) - c) for c in grooves), 3))
+            # 直径文字长于轴段直径时沿尺寸界线伸出轮廓（render_shaft._vdim）：Ra 符号（横线向右约 21 mm）避开这些位置
+            # 上方的竖线（伸出的直径文字、尺寸界线、框格引线）会穿过符号文字：上下两侧都试，取冲突最少的位置
+            sc = views[0].scale if views else 1.0
+            top = shaft_top_obstacles(p, sc)
+            bot = shaft_bottom_obstacles(p, sc)
+            R = max(dd for _, dd in p.shaft_steps) / 2
+            bottom_ok = (R - d / 2) * sc + 15 - 1.5 >= 19  # 引线 8 + 竖线 9 + 文字
+            fr0 = frac
+
+            def clash(t, obs):
+                z = z0 + t * (z1 - z0)
+                return sum(z - 3 / sc <= c <= z + 22 / sc for c in obs)
+            cands = [(clash(t, top), 0, 0.0 if t == fr0 else 1.0, t, 1) for t in (fr0, 0.5, 0.3, 0.2, 0.1, 0.85)]
+            if bottom_ok:
+                cands += [(clash(t, bot), 1, 0.0 if t == fr0 else 1.0, t, -1) for t in (fr0, 0.5, 0.3, 0.2, 0.1, 0.85)]
+            _, _, _, frac, side = min(cands)
+            if side < 0:
+                return "front", (z0 + frac * (z1 - z0), -(d / 2)), (0, -1)
         return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
 
     for d in p.datums:
@@ -1074,7 +1094,12 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             if f["kind"] == "keyway":
                 dims.append(Dim("front", "linear", "z", f["length"], f"{f['length']:g}", f"{f['name']}_len",
                                 (f["z0"], f["z1"])))
-                if abs(f["z0"] - sz0) > 1e-6:
+                if f["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1:
+                    # 轴端键槽从轴端面定位（工艺基准在端面；尺寸界线也远离相邻轴段上的符号）
+                    if Ltot - f["z1"] > 1e-6:
+                        dims.append(Dim("front", "linear", "z", Ltot - f["z1"], f"{Ltot - f['z1']:g}", f"{f['name']}_pos",
+                                        (f["z1"], Ltot)))
+                elif abs(f["z0"] - sz0) > 1e-6:
                     dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
                                     (sz0, f["z0"])))
                 dims.append(Dim("section", "linear", "y", f["width"], (tol_text(f["width"], "N9") if spec.fit_deviations else f"{f['width']:g}N9"), f"{f['name']}_w",
@@ -1613,6 +1638,72 @@ def check_revision_table(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[
                  "message": f"修订表 {rendered['revision_rows']} 行，方案要求 {want} 行",
                  "fix": "核对 InsertRevisionTable2 / AddRevision 回读"}]
     return []
+
+def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
+    th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["step"] == j), None)
+    if th:
+        return th["callout"]
+    tj = p.shaft_tolerances[j] if p.shaft_tolerances else None
+    if p.gear and any(f["kind"] == "gear" and f["step"] == j for f in p.shaft_features):
+        tj = p.gear["tip_tolerance"]
+    return _dia_text(p.shaft_steps[j][1], tj, deviations)
+
+
+def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | None:
+    """轴段直径文字长于尺寸线时伸出轮廓的方向：下方（到链式长度尺寸行之间）放得下、且该段下方没有基准符号 → down，
+    否则 up（上方是粗糙度、几何公差的位置，尽量留给它们）。不溢出返回 None。与 render_shaft._vdim 一致。"""
+    d = p.shaft_steps[j][1]
+    tw = text_width(text, 3.5)
+    if tw <= d * sc - 2:
+        return None
+    R = max(dd for _, dd in p.shaft_steps) / 2
+    room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
+    has_datum = any(x["target"] == f"step:{j}" for x in p.datums)
+    return "down" if tw + 3 <= room and not has_datum else "up"
+
+
+def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
+    """轴类主视图轮廓上方的竖线位置（模型 z）：向上伸出的直径文字、键槽/环槽/螺纹尺寸界线、几何公差框格引线。
+    上方的粗糙度符号（文字向右约 21 mm）要避开它们。"""
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    zs = [shaft_dia_z(p, j) for j in range(len(p.shaft_steps))
+          if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up"]
+    for f in p.shaft_features:
+        if f["kind"] == "gear":
+            continue
+        zs += [f["z0"], f["z1"], p.step_z(f["step"])[0]]
+        if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1:
+            zs.append(Ltot)
+    for g in p.geotols:
+        if g["target"].startswith("step:"):
+            i = int(g["target"][5:])
+            z0, z1 = p.step_z(i)
+            zs.append(z0 + shaft_gtol_frac(p, i, sc) * (z1 - z0))
+    return zs
+
+
+def shaft_gtol_frac(p: ResolvedPart, i: int, sc: float) -> float:
+    """轴段几何公差框格引线在段内的位置（比例）。"""
+    z0, z1 = p.step_z(i)
+    return 0.3  # TODO：与粗糙度、相邻框格联合排布（单独避让会让相邻框格相撞）
+
+
+def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
+    """轴类主视图轮廓下方的占位（模型 z）：基准符号、键槽剖切符号、向下伸出的直径文字。"""
+    zs = [shaft_dia_z(p, j) for j in range(len(p.shaft_steps))
+          if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "down"]
+    zs += [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway"]
+    z = 0.0
+    zs.append(z)
+    for L, _ in p.shaft_steps:  # 各段分界：链式长度尺寸的尺寸界线向下引出
+        z += L
+        zs.append(z)
+    for x in p.datums:
+        if x["target"].startswith("step:"):
+            z0, z1 = p.step_z(int(x["target"][5:]))
+            zs += [z0 + t * (z1 - z0) for t in (0.2, 0.5, 0.8)]  # 基准位置随键槽避让在这三处之一
+    return zs
+
 
 def shaft_dia_z(p: ResolvedPart, i: int) -> float:
     """第 i 段直径尺寸线的轴向位置：该轴段内离键槽/环槽最远、避开端部倒角的位置（SVG 与原生标注共用）。"""

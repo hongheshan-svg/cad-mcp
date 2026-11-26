@@ -169,6 +169,18 @@ def _check_precision(p: ResolvedPart) -> list[Finding]:
             out.append(_f("G004", "warning", f"step:{i}",
                           f"轴段 {i} 为 {tol} 配合，粗糙度{'未标注' if got is None else f' Ra{got:g} 偏粗'}",
                           f"在 roughness 中加 {{'target': 'step:{i}', 'ra': {need:g}}}"))
+    # 轴上配合段（IT5–IT7）不注几何公差：装配后跳动无从检验（审图常见退回项）
+    fits = [i for i, t in enumerate(p.shaft_tolerances)
+            if t and any(ch.isdigit() for ch in t) and int("".join(ch for ch in t if ch.isdigit())) <= 7]
+    fits += [f["step"] for f in p.shaft_features if f["kind"] == "gear" and f["step"] not in fits]
+    toled = {g["target"] for g in p.geotols}
+    bare = [i for i in fits if f"step:{i}" not in toled]
+    if len(fits) >= 2 and bare:
+        a, b = fits[0], fits[-1]
+        out.append(_f("G006", "warning", ",".join(f"step:{i}" for i in bare),
+                      f"轴段 {', '.join(map(str, bare))} 为配合段（含齿轮段），未注几何公差",
+                      f"常用注法：基准 A = step:{a}、B = step:{b}（两端轴承位），轴承位注圆柱度；"
+                      f"其余配合段/齿顶圆注对 A、B 的径向圆跳动（circular_runout，datums [A, B]）"))
     return out
 
 

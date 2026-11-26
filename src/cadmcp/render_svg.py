@@ -26,6 +26,7 @@ class _Svg:
         self.parts: list[str] = []
         self.texts: list[tuple[str, tuple[float, float, float, float]]] = []
         self.leaders: list[tuple[float, float, float, float]] = []  # 细实线（引线/尺寸线/界线），查穿字
+        self.thins: list[tuple[float, float, float, float]] = []  # 线宽 = THIN 的实线（尺寸线、尺寸界线、短引线）
         self.outlines: list[tuple[float, float, float, float]] = []  # 粗实线（可见轮廓），查压字
 
     def collisions(self) -> list[tuple[str, str]]:
@@ -50,7 +51,7 @@ class _Svg:
             bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x1 - pad, y1 - pad
             if bx1 <= bx0 or by1 <= by0:
                 continue
-            for (ax, ay, cx, cy) in self.leaders + self.outlines:
+            for (ax, ay, cx, cy) in self.leaders + self.outlines + self.thins:
                 if _seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1):
                     out.append(s_)
                     break
@@ -63,6 +64,8 @@ class _Svg:
         d = f" stroke-dasharray='{dash}'" if dash else ""
         if w < THIN and not dash:
             self.leaders.append((x1, y1, x2, y2))
+        elif w == THIN and not dash:  # 尺寸线、尺寸界线
+            self.thins.append((x1, y1, x2, y2))
         elif w >= THICK and not dash:
             self.outlines.append((x1, y1, x2, y2))
         self.parts.append(f"<line x1='{x1:.2f}' y1='{self.y(y1):.2f}' x2='{x2:.2f}' y2='{self.y(y2):.2f}' "
@@ -89,7 +92,7 @@ class _Svg:
         w = _text_w(s, size)
         x0 = x - (w / 2 if anchor == "middle" else 0)
         box = (x0, y - 0.2 * size, x0 + w, y + 0.8 * size) if not rotate else \
-              (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.2 * size, y + w / 2 if anchor == "middle" else y)
+              (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.1 * size, y + w / 2 if anchor == "middle" else y)
         self.texts.append((s, box))
         rot = f" transform='rotate({rotate} {x:.2f} {self.y(y):.2f})'" if rotate else ""
         from .detailing import DEV_GAP, DEV_RATIO, _plain_w, split_deviation

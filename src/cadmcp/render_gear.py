@@ -7,6 +7,7 @@ from .gear_drawing import gear_parts, param_table
 from .detailing import DrawingPlan
 from .ir.resolve import ResolvedPart
 from .render_shaft import _arrow, _hdim
+from .render_svg import _text_w
 
 THIN, THICK = 0.25, 0.5
 CENTER = "6,1.5,1,1.5"
@@ -123,7 +124,7 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
             xl_ = ex_["sheet_pos"][0]
             s.line(xa + 1, ya, xl_ + 1.5, ya, THIN)
             s.line(xb + 1, yb, xl_ + 1.5, yb, THIN)
-            s.line(xl_, ya, xl_, yb, THIN)
+            s.line(xl_, ya, xl_, max(yb, ex_["sheet_pos"][1] + _text_w(d.text, 3.5) / 2 + 1), THIN)
             _arrow(s, xl_, ya, 0, -1)
             _arrow(s, xl_, yb, 0, 1)
             ty = ex_["sheet_pos"][1]
