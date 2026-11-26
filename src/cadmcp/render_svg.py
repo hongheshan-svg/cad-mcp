@@ -63,6 +63,8 @@ class _Svg:
         d = f" stroke-dasharray='{dash}'" if dash else ""
         if w < THIN and not dash:
             self.leaders.append((x1, y1, x2, y2))
+        elif w >= THICK and not dash:
+            self.outlines.append((x1, y1, x2, y2))
         self.parts.append(f"<line x1='{x1:.2f}' y1='{self.y(y1):.2f}' x2='{x2:.2f}' y2='{self.y(y2):.2f}' "
                           f"stroke='{STROKE}' stroke-width='{w}'{d}/>")
 
