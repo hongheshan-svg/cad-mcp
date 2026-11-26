@@ -121,3 +121,10 @@ def test_hub_keyway_sleeve():
     assert any(o.op == "tk.feat.extrude" and o.args["feature"] == "BORE1_KW" for o in creo_part(sp, p))
     with pytest.raises(CadError, match="GB/T 1095"):
         resolve_part(PartSpec.model_validate({**SL, "base": {**SL["base"], "bores": [{"diameter": 30, "keyway": True, "keyway_width": 7}]}}))
+
+
+def test_plain_through_bore_tube():
+    """光管（通孔、无台阶）：直径尺寸选位没有任何障碍线时不出错。"""
+    p = _p({**SL, "base": {"type": "shaft", "steps": [{"length": 50, "diameter": 40}], "bores": [{"diameter": 30}]}})
+    plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
+    assert not render(plan, p)[1]["crossings"]

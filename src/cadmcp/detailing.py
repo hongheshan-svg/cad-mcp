@@ -2032,7 +2032,7 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
     tw = 4.5 / sc  # 文字厚度（模型 mm）
 
     def gap(lo, hi):  # 区间 [lo, hi] 到障碍的最小净距（模型 mm；重叠为负）
-        return min(max(a - hi, lo - b) for a, b in obst)
+        return min((max(a - hi, lo - b) for a, b in obst), default=1e9)
 
     def key(zs):
         z, side = zs
