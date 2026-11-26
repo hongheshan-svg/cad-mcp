@@ -132,6 +132,27 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             "sheet_pos": (round(xl + min(3.0, b * sc * 0.15), 2), round(cy - rb * sc, 2)),
             "in_section": True}))  # 站在下半孔壁上（孔内空白处）
 
+    tr = g.get("blank_runout")
+    if tr and bore is not None and spec.dimensions != "none":
+        # 基准 A：轴孔（左视图孔壁左上 150°，沿径向引出到腹板空白处；避开孔径引线与键槽尺寸）
+        import math
+        rb = bore.max_dia / 2
+        nx, ny = math.cos(math.radians(150)), math.sin(math.radians(150))
+        at = (ex + rb * sc * nx, cy + rb * sc * ny)
+        dims.append(Dim("left", "datum", None, None, "A", "datum:A", None, {
+            "normal": (round(nx, 4), round(ny, 4)), "sheet_at": (round(at[0], 2), round(at[1], 2)),
+            "sheet_pos": (round(at[0] + 10 * nx, 2), round(at[1] + 10 * ny, 2))}))
+        cells = ["↗", f"{tr:g}", "A"]
+        # 齿顶圆径向圆跳动：箭头垂直指向主视图上齿顶线
+        tip = (xl + b * sc * 0.3, cy + da / 2 * sc)
+        dims.append(Dim("front", "gtol", None, tr, " | ".join(cells), "gtol:circular_runout@tip", None, {
+            "normal": (0, 1), "cells": cells, "reach": 10.0, "sheet_at": (round(tip[0], 2), round(tip[1], 2)),
+            "sheet_pos": (round(tip[0], 2), round(tip[1] + 10, 2))}))
+        # 基准端面圆跳动：箭头水平指向右端面（剖面区，键槽之上）
+        y_face = cy + ((kw["top"] if kw else rb) + df / 2) / 2 * sc
+        dims.append(Dim("front", "gtol", None, tr, " | ".join(cells), "gtol:circular_runout@face", None, {
+            "normal": (1, 0), "cells": cells, "reach": 8.0, "sheet_at": (round(xr, 2), round(y_face, 2)),
+            "sheet_pos": (round(xr + 8, 2), round(y_face, 2))}))
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="gear", revisions=list(spec.revisions))

@@ -100,7 +100,7 @@ class _Svg:
             Y = self.y(y)
             wm = _plain_w(main, size)
             x0 = x - w if anchor == "end" else x0
-            xd = x0 + wm + 0.5
+            xd = x0 + wm + 0.8
             wd = max(_plain_w(up, ds), _plain_w(lo, ds))
             t = (f"<g{rot}><text x='{x0:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(main)}</text>"
                  f"<text x='{xd:.2f}' y='{Y - 0.72 * ds - 0.3:.2f}' font-size='{ds:.2f}' {FONT}>{escape(up)}</text>"

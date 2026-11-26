@@ -91,3 +91,22 @@ def param_rows(g: dict, accuracy: str, mate: str | None = None) -> list[tuple[st
     if mate:
         rows.append(("配对齿轮", "", mate))
     return rows
+
+
+# 齿坯公差（GB/T 10095 配套的齿坯要求，常用表）：齿顶圆径向圆跳动与基准端面圆跳动，µm
+# 分度圆直径段 ≤125、125–400、400–800、800–1600 × 精度等级 3–4、5–6、7–8、9–12
+_BLANK_RUNOUT = ((7, 11, 18, 28), (9, 14, 22, 36), (12, 20, 32, 50), (18, 28, 45, 71))
+
+
+def blank_runout(d: float, accuracy: str) -> float | None:
+    """齿坯跳动公差（mm）：按分度圆直径和精度等级（取精度字符串首个数字）；超出范围返回 None。"""
+    import re
+    m = re.search(r"\d+", accuracy or "")
+    if not m:
+        return None
+    grade = int(m.group())
+    if not 3 <= grade <= 12 or d > 1600:
+        return None
+    row = 0 if d <= 125 else 1 if d <= 400 else 2 if d <= 800 else 3
+    col = 0 if grade <= 4 else 1 if grade <= 6 else 2 if grade <= 8 else 3
+    return _BLANK_RUNOUT[row][col] / 1000.0

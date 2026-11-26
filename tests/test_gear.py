@@ -54,6 +54,7 @@ def test_plan_gear_drawing():
     assert texts["gear_da"] == "Φ84h11(0/-0.220)" and texts["gear_d"] == "Φ80" and texts["gear_b"] == "20"
     assert texts["gear_bore"] == "Φ25H7(+0.021/0)"
     assert texts["KW_w"] == "8JS9(+0.018/-0.018)" and texts["KW_t"] == "28.3(+0.2/0)"
+    assert texts["gtol:circular_runout@tip"] == "↗ | 0.018 | A" and texts["datum:A"] == "A"  # d=80 ≤125、8 级
     rows = {r[0]: r[2] for r in plan.gear_table["rows"]}
     assert rows["模数"] == "2" and rows["齿数"] == "40" and rows["公法线长度"] == "27.690" and rows["跨齿数"] == "5"
     svg, out = render(plan, p)
@@ -73,6 +74,7 @@ def test_sw_gear_drawing_ops():
     dims = {o.args["ref"]: o for o in ops if o.op == "shaft_dimension"}
     assert set(dims) == {"gear_da", "gear_b", "KW_w", "KW_t"}
     assert any(o.op == "leader_note" and o.args["ref"] == "gear_bore" for o in ops)
+    assert sum(o.op == "gtol" for o in ops) == 2 and any(o.op == "datum_tag" for o in ops)
     assert any(o.op == "warn" and "Φ80" in o.args["message"] for o in ops)
     tbl = next(o for o in ops if o.op == "table")
     assert tbl.args["columns"] == ["名称", "代号", "数值"] and len(tbl.args["rows"]) == 9
@@ -103,3 +105,12 @@ def test_creo_toolkit_part_uses_involute_polyline():
     ops = compile_part_tk(s, resolve_part(s))
     base = next(o for o in ops if o.op == "tk.feat.extrude" and o.args.get("feature") == "Base")
     assert len(base.args["entities"]) >= 40 * 10  # 每齿 ≥10 段
+
+
+def test_blank_runout_table():
+    from cadmcp.gear import blank_runout
+    assert blank_runout(80, "8 GB/T 10095.1") == 0.018 and blank_runout(200, "7") == 0.022
+    assert blank_runout(80, "6") == 0.011 and blank_runout(500, "9-8-8") == 0.050
+    p = _p({**GEAR, "gear": {**GEAR["gear"], "blank_tolerances": False}})
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), p)
+    assert not any(d.kind in ("gtol", "datum") for d in plan.dims)

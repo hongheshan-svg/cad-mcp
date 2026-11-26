@@ -450,6 +450,15 @@ def _gear_drawing_ops(plan, model_file: str) -> list[NativeOp]:
             ops.append(NativeOp("surface_finish", {"view": d.view, "ref": d.ref, "at": ex_.get("sheet_at"), "pos": None,
                                                    "fallback_text": f"√{d.text}", "at_model": None, "ra": d.value,
                                                    "leader": False}))
+        elif d.kind == "datum":
+            ops.append(NativeOp("datum_tag", {"view": d.view, "ref": d.ref, "at": ex_["sheet_at"], "pos": ex_["sheet_pos"],
+                                              "fallback_text": f"基准 {d.text}", "at_model": None, "label": d.text}))
+        elif d.kind == "gtol":
+            sym, zone, *datums = ex_["cells"]
+            ops.append(NativeOp("gtol", {"view": d.view, "ref": d.ref, "at": ex_["sheet_at"], "pos": ex_["sheet_pos"],
+                                         "fallback_text": d.text.replace(" | ", " "), "at_model": None,
+                                         "type": "circular_runout", "diameter": False, "value": zone, "datums": datums,
+                                         "leader": True}, "齿坯跳动"))
     if skipped:
         ops.append(NativeOp("warn", {"message": "齿轮分度线/分度圆不是模型几何，原生图未标：" + "、".join(skipped)}))
     from ...gear_drawing import param_table_rows

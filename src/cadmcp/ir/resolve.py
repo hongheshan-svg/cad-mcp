@@ -188,7 +188,8 @@ def _gear_profile(gs, circle: ResolvedProfile, ev) -> tuple[ResolvedProfile, dic
     pts = G.outline(m, z, g["alpha"], x)
     per = sum(math.dist(a, b) for a, b in zip(pts, pts[1:] + pts[:1]))
     prof = ResolvedProfile("polygon", G.polygon_area(pts), circle.bbox2d, pts, per, {"points": [list(p) for p in pts]})
-    g.update({"accuracy": gs.accuracy, "tip_tolerance": gs.tip_tolerance, "flank_ra": ev(gs.flank_ra), "mate": gs.mate})
+    g.update({"accuracy": gs.accuracy, "tip_tolerance": gs.tip_tolerance, "flank_ra": ev(gs.flank_ra), "mate": gs.mate,
+              "blank_runout": G.blank_runout(g["d"], gs.accuracy) if gs.blank_tolerances else None})
     return prof, g
 
 

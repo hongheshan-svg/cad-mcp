@@ -132,6 +132,10 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
             s.text(xl_ - 1, ty, d.text, 3.5, "middle", -90)
         elif d.kind == "roughness" and "sheet_at" in ex_:
             render_gdt.draw(s, "roughness", *ex_["sheet_at"], ex_, d.text)
+        elif d.kind == "datum" and "sheet_at" in ex_:
+            render_gdt.datum(s, *ex_["sheet_at"], tuple(ex_["normal"]), d.text)
+        elif d.kind == "gtol" and "sheet_at" in ex_:
+            render_gdt.fcf(s, *ex_["sheet_at"], tuple(ex_["normal"]), ex_["cells"], reach=ex_.get("reach", 10.0))
         elif d.kind == "callout" and ex_.get("label"):
             lb = ex_["label"]
             ax, ay = lb["anchor"]

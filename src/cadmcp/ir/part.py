@@ -307,6 +307,7 @@ class GearSpec(Strict):
     tip_tolerance: str = Field("h11", description="齿顶圆直径公差带")
     flank_ra: Num = Field(1.6, description="齿面粗糙度 Ra")
     mate: str | None = Field(None, description="配对齿轮图号（参数表可选行）")
+    blank_tolerances: bool = Field(True, description="自动标齿坯公差：轴孔为基准 A，齿顶圆径向圆跳动、基准端面圆跳动（按分度圆直径与精度等级查表）")
 
 
 class CastingSpec(Strict):
