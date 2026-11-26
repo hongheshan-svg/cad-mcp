@@ -174,3 +174,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   坐标和规格列在孔表里（相对视图左下角 X0 Y0）。孔表放不下时先让出轴测图，仍放不下报 D018，改用更大图幅。
 - `hole_table: true` 强制使用，`false` 关闭。
 - `sections: "none"` 会报 D015 提醒；D016 表示剖视图没生成，看 oplog。
+
+## 轴类结构审查（`cad_validate_design` 会报）
+- S006 轴承定位轴肩高 < max(0.07d, 2 mm)（warning）；S007 横孔开在 IT≤7 配合面（warning，配钻销孔在技术要求注明）；
+  S008 IT≤6 磨削面靠轴肩无越程槽/轴肩圆角（info）；S009 螺纹车到轴肩无退刀槽（warning）；S010 键槽段无配合公差（warning）。
+  出图前把 warning 处理掉或在回复里说明理由。

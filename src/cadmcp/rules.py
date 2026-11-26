@@ -214,10 +214,67 @@ def _check_shaft(p: ResolvedPart) -> list[Finding]:
     for a, b in zip(feats, feats[1:]):
         if b["z0"] < a["z1"] - 1e-6:
             out.append(_f("S004", "error", f"{a['name']}~{b['name']}", "轴上特征沿轴向重叠", "调整位置"))
+    out += _check_shaft_design(p)
     for i, ((L, d), (L2, d2)) in enumerate(zip(p.shaft_steps, p.shaft_steps[1:])):
         tol = p.shaft_tolerances
         if tol and (tol[i] or tol[i + 1]) and abs(d - d2) < 1e-6:
             out.append(_f("S005", "info", f"step{i}/{i + 1}", "相邻轴段同径但公差不同，加工时需分界线", None))
+    return out
+
+
+def _check_shaft_design(p: ResolvedPart) -> list[Finding]:
+    """轴类结构审查（审图经验，CAD 无关）：
+    S006 轴承定位轴肩过低；S007 横孔开在配合面上；S008 磨削配合面靠轴肩无越程槽/圆角；
+    S009 螺纹车到轴肩无退刀槽；S010 键槽段无配合公差。"""
+    import re
+    out: list[Finding] = []
+    steps = p.shaft_steps
+    tols = p.shaft_tolerances or [None] * len(steps)
+    n = len(steps)
+
+    def grade(t):
+        m = re.fullmatch(r"([a-z]{1,2})(\d{1,2})", (t or "").strip())
+        return (m.group(1), int(m.group(2))) if m else None
+    keyed = {f["step"] for f in p.shaft_features if f["kind"] == "keyway"}
+    grooves = [f for f in p.shaft_features if f["kind"] == "groove"]
+    fillet = bool(p.shoulder_fillets)
+
+    def groove_at(i, z):  # 第 i 段在 z（轴肩处）有紧靠的环槽
+        return any(g["step"] == i and min(abs(g["z0"] - z), abs(g["z1"] - z)) < 1e-6 for g in grooves)
+    for i, (L, d) in enumerate(steps):
+        g = grade(tols[i])
+        z0, z1 = p.step_z(i)
+        for j, zs in ((i - 1, z0), (i + 1, z1)):  # 相邻较大段的轴肩
+            if not 0 <= j < n or steps[j][1] <= d:
+                continue
+            h = (steps[j][1] - d) / 2
+            if g and g[0] in ("js", "k", "m", "n") and g[1] <= 6 and i not in keyed and h < max(0.07 * d, 2.0):
+                out.append(_f("S006", "warning", f"step{i}",
+                              f"轴承位 Φ{d:g}{tols[i]} 的定位轴肩高 {h:g} mm 偏低（经验 ≥ max(0.07d, 2) = {max(0.07 * d, 2.0):.1f}）",
+                              f"把第 {j} 段直径加大到 ≥ Φ{d + 2 * max(0.07 * d, 2.0):.0f}，或按轴承样本的安装尺寸 da 核对"))
+            if g and g[1] <= 6 and not groove_at(i, zs) and not fillet:
+                out.append(_f("S008", "info", f"step{i}",
+                              f"Φ{d:g}{tols[i]} 需磨削，靠第 {j} 段轴肩处无砂轮越程槽也无轴肩圆角",
+                              "加 {\"feature\": \"groove\", \"type\": \"grinding\", ...}（缺省靠轴肩）或 base.shoulder_fillet"))
+        if i in keyed and not g:
+            out.append(_f("S010", "warning", f"step{i}", f"键槽段 Φ{d:g} 未注配合公差（装轮毂/联轴器需要）",
+                          "按配合选 k6/m6/n6（过渡）或 h7/js6"))
+    for h in p.cross_holes:
+        g = grade(tols[h["step"]])
+        if g and g[1] <= 7:
+            out.append(_f("S007", "warning", h["name"],
+                          f"横孔开在配合面 Φ{steps[h['step']][1]:g}{tols[h['step']]} 上：削弱配合、孔口毛刺划伤配合件",
+                          "移到非配合段，或确认是装配后配钻的销孔（技术要求注明）"))
+    for f in p.shaft_features:
+        if f["kind"] != "thread":
+            continue
+        i = f["step"]
+        z0, z1 = p.step_z(i)
+        for j, zs in ((i - 1, z0), (i + 1, z1)):  # 螺纹任一端落在通向较大段的轴肩上
+            if 0 <= j < n and steps[j][1] > steps[i][1] and min(abs(f["z0"] - zs), abs(f["z1"] - zs)) < 1e-6 \
+                    and not groove_at(i, zs):
+                out.append(_f("S009", "warning", f["name"], f"螺纹 {f['callout']} 车到轴肩，没有螺纹退刀槽",
+                              "缩短螺纹留出收尾，或在轴肩处加退刀槽（undercut）"))
     return out
 
 
