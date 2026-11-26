@@ -158,6 +158,7 @@ def _text_w(s: str, size: float) -> float:
 
 
 HIDDEN = "3,1"  # 细虚线：不可见轮廓
+CHAIN = "6,1.5,1,1.5"  # 细点画线：轴线、分度线
 
 
 def _iso_xy(cx, cy, sc, box):
@@ -421,7 +422,7 @@ def _draw_asm_section(s, asm, v, sec):
     剖切面后方零件只画未被剖面挡住的可见轮廓（剖视图不画虚线）。"""
     from .detailing import asm_section_regions
     regs = asm_section_regions(asm, v, sec)
-    occ = [c for r in regs if r["state"] in ("cut", "bearing") for c in r["cells"]] + \
+    occ = [c for r in regs if r["state"] in ("cut", "bearing") for c in r["cells"] + r.get("plain", [])] + \
         [q for r in regs if r["state"] == "excluded" for q in r["rects"]]
     for r in regs:
         if r["state"] == "behind":
@@ -437,6 +438,8 @@ def _draw_asm_section(s, asm, v, sec):
             for cone in r.get("cones", []):  # 螺纹底孔锥底：白底盖住剖面线，两斜边粗实线
                 s.face(cone, 0)
                 s.poly([cone[0], cone[2], cone[1]], THICK, close=False)
+            for a_, b_ in r.get("chain", []):  # 齿轮分度线
+                s.line(*a_, *b_, THIN, dash=CHAIN)
             for a_, b_ in r.get("thin", []):  # 内螺纹大径
                 s.line(*a_, *b_, THIN)
             for a_, b_ in r.get("thick", []):  # 螺纹终止线
@@ -458,6 +461,8 @@ def _draw_asm_section(s, asm, v, sec):
             for x0, y0, x1, y1 in r["rects"]:
                 s.face([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
             inst = next(i for i in asm.instances if i.id == r["id"])
+            for a_, b_ in r.get("chain", []):
+                s.line(*a_, *b_, THIN, dash=CHAIN)
             if inst.source.threads:
                 _thread_lines(s, inst, v.type, ha, va, P)
     if sec.get("label"):

@@ -21,7 +21,7 @@ from ..detailing import check_drawing, plan_assembly_drawing, plan_part_drawing
 from ..errors import (POLICY_DENIED, CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
                       TARGET_UNAVAILABLE, CadError)
 from ..ir import AssemblySpec, DrawingSpec, PartSpec
-from ..ir.assembly_resolve import (fit_gaps, part_fits, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
+from ..ir.assembly_resolve import (fit_gaps, part_fits, part_revolve, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
                                   resolve_assembly)
 from ..ir.resolve import ResolvedPart, ResolvedRef, resolve_part
 from ..library import Library
@@ -318,9 +318,7 @@ class CadService:
                                               "pts": [tuple(i.xyz) for i in h.instances]}
                                              for h in p.holes if h.through and h.face in ("top", "bottom")
                                              and len(h.instances) >= 2 and not h.slot],
-                              fits=part_fits(p),
-                              revolve=[(*p.step_z(k), d, 0.0) for k, (_, d) in enumerate(p.shaft_steps)]
-                              if p.base_type == "shaft" and not p.gear else [])
+                              fits=part_fits(p), revolve=part_revolve(p)[0], gears=part_revolve(p)[1])
         if kind == "asm":
             if ref not in models or models[ref].kind != "assembly":
                 raise CadError(DOC_NOT_FOUND, f"assembly {ref!r} not built in this session")

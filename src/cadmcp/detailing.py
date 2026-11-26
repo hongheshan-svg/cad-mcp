@@ -1469,6 +1469,11 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
             avoid += [(px_ - 4.5, py_ - 1, px_ + 1, py_ + tw_ + 1),
                       (ax_ - 0.3, min(ay_, py_), ax_ + 0.3, max(by_, py_ + tw_))]
     if spec.balloons and bom:
+        if spec.dimensions != "none" and views[0].type in VIEW_AXES:  # 总体尺寸（视图左侧竖直、下方水平，见 overall_dim_sheet）
+            ha_, va_ = VIEW_AXES[views[0].type]
+            (ul, uh), (wl, wh) = vrange(a.bbox, ha_), vrange(a.bbox, va_)
+            (X0, Y0), (X1, Y1) = _uv_sheet(views[0], a.bbox, (ul, wl)), _uv_sheet(views[0], a.bbox, (uh, wh))
+            avoid += [(X0 - 16, min(Y0, Y1), X0 - 4, max(Y0, Y1)), (min(X0, X1), Y0 - 16, max(X0, X1), Y0 - 4)]
         bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet], avoid)
     if not spec.bom_table:
         bom = []
@@ -1586,6 +1591,35 @@ def _rect_minus(base, voids):
     return cells, edges
 
 
+def _radial_in_plane(inst) -> tuple[float, float]:
+    """回转件零件坐标中、装配后与 Y（主视图视向）垂直的径向（取零件 X 或 Y）。"""
+    from .ir.assembly_resolve import apply
+    o, xt = apply(inst.transform, (0.0, 0.0, 0.0)), apply(inst.transform, (1.0, 0.0, 0.0))
+    return (1.0, 0.0) if abs(xt[1] - o[1]) < 1e-6 else (0.0, 1.0)
+
+
+def gear_pitch_lines(inst, S, ext: float = 2.5) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """齿轮段分度线（GB/T 4459.2 细点画线，两端伸出轮廓约 2.5 mm）：轴线平行于图面的视图中、轴线两侧各一条（图纸坐标）。
+    S 为装配坐标 → 图纸坐标的投影；端视（轴线朝向观察者）返回空。"""
+    from .ir.assembly_resolve import apply
+    out = []
+    if not inst.source.gears:
+        return out
+    o, zt = apply(inst.transform, (0.0, 0.0, 0.0)), apply(inst.transform, (0.0, 0.0, 1.0))
+    if abs(zt[1] - o[1]) > 1e-6:
+        return out
+    rad = _radial_in_plane(inst)
+    for g in inst.source.gears:
+        r = g["d"] / 2
+        for sg in (1, -1):
+            a = S(apply(inst.transform, (rad[0] * r * sg, rad[1] * r * sg, g["z0"])))
+            b = S(apply(inst.transform, (rad[0] * r * sg, rad[1] * r * sg, g["z1"])))
+            L = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 or 1.0
+            ux, uy = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+            out.append(((a[0] - ux * ext, a[1] - uy * ext), (b[0] + ux * ext, b[1] + uy * ext)))
+    return out
+
+
 def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]) -> list[dict[str, Any]]:
     """全剖主视图中各零件的图纸几何：{id, state(cut|excluded|behind), cells, edges, rects}。
     cut：剖面区域单元（回转件 = 轴线两侧的环带；其它 = 包围盒减去剖切面切到的孔）与边界；
@@ -1610,18 +1644,29 @@ def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]
             continue
         if inst.id in sec["exclude"]:
             rects = [rect((bb.xmin, yc, bb.zmin), (bb.xmax, yc, bb.zmax)) for bb, _ in solid_boxes(inst)]
-            out.append({"id": inst.id, "state": "excluded", "rects": rects})
+            out.append({"id": inst.id, "state": "excluded", "rects": rects, "chain": gear_pitch_lines(inst, S)})
             continue
-        cells, edges, thin, thick, cones = [], [], [], [], []
+        cells, edges, thin, thick, cones, plain = [], [], [], [], [], []
         if inst.source.revolve:
+            rad = _radial_in_plane(inst)
             for z0, z1, do, di in inst.source.revolve:
                 ro, ri = do / 2, di / 2
-                for s0, s1 in ((-ro, -ri), (ri, ro)):
-                    pa = apply(inst.transform, (s0, 0.0, z0))
-                    pb = apply(inst.transform, (s1, 0.0, z1))
+                g = next((g for g in inst.source.gears if g["z0"] < z1 - 1e-6 and g["z1"] > z0 + 1e-6
+                          and abs(g["da"] - do) < 1e-6), None)
+                rf = g["df"] / 2 if g else ro
+                for s0, s1 in ((-rf, -ri), (ri, rf)):  # 剖面区（齿轮：轮齿按不剖，剖面线只到齿根圆）
+                    pa = apply(inst.transform, (rad[0] * s0, rad[1] * s0, z0))
+                    pb = apply(inst.transform, (rad[0] * s1, rad[1] * s1, z1))
                     c_, e_ = _rect_minus(rect(pa, pb), [])
                     cells += c_
                     edges += e_
+                if g:
+                    for s0, s1 in ((-ro, -rf), (rf, ro)):  # 轮齿：只画轮廓（齿顶线、齿根线粗实线）
+                        pa = apply(inst.transform, (rad[0] * s0, rad[1] * s0, z0))
+                        pb = apply(inst.transform, (rad[0] * s1, rad[1] * s1, z1))
+                        c_, e_ = _rect_minus(rect(pa, pb), [])
+                        plain += c_
+                        edges += e_
         else:
             voids, thin, thick, cones = [], [], [], []
 
@@ -1693,7 +1738,7 @@ def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]
             out.append({"id": inst.id, "state": "bearing", "cells": cells, "edges": edges, "crosses": crosses})
             continue
         out.append({"id": inst.id, "state": "cut", "cells": cells, "edges": edges, "hatch": sec["hatch"].get(inst.id, (45, 2.5)),
-                    "thin": thin, "thick": thick, "cones": cones})
+                    "thin": thin, "thick": thick, "cones": cones, "plain": plain, "chain": gear_pitch_lines(inst, S)})
     return out
 
 

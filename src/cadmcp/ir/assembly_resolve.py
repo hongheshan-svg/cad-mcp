@@ -106,7 +106,25 @@ class SourceInfo:
     install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
     revolve: list[tuple[float, float, float, float]] = field(default_factory=list)  # 回转件沿零件 Z：(z0, z1, 外径, 内径)
     threads: list[tuple[float, float, float]] = field(default_factory=list)  # 外螺纹沿零件 Z：(z0, z1, 大径)
+    gears: list[dict[str, float]] = field(default_factory=list)  # 齿轮段沿零件 Z：{z0, z1, da, d(分度圆), df}
     fits: list[dict[str, Any]] = field(default_factory=list)  # 零件：带配合公差的圆柱面 {role hole|shaft, d, tol, p0, p1(轴线段，零件坐标), name}
+
+
+def part_revolve(p) -> tuple[list[tuple[float, float, float, float]], list[dict[str, float]]]:
+    """回转件外形（沿零件 Z 的 (z0, z1, 外径, 内径)）与齿轮段：阶梯轴/齿轮轴按轴段（齿轮段外径 = 齿顶圆），
+    盘状齿轮按齿顶圆 × 齿宽、内径 = 中心轴孔。其它零件返回空。"""
+    if p.base_type == "shaft":
+        rev = [(*p.step_z(k), d, 0.0) for k, (_, d) in enumerate(p.shaft_steps)]
+        gears = [{"z0": f["z0"], "z1": f["z1"], "da": f["d"], "d": f["pd"], "df": f["df"]}
+                 for f in (p.shaft_features or []) if f.get("kind") == "gear"]
+        return rev, gears
+    if p.gear:
+        from ..gear_drawing import gear_parts
+        bore = gear_parts(p)["bore"]
+        g = p.gear
+        z0, z1 = p.bbox.zmin, p.bbox.zmax
+        return [(z0, z1, g["da"], bore.drill if bore else 0.0)], [{"z0": z0, "z1": z1, "da": g["da"], "d": g["d"], "df": g["df"]}]
+    return [], []
 
 
 def part_fits(p) -> list[dict[str, Any]]:

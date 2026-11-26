@@ -193,3 +193,36 @@ def test_gear_views_balanced():
     W, H = plan.sheet_size
     f = plan.views[0]
     assert H - 10 - (f.origin_on_sheet[1] + f.size_mm[1] / 2) > 40  # 不再贴着上边
+
+
+def test_gear_in_assembly_section():
+    """装配全剖中的齿轮（GB/T 4459.2）：轮齿按不剖（剖面线只到齿根圆）、分度线细点画线伸出轮廓；轴不剖。"""
+    import tempfile
+
+    from cadmcp.detailing import asm_section_regions, plan_assembly_drawing
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import AssemblySpec, DrawingSpec
+    from cadmcp.render_svg import render
+    sh = {"name": "BS", "part_no": "BS-01", "title": "轴", "material": "45#",
+          "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 25, "tolerance": "k6"},
+                                                          {"length": 10, "diameter": 32}]}}
+    asm = {"name": "GA", "part_no": "GA-00", "title": "齿轮组件",
+           "components": [{"id": "shaft", "source": "part:BS"},
+                          {"id": "gear", "source": "part:GR1", "place": {"offset": [0, 0, 5]}}]}
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("G")
+    for d in (sh, GEAR):
+        svc.build(PartSpec.model_validate(d))
+    svc.build(AssemblySpec.model_validate(asm))
+    a = svc._models()["GA"].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model="GA"), a)
+    assert plan.asm_section["exclude"] == ["shaft"]
+    g = {r["id"]: r for r in asm_section_regions(a, plan.views[0], plan.asm_section)}["gear"]
+    k = plan.scale
+    xs = sorted({c[0] for c in g["cells"]} | {c[2] for c in g["cells"]})
+    assert round(xs[-1] - xs[0], 3) == round(75 * k, 3)  # 剖面线到齿根圆 df = 75
+    assert len(g["plain"]) == 2 and len(g["chain"]) == 2  # 两侧轮齿区 + 两条分度线
+    (ax, ay), (bx, by) = g["chain"][0]
+    assert abs(abs(by - ay) - (20 * k + 5)) < 1e-6  # 齿宽 + 两端各伸出 2.5
+    svg, out = render(plan, a)
+    assert out["crossings"] == [] and out["collisions"] == [] and "6,1.5,1,1.5" in svg
