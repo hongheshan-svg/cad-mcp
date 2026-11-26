@@ -36,13 +36,13 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text):
     _arrow(s, xb, y, 1, 0)
 
 
-def _vdim(s, x, ya, yb, text, text_left=True, overflow="up"):
+def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None):
     """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外
     （overflow = up | down，由规划层 shaft_dia_overflow 决定）。"""
     from .render_svg import _text_w
     tw = _text_w(text, 3.5)
     ym = (ya + yb) / 2
-    if tw > yb - ya - 2:
+    if tw > (yb - ya if room is None else room) - 2:
         if overflow == "down":
             s.line(x, ya, x, ya - tw - 3, THIN)
             ym = ya - 2 - tw / 2
@@ -77,6 +77,65 @@ def _profile(part: ResolvedPart) -> list[tuple[float, float, float]]:
     return segs
 
 
+def _hollow_section(s, part, P, segs, c, Ltot):
+    """空心轴/套类主视图全剖（过轴线）：剖面线在外轮廓与孔之间；轮廓 = 外形 + 孔壁 + 孔底/内台阶线（贯穿孔径）；
+    端面、轴肩线只画有材料的部分；外圆上的倒角棱线在剖视中不可见。"""
+    from .detailing import bore_radius_at
+    zs = sorted({0.0, Ltot, *(b[k] for b in part.shaft_bores for k in ("z0", "z1")), *(x for a, b, _ in segs for x in (a, b))})
+    pieces = []  # (za, zb, rb)
+    for za, zb in zip(zs, zs[1:]):
+        if zb - za > 1e-9:
+            pieces.append((za, zb, bore_radius_at(part, (za + zb) / 2)))
+
+    def r_out(z):
+        return radius_at_seg(segs, z)
+    for sign in (1, -1):
+        # 外轮廓（含倒角）
+        pts = [P(0, sign * max(segs[0][2] - c, pieces[0][2]))]
+        if c:
+            pts.append(P(c, sign * segs[0][2]))
+        for a, b, r in segs:
+            pts += [P(a if not (c and a == 0) else c, sign * r), P(b if not (c and b == Ltot) else Ltot - c, sign * r)]
+        if c:
+            pts.append(P(Ltot, sign * max(segs[-1][2] - c, pieces[-1][2])))
+        # 剖面区域 = 外轮廓 + 沿孔壁返回
+        back = []
+        for za, zb, rb in reversed(pieces):
+            back += [P(zb, sign * rb), P(za, sign * rb)]
+        poly = pts + back
+        cid = f"hollow{'U' if sign > 0 else 'D'}"
+        path = " ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in poly)
+        s.parts.append(f"<clipPath id='{cid}'><polygon points='{path}'/></clipPath>")
+        xs = [x for x, _ in poly]
+        ys = [y for _, y in poly]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        hatch, k = [], -(y1 - y0)
+        while k < (x1 - x0):
+            hatch.append(f"<line x1='{x0 + k:.2f}' y1='{s.y(y0):.2f}' x2='{x0 + k + (y1 - y0):.2f}' y2='{s.y(y1):.2f}' "
+                         f"stroke='#111' stroke-width='0.18'/>")
+            k += 2.5
+        s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(hatch)}</g>")
+        s.poly(pts, THICK, close=False)
+        # 孔壁
+        for za, zb, rb in pieces:
+            if rb > 0:
+                s.line(*P(za, sign * rb), *P(zb, sign * rb), THICK)
+        # 端面：孔壁到外轮廓（倒角起点）
+        for z, rb, r in ((0.0, pieces[0][2], segs[0][2] - c), (Ltot, pieces[-1][2], segs[-1][2] - c)):
+            if r > rb + 1e-9:
+                s.line(*P(z, sign * rb), *P(z, sign * r), THICK)
+        # 外轴肩：小径到大径
+        for (a, b, r), (a2, b2, r2) in zip(segs, segs[1:]):
+            if abs(r - r2) > 1e-9:
+                lo = max(min(r, r2), bore_radius_at(part, b - 1e-6), bore_radius_at(part, b + 1e-6))
+                s.line(*P(b, sign * lo), *P(b, sign * max(r, r2)), THICK)
+    # 孔底 / 内台阶：贯穿孔径（透过孔看到的台阶面积聚成线）
+    for (za, zb, rb), (za2, zb2, rb2) in zip(pieces, pieces[1:]):
+        if abs(rb - rb2) > 1e-9:
+            m = max(rb, rb2)
+            s.line(*P(zb, -m), *P(zb, m), THICK)
+
+
 def radius_at_seg(segs, z):
     for a, b, r in segs:
         if a - 1e-9 <= z <= b + 1e-9:
@@ -96,8 +155,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
 
     segs = _profile(part)
     c = part.shaft_chamfer
-    # 外形：上下轮廓线 + 轴肩/槽边竖线
-    for sign in (1, -1):
+    if part.shaft_bores:
+        _hollow_section(s, part, P, segs, c, Ltot)
+    # 外形：上下轮廓线 + 轴肩/槽边竖线（空心件由 _hollow_section 画剖视轮廓）
+    for sign in (() if part.shaft_bores else (1, -1)):
         pts = [P(0, 0), P(0, sign * (segs[0][2] - c))]
         if c:
             pts.append(P(c, sign * segs[0][2]))
@@ -107,11 +168,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             pts.append(P(Ltot, sign * (segs[-1][2] - c)))
         pts.append(P(Ltot, 0))
         s.poly(pts, THICK, close=False)
-    for (a, b, r), (a2, b2, r2) in zip(segs, segs[1:]):
+    for (a, b, r), (a2, b2, r2) in zip(segs, segs[1:]) if not part.shaft_bores else ():
         if abs(r - r2) > 1e-9:
             rm = max(r, r2)
             s.line(*P(b, -rm), *P(b, rm), THICK)
-    if c:
+    if c and not part.shaft_bores:
         for z, r in ((c, segs[0][2]), (Ltot - c, segs[-1][2])):
             s.line(*P(z, -r), *P(z, r), THICK)
     # 断开画法：盖住间隙内的轮廓，两侧画波浪线（细实线，GB/T 4457.4）
@@ -173,14 +234,21 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             else:  # 键槽、环槽定位：画在主视图上方
                 y = y_top + 14
                 _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text)
+        elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
+            from .detailing import bore_dia_overflow, bore_dia_place
+            k = int(d.ref[4:].split("_")[0])
+            x = P(bore_dia_place(part, k, sc), 0)[0]
+            dia = d.at[1]
+            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, overflow=bore_dia_overflow(part, k, sc, d.text) or "up")
         elif d.kind == "diameter" and d.at is not None:
             zm, dia = d.at
             i = int(d.ref[4:].split("_")[0])
             from .detailing import shaft_dia_overflow, shaft_dia_place
             zz, side = shaft_dia_place(part, i, sc)
             x = P(zz, 0)[0]
+            from .detailing import shaft_text_room
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, text_left=side == "left",
-                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
+                  room=shaft_text_room(part, zz, dia) * sc, overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
             z, r = d.at

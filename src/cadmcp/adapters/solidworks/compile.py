@@ -170,6 +170,13 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
         ops.append(NativeOp("sketch_shaft_half_profile", {"sketch": "SK_Shaft", "steps": p.shaft_steps,
                                                            "axis": "Z", "chamfer": p.shaft_chamfer}))
         ops.append(NativeOp("revolve", {"feature": "Base", "sketch": "SK_Shaft", "angle": 360}))
+        for b in p.shaft_bores:  # 内孔：Front Plane(XY) 画圆，从 z0 起切到 z1
+            sk = f"SK_{b['name']}"
+            ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))
+            ops.append(NativeOp("sketch_circle", {"sketch": sk, "center": [0, 0], "diameter": b["d"]}))
+            ops.append(NativeOp("keyway_cut", {"feature": b["name"], "sketch": sk, "start_offset": b["z0"],
+                                               "depth": b["z1"] - b["z0"], "flip": False},
+                                "FeatureCut4：起始偏移 z0、深度 = 孔深（平底）"))
         for f in p.shaft_features:
             sk = f"SK_{f['name']}"
             if f["kind"] == "thread":  # 外螺纹：选起始端圆边 → 装饰螺纹（Metric Die），长度 = 螺纹长
@@ -534,6 +541,12 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                "gap": BREAK_GAP, "center": v.origin_on_sheet},
                                 "IView.InsertBreak3（竖直、曲线断裂线）→ IDrawingDoc.BreakView → 视图移到规划中心"))
     ops += section_ops(plan)
+    for v in plan.views:  # 空心轴/套类：主视图原位全剖 = 包住整个视图的局部剖，深度到轴线
+        if v.full_section:
+            ops.append(NativeOp("broken_out_section", {
+                "view": v.type, "label": "", "points": [list(q) for q in v.full_section["boundary"]],
+                "depth": v.full_section["depth"]},
+                "视图外框矩形 → CreateBreakOutSection(深度 = 外圆半径，剖到轴线)：原位全剖"))
     for v in plan.views:  # 孔/槽中心符号（中心线）：每个正投影视图自动插入（剖视图建好后，替代视图同名）
         if v.type != "iso" and plan.model_kind == "part" and plan.layout != "shaft":
             ops.append(NativeOp("center_marks", {"view": v.type, "types": 5, "connection": 0},

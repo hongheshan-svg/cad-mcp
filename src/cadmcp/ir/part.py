@@ -32,6 +32,14 @@ class ShaftBase(Strict):
     steps: list[ShaftStep] = Field(min_length=1)
     chamfer: Num = Field(0.0, description="两端倒角 C 值（mm），0 为不倒角")
     center_holes: "CenterHoles | None" = Field(None, description="轴端中心孔（GB/T 145，图上按 GB/T 4459.5 简化标注）")
+    bores: list["ShaftBore"] = Field([], description="内孔（套类/空心轴）：从轴端起的同轴圆孔；有内孔时主视图全剖")
+
+
+class ShaftBore(Strict):
+    diameter: Num
+    length: Num | None = Field(None, description="孔深（平底）；省略 = 通孔")
+    side: Literal["start", "end"] = Field("start", description="从哪一端起（z=0 为 start）")
+    tolerance: str | None = Field(None, description="孔公差带，如 H7")
 
 
 class CenterHoles(Strict):

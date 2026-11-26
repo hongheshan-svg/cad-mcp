@@ -84,6 +84,7 @@ class ViewPlan:
     origin_on_sheet: tuple[float, float]  # 视图中心在图纸上的位置
     label: str = ""  # 断面图名称（如 A-A）
     target: str = ""  # 断面图对应的特征
+    full_section: dict | None = None  # 原位全剖（空心轴/套类主视图）：{boundary 图纸 mm 矩形, depth 模型 mm, cut_points 模型}
     breaks: list = field(default_factory=list)  # 断开画法：去掉的模型 z 区间 [(a, b)]（轴类主视图），每处在图上留 BREAK_GAP
 
 
@@ -1103,6 +1104,12 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 dims.append(Dim("front", "linear", "z", L, f"{L:g}", f"step{i}_len", (z, z + L)))
             z += L
         dims.append(Dim("front", "linear", "z", Ltot, f"{Ltot:g}", "overall_z", (0.0, Ltot)))
+        for k, b in enumerate(p.shaft_bores):  # 内孔：直径（带公差带与偏差）；盲孔注孔深（从孔口端面起）
+            dims.append(Dim("front", "diameter", None, b["d"], _dia_text(b["d"], b["tol"], spec.fit_deviations),
+                            f"bore{k}_dia", ((b["z0"] + b["z1"]) / 2, b["d"])))
+            if not b["through"]:
+                dims.append(Dim("front", "linear", "z", b["z1"] - b["z0"], f"{b['z1'] - b['z0']:g}", f"{b['name']}_depth",
+                                (b["z0"], b["z1"])))
         if p.shaft_chamfer:
             dims.append(Dim("front", "callout", None, p.shaft_chamfer, f"2×C{p.shaft_chamfer:g}", "chamfer",
                             (0.0, p.shaft_steps[0][1] / 2)))
@@ -1146,6 +1153,15 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
+    if p.shaft_bores:  # 空心轴/套类：主视图过轴线原位全剖（GB/T 4458.6；剖切面过对称面且按投影配置，不标注）
+        f0 = views[0]
+        cx_, cy_ = f0.origin_on_sheet
+        w_, h_ = f0.size_mm
+        f0.full_section = {"boundary": [(round(cx_ - w_ / 2 - 3, 2), round(cy_ - h_ / 2 - 3, 2)),
+                                        (round(cx_ + w_ / 2 + 3, 2), round(cy_ - h_ / 2 - 3, 2)),
+                                        (round(cx_ + w_ / 2 + 3, 2), round(cy_ + h_ / 2 + 3, 2)),
+                                        (round(cx_ - w_ / 2 - 3, 2), round(cy_ + h_ / 2 + 3, 2))],
+                           "depth": round(D / 2, 3), "cut_points": [[0.0, 0.0, 0.0], [0.0, 0.0, round(Ltot, 3)]]}
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
@@ -1691,12 +1707,71 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     return _dia_text(p.shaft_steps[j][1], tj, deviations)
 
 
+def _step_bounds(p: ResolvedPart) -> list[float]:
+    zs, z = [0.0], 0.0
+    for L, _ in p.shaft_steps:
+        z += L
+        zs.append(z)
+    return zs
+
+
+def bore_steps(p: ResolvedPart) -> list[float]:
+    """内孔台阶/孔底的轴向位置（剖视中贯穿孔径的竖线），不含两端面。"""
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    zs = {round(b[k], 6) for b in p.shaft_bores for k in ("z0", "z1")}
+    return sorted(z for z in zs if 1e-6 < z < Ltot - 1e-6
+                  and abs(bore_radius_at(p, z - 1e-6) - bore_radius_at(p, z + 1e-6)) > 1e-9)
+
+
+def bore_radius_at(p: ResolvedPart, z: float) -> float:
+    """z 处内孔半径（无孔 0）。"""
+    return max([b["d"] / 2 for b in p.shaft_bores if b["z0"] - 1e-9 <= z <= b["z1"] + 1e-9] or [0.0])
+
+
+def shaft_text_room(p: ResolvedPart, z: float, d: float) -> float:
+    """直径尺寸文字（竖写、居中在轴线上）可用的长度（模型 mm）：实心 = 直径；剖开的空心段 = 孔径（文字在孔的空白里，
+    不压剖面线和孔壁轮廓）。"""
+    rb = bore_radius_at(p, z)
+    return 2 * rb if rb > 0 else d
+
+
+def bore_dia_place(p: ResolvedPart, k: int, sc: float) -> float:
+    """第 k 个内孔直径尺寸线的轴向位置：文字不压内台阶线、离外径尺寸线 ≥ 5 mm（图纸）、离孔口/孔底 ≥ 3 mm，尽量居中。"""
+    b = p.shaft_bores[k]
+    outer = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))]
+    others = [bore_dia_place(p, i, sc) for i in range(k)]
+    z0, z1 = b["z0"], b["z1"]
+    cands = [z0 + (z1 - z0) * t / 40 for t in range(2, 39)]
+
+    steps_ = bore_steps(p)
+
+    def key(z):
+        clear = min([abs(z - c) * sc for c in outer + others] or [1e9])
+        text_ok = all(not (z - 4.7 / sc <= x <= z + 0.3 / sc) for x in steps_ + outer + others)  # 文字竖写在线左侧
+        want = 7.0 if (z1 - z0) * sc >= 16 else 4.0  # 短孔（沉孔）只求不压线
+        return (text_ok, min(clear, want), min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
+    return max(cands, key=key)
+
+
+def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | None:
+    """内孔直径文字放不进孔时伸出到外轮廓之外（down 优先，下方是链式尺寸行之前的空白）。"""
+    b = p.shaft_bores[k]
+    tw = text_width(text, 3.5)
+    if tw <= b["d"] * sc - 2:
+        return None
+    z = bore_dia_place(p, k, sc)
+    R = max(dd for _, dd in p.shaft_steps) / 2
+    d_out = next(d for (L, d), (z0, z1) in zip(p.shaft_steps, (p.step_z(i) for i in range(len(p.shaft_steps))))
+                 if z0 - 1e-9 <= z <= z1 + 1e-9)
+    return "down" if tw + 3 <= (R - d_out / 2) * sc + 15 - 1.5 else "up"
+
+
 def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | None:
     """轴段直径文字长于尺寸线时伸出轮廓的方向：下方（到链式长度尺寸行之间）放得下、且该段下方没有基准符号 → down，
     否则 up（上方是粗糙度、几何公差的位置，尽量留给它们）。不溢出返回 None。与 render_shaft._vdim 一致。"""
     d = p.shaft_steps[j][1]
     tw = text_width(text, 3.5)
-    if tw <= d * sc - 2:
+    if tw <= shaft_text_room(p, shaft_dia_z(p, j, sc), d) * sc - 2:
         return None
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
@@ -1800,6 +1875,8 @@ def shaft_breaks(p: ResolvedPart) -> list[tuple[float, float]]:
         return []
     busy = {f["step"] for f in p.shaft_features}
     busy |= {int(x["target"][5:]) for x in (*p.datums, *p.geotols) if x["target"].startswith("step:")}
+    for zb in bore_steps(p):  # 内孔台阶/孔底所在轴段不断开
+        busy |= {i for i in range(len(p.shaft_steps)) if p.step_z(i)[0] - 1e-6 <= zb <= p.step_z(i)[1] + 1e-6}
     out = []
     for i, (L, d) in enumerate(p.shaft_steps):
         if i in busy:
@@ -1858,7 +1935,9 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
         if f["step"] == i and f["kind"] == "thread":
             zt = f["z0"] if f["side"] == "end" else f["z1"]
             obst.append((zt, zt))
-    obst += [(x, x) for x in lines]
+    # 剖视（空心）：外轴肩/端面线只在孔壁之外，轴线附近的竖写文字碰不到；内孔台阶线贯穿孔径，是障碍
+    lines = [x for x in lines if max(bore_radius_at(p, x - 1e-6), bore_radius_at(p, x + 1e-6)) < 6]
+    obst += [(x, x) for x in lines + bore_steps(p)]
     brk = shaft_breaks(p)
     cands = [z0 + (z1 - z0) * k / 40 for k in range(2, 39)]
     cands = [z for z in cands if not any(a - 2 <= z <= b + 2 for a, b in brk)] or [unbreak_z(p, (z0 + z1) / 2)]
@@ -1871,7 +1950,9 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
         z, side = zs
         span = (z - tw, z - 0.2 / sc) if side == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
         line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
-        return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), side == "left", -abs(z - (z0 + z1) / 2))
+        # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
+        return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
+                -abs(z - (z0 + z1) / 2))
     return max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
 
 
@@ -1905,6 +1986,12 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         rs = [r for r in (radius_at(z - 1e-6), radius_at(z + 1e-6)) if r > 0]
         r = min(rs)
         off = min(0.85 * r, max(r - c - 0.5, 0.3 * r))
+        bores_end = [b for b in p.shaft_bores if any(abs(z - b[k]) < 1e-6 and 1e-6 < z < Ltot - 1e-6 for k in ("z0", "z1"))]
+        if bores_end and all(abs(z - zz) > 1e-6 for zz in _step_bounds(p)):  # 盲孔孔底（剖视中只在孔径内有线）
+            return (round(X(z), 2), round(cy - bores_end[0]["d"] / 4 * sc, 2))
+        rb = max(bore_radius_at(p, z - 1e-6), bore_radius_at(p, z + 1e-6))
+        if rb > 0:  # 剖视：端面/轴肩线只在孔壁与外轮廓之间
+            off = (min(rb, r) + r) / 2 if r > rb else rb
         return (round(X(z), 2), round(cy - off * sc, 2))
 
     kw_ends = {round(f[k], 6) for f in p.shaft_features if f["kind"] == "keyway" for k in ("z0", "z1")}
@@ -1923,6 +2010,12 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             pts = [edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": (round((pts[0][0] + pts[1][0]) / 2, 2), round(y, 2)),
                        "orient": "h"}
+        elif d.kind == "diameter" and d.ref.startswith("bore"):
+            k = int(d.ref[4:].split("_")[0])
+            x = X(bore_dia_place(p, k, sc))
+            r = d.at[1] / 2
+            d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
+                       "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
         elif d.kind == "diameter" and d.ref.startswith("step"):
             i = int(d.ref[4:].split("_")[0])
             x = X(shaft_dia_z(p, i, sc))

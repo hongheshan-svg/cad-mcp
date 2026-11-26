@@ -269,6 +269,12 @@ def tk_detail_ops(plan) -> list[NativeOp]:
             "kind": s.kind, "cut_points": [list(p) for p in s.cut_points],
             "center": _xy(next((v.origin_on_sheet for v in plan.views if v.type == s.view), (0, 0)))},
             "剖截面 + 视图设为 2D 剖视"))
+    for v in plan.views:  # 空心轴/套类：主视图原位全剖（局部剖边界包住整个视图，剖截面过轴线）
+        if v.full_section:
+            ops.append(NativeOp("tk.drw.section", {
+                "drawing": D, "parent": "", "replaces": view_name(v.type), "label": "", "kind": "local",
+                "cut_points": v.full_section["cut_points"], "boundary": [list(q) for q in v.full_section["boundary"]]},
+                "原位全剖：边界 = 视图外框；TODO(实机核对) cut_points 取轴线两点时剖截面是否过轴线且垂直视线"))
     for v in plan.views:
         if v.type == "section":
             ops.append(NativeOp("tk.drw.removed_section", {

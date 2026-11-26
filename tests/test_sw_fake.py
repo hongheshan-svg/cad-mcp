@@ -403,3 +403,14 @@ def test_sw_broken_shaft_view(sw_svc):
     assert r["rules"]["passed"], r["rules"]
     calls = [c[0] for c in ad.sw.calls]
     assert "InsertBreak3" in calls and "BreakView" in calls
+
+
+def test_sw_sleeve_full_section(sw_svc):
+    """套类：内孔切除 + 主视图原位全剖（CreateBreakOutSection），规则检查通过。"""
+    from test_shaft_bores import SL
+    svc, ad = sw_svc
+    svc.change_begin("SL")
+    svc.build(PartSpec.model_validate(SL))
+    r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    assert "CreateBreakOutSection" in [c[0] for c in ad.sw.calls]

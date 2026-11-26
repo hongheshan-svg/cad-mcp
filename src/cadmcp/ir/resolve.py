@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .. import materials, standards
-from ..errors import SPEC_INVALID, CadError
+from ..errors import CAPABILITY_UNSUPPORTED, SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
 from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket, ShaftGear,
@@ -129,6 +129,7 @@ class ResolvedPart:
     properties: dict[str, str] = field(default_factory=dict)
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
+    shaft_bores: list[dict[str, Any]] = field(default_factory=list)  # 内孔 {name, z0, z1, d, tol, side, through}
     center_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端中心孔 {end: start|end, type, d, D, l1, code, keep}
     shaft_features: list[dict[str, Any]] = field(default_factory=list)  # keyway / groove
     datums: list[dict[str, Any]] = field(default_factory=list)
@@ -542,6 +543,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     steps: list[tuple[float, float]] = []
     shaft_chamfer = 0.0
     center_holes: list[dict[str, Any]] = []
+    shaft_bores: list[dict[str, Any]] = []
     flat_box = None
 
     gear = None
@@ -565,6 +567,29 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         shaft_chamfer = ev(base.chamfer)
         for d in (steps[0][1], steps[-1][1]):
             volume -= math.pi * d * shaft_chamfer ** 2 / 2  # 端部 45° 倒角近似
+        Lt = sum(L for L, _ in steps)
+        for k, b in enumerate(base.bores):
+            bd = ev(b.diameter)
+            through = b.length is None or ev(b.length) >= Lt - 1e-9
+            bl = Lt if through else ev(b.length)
+            z0, z1 = (0.0, bl) if through or b.side == "start" else (Lt - bl, Lt)
+            if bd <= 0 or bl <= 0:
+                raise CadError(SPEC_INVALID, f"bore {k}: diameter/length must be > 0")
+            zz, wall = 0.0, 1e9
+            for L, d in steps:
+                if zz < z1 - 1e-9 and zz + L > z0 + 1e-9:
+                    wall = min(wall, (d - bd) / 2)
+                zz += L
+            if wall < 1.0:
+                raise CadError(SPEC_INVALID, f"内孔 Φ{bd:g} 壁厚 {wall:g} mm < 1 mm（超出轴段外径）", hint="减小孔径或孔深")
+            shaft_bores.append({"name": f"BORE{k + 1}", "z0": z0, "z1": z1, "d": bd, "tol": b.tolerance,
+                                "side": "through" if through else b.side, "through": through})
+            volume -= math.pi * bd * bd / 4 * (z1 - z0)
+        for a, b in [(a, b) for i, a in enumerate(shaft_bores) for b in shaft_bores[i + 1:]]:
+            if a["z0"] < b["z1"] - 1e-9 and b["z0"] < a["z1"] - 1e-9 and not (a["through"] or b["through"]):
+                raise CadError(SPEC_INVALID, f"内孔 {a['name']} 与 {b['name']} 沿轴向重叠", hint="两端的孔深之和不超过轴长，或改为通孔")
+        if base.center_holes and shaft_bores:
+            raise CadError(SPEC_INVALID, "空心轴/套类不能再加中心孔", hint="去掉 center_holes")
         if base.center_holes:
             from ..standards import center_hole
             ch = base.center_holes
@@ -834,6 +859,9 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                         "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
+    if shaft_bores and any(f["kind"] in ("keyway", "thread", "gear") for f in shaft_feats):
+        raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带键槽/外螺纹/齿轮",
+                       hint="套类零件先只用内孔 + 环槽；或拆成实心轴")
     return ResolvedPart(
         datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
@@ -842,7 +870,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,

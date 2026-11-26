@@ -456,3 +456,11 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 | GB/T 1184 圆跳动 6/7 级 | `precision._RUNOUT` | 未核实 |
 | 齿坯跳动公差 | `gear._BLANK_RUNOUT` | 未核实 |
 | 按轴端直径推荐中心孔 d | `standards._CH_BY_DIA` | 经验值，非标准表 |
+
+## 套类/空心轴（shaft bores，TODO(实机核对)）
+
+样例：`tests/test_shaft_bores.py` 的 SL（法兰轴套，Φ30H7 通孔 + Φ36×8 沉孔）。
+- 建模：SW 每个内孔 = Front Plane 画圆 + FeatureCut4（起始偏移 z0、深度 = 孔深）；Creo = TOP 偏移 z0 拉伸切除。核对盲孔方向（side=end 时 z0 = L − 深度，向 +Z 切）。
+- 出图：主视图原位全剖。SW = 视图外框矩形 + `CreateBreakOutSection(深度 = 外圆半径)`；核对深度是否正好剖到轴线、剖面线是否只在材料上。
+  Creo = `drw.section kind=local`，边界 = 视图外框，`cut_points` 取轴线两点；核对剖截面是否过轴线且垂直于视线。
+- 尺寸：剖视中端面/轴肩选边点取在孔壁与外圆之间，盲孔孔底取孔径内的点；核对能否选中。
