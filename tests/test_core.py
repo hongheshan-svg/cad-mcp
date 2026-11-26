@@ -346,3 +346,17 @@ def test_weldment_drawing(tmp_path):
     plan = plan.to_dict()
     assert any("GB/T 985.1" in n for n in plan["notes"]) and any("焊后加工" in n for n in plan["notes"])
     assert len(plan["cut_list"]) == 5 and len(plan["balloons"]) == 5
+
+
+def test_iso_draws_slots_and_through_exits():
+    """轴测图：可见面上的腰型孔画孔口轮廓；内侧面上的通孔在外表面出口照画。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import _iso_top_features, _Svg, _iso_xy
+    p = resolve_part(PartSpec.model_validate(L_BRACKET))
+    s = _Svg(420, 297)
+    _iso_top_features(s, _iso_xy(200, 150, 1.0, p.bbox), p, p.bbox.zmax)
+    assert len(s.outlines) > 0
+    rings = [x for x in s.parts if x.startswith("<poly")]
+    assert len(rings) == 4  # 2 个腰型孔 + 2 个 M5 出口
+    assert plan_part_drawing(DrawingSpec(model="LB"), p)

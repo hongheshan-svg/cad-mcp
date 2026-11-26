@@ -606,11 +606,27 @@ def _iso_top_features(s, iso, part, ztop):
     b = part.bbox
     # 相机方向 (-1,-1,1)：可见面为顶面、前面（y 最小）、左面（x 最小）；对面打通的通孔在可见面上也有孔口
     vis = {"top": ("bottom", 2, b.zmax), "front": ("back", 1, b.ymin), "left": ("right", 0, b.xmin)}
+    from .ir.resolve import face_point
+    outer = {"top": b.zmax, "bottom": b.zmin, "front": b.ymin, "back": b.ymax, "left": b.xmin, "right": b.xmax}
     for h in part.holes:
-        if h.slot:
-            continue
+        inner = h.at is not None and abs(h.at - outer[h.face]) > 1e-6  # 孔在内侧台阶面上
         for face, (opp, ax, val) in vis.items():
-            if not (h.face == face or (h.through and h.face == opp)):
+            if not ((h.face == face and not inner) or (h.through and h.face == opp)):
+                continue  # 内侧面上的孔口多被遮挡不画；通孔在对面外表面的出口照画
+            if h.slot:  # 腰型孔：孔口轮廓（两半圆 + 两直边）
+                for i in h.instances:
+                    p1, p2, rad = h.capsule(i)
+                    a_ = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    uv = [(p2[0] + rad * math.cos(a_ + math.radians(d)), p2[1] + rad * math.sin(a_ + math.radians(d)))
+                          for d in range(-90, 91, 10)]
+                    uv += [(p1[0] + rad * math.cos(a_ + math.radians(d)), p1[1] + rad * math.sin(a_ + math.radians(d)))
+                           for d in range(90, 271, 10)]
+                    ring = []
+                    for q2 in uv:
+                        q = list(face_point(h.face, q2, b, h.at))
+                        q[ax] = val
+                        ring.append(iso(*q))
+                    s.poly(ring, THICK)
                 continue
             r = (h.max_dia if h.face == face else h.drill) / 2
             u, w = [k for k in range(3) if k != ax]
