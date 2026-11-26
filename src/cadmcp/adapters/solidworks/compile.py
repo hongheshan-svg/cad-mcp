@@ -409,9 +409,14 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             continue
         if v.type == "section":
             f = next((x for x in model_features if x["name"] == v.target), None)
-            ops.append(NativeOp("section_view", {"label": v.label, "parent": plan.views[0].type,
-                                                 "z": (f["z0"] + f["z1"]) / 2 if f else 0.0,
-                                                 "center": v.origin_on_sheet}, "移出断面图（剖切线垂直轴线）"))
+            z = (f["z0"] + f["z1"]) / 2 if f else 0.0
+            main = plan.views[0]  # 轴类主视图：轴线水平，左端 = z 0（与 render_shaft 一致）
+            (mcx, mcy), (mw, mh) = main.origin_on_sheet, main.size_mm
+            mx = mcx - mw / 2 + z * main.scale
+            ops.append(NativeOp("section_view", {
+                "label": v.label, "parent": main.type, "z": z, "center": v.origin_on_sheet,
+                "points": [[round(mx, 3), round(mcy + mh / 2 + 5, 3)], [round(mx, 3), round(mcy - mh / 2 - 5, 3)]]},
+                "主视图画垂直轴线的剖切线（上下伸出 5 mm）→ CreateSectionViewAt5（只显示切面）→ 解除对齐，移到规划位置"))
             continue
         if any(s.view == v.type and s.kind != "local" for s in plan.sections):
             continue  # 由剖视图替代（在父视图之后生成）
@@ -435,15 +440,19 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         for d in plan.dims:
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):
                 ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）
-                ops.append(NativeOp("shaft_dimension", {"view": d.view, "kind": d.kind, "text": d.text,
+                view = f"section:{ex['section']}" if ex.get("section") else d.view  # 移出断面图按标签区分
+                ops.append(NativeOp("shaft_dimension", {"view": view, "kind": d.kind, "text": d.text,
                                                         "at": d.at, "ref": d.ref, "pts": ex.get("sheet_pts"),
-                                                        "pos": ex.get("sheet_pos"), "orient": ex.get("orient")},
+                                                        "pos": ex.get("sheet_pos"), "orient": ex.get("orient"),
+                                                        **({"arc_end": list(ex["arc_end"])} if ex.get("arc_end") else {})},
                                     "选两条边线 AddDimension2；直径用文字覆盖带公差带"))
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             lb = (d.extra or {}).get("label")
+            pos = (d.extra or {}).get("sheet_pos")  # 无引线的说明文字（如展开图折弯说明）：文字左下角
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref,
-                                                **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else {})}))
+                                                **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else
+                                                   {"text_pos": pos} if pos else {})}))
     for d in plan.dims:  # 焊缝符号：原生 InsertWeldSymbol3，失败时退回带引线注释
         if d.kind == "weld":
             ex = d.extra or {}

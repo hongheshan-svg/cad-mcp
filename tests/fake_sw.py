@@ -25,6 +25,7 @@ ARITY = {
     "InsertSurfaceFinishSymbol3": 14,
     "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader
     "AddDimension2": 3, "AddDimension2().SetText": 2,  # native_shaft_dims
+    "AddDimension2().SetArcEndCondition": 2, "CreateSectionViewAt5().RemoveAlignment": 0,  # shaft removed sections
     "InsertCosmeticThread3": 8, "InsertRefPlane": 6, "InsertAxis2": 1, "InsertReferencePoint": 4, "FeatureFillet3": 12, "InsertFeatureChamfer": 8, "GetBodies2": 2,  # sw-cosmetic-refs
 }
 

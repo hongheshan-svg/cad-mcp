@@ -505,6 +505,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
         ordinate_dim_sheet(plan, p)
+        flat_dim_sheet(plan, p)
     return plan
 
 
@@ -1184,6 +1185,89 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
                        "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
+        elif d.kind == "callout" and d.ref in ({"chamfer"} | {f["name"] for f in p.shaft_features}):
+            # 位置同 render_shaft：引线从轮廓点斜向上到主视图上方的水平线
+            z, r = d.at
+            ax, ay = xl + z * sc, cy + r * sc
+            ty = y_top + 4 + (4 if d.ref == "chamfer" else 14)
+            tx = ax - 4 - len(d.text) * 2 if d.ref == "chamfer" else ax + 6
+            w = len(d.text) * 2.4
+            d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(tx, 2), round(ty, 2)),
+                                                     "text_at": (round(tx + 0.5, 2), round(ty + 0.8, 2)),
+                                                     "end": (round(tx + w, 2), round(ty, 2)), "dir": 1}}
+    _shaft_section_dim_sheet(plan, p)
+
+
+def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """移出断面图（键槽）上的尺寸：图纸坐标与 render_shaft 一致（键槽朝上，断面中心 = 视图 origin_on_sheet）。
+    槽宽 = 两侧壁上的点（水平）；槽底到对侧轮廓 d−t = 圆周最低点 + 槽底线上的点（竖直），
+    extra["arc_end"] = ("max", None) 表示第一个点在圆上、应量到圆的远端（CAD 端设圆弧条件“最大”）。
+    extra["section"] = 断面标签（A-A），供 CAD 端在多张同类断面图中找到对应视图。"""
+    for v in plan.views:
+        if v.type != "section" or not v.target:
+            continue
+        f = next((k for k in p.shaft_features if k["name"] == v.target and k["kind"] == "keyway"), None)
+        if f is None:
+            continue
+        sc = v.scale
+        vx, vy = v.origin_on_sheet
+        r, hb, t1 = f["d"] / 2 * sc, f["width"] / 2 * sc, f["depth"] * sc
+        y_floor = vy + r - t1
+        y_rim = vy + math.sqrt(max(r * r - hb * hb, 0.0))
+        for d in plan.dims:
+            if d.view != "section" or not d.ref.startswith(f["name"] + "_"):
+                continue
+            if d.ref.endswith("_w"):
+                ym = (y_rim + y_floor) / 2
+                ex = {"sheet_pts": [(round(vx - hb, 2), round(ym, 2)), (round(vx + hb, 2), round(ym, 2))],
+                      "sheet_pos": (round(vx, 2), round(vy + r + 5, 2)), "orient": "h"}
+            elif d.ref.endswith("_t"):
+                ex = {"sheet_pts": [(round(vx, 2), round(vy - r, 2)), (round(vx, 2), round(y_floor, 2))],
+                      "sheet_pos": (round(vx + r + 6, 2), round((vy - r + y_floor) / 2, 2)), "orient": "v",
+                      "arc_end": ("max", None)}
+            else:
+                continue
+            d.extra = {**(d.extra or {}), **ex, "section": v.label}
+
+
+def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """钣金展开图尺寸的图纸坐标，与 render_svg._draw_flat 一致（F(u, v) = 视图中心 + (u−中点)·比例）：
+    展开总宽/总高取外轮廓两条对边上的点（避开折弯线位置），尺寸线在下方 10 mm / 右侧 10 mm；
+    折弯说明 extra["sheet_pos"] = 文字左下角（无引线）。"""
+    fv = next((v for v in plan.views if v.type == "flat_pattern"), None)
+    if fv is None or not p.flat_box:
+        return
+    fu0, fu1, fv0, fv1 = p.flat_box
+    cx, cy = fv.origin_on_sheet
+    sc = fv.scale
+
+    def F(u, v):
+        return cx + (u - (fu0 + fu1) / 2) * sc, cy + (v - (fv0 + fv1) / 2) * sc
+
+    x0, y0 = F(fu0, fv0)
+    x1, y1 = F(fu1, fv1)
+    bends_u = [F(b["flat_pos"], 0)[0] for b in p.bends if b["flat_axis"] != "v"]  # 竖直折弯线的 x
+    bends_v = [F(0, b["flat_pos"])[1] for b in p.bends if b["flat_axis"] == "v"]  # 水平折弯线的 y
+
+    def clear(lo, hi, busy):
+        """轮廓边上离折弯线最远的点（折弯线与外轮廓相交处选边不唯一）。"""
+        cands = [lo + (hi - lo) * k / 20 for k in range(2, 19)]
+        return max(cands, key=lambda c: (min([abs(c - b) for b in busy] or [1e9]), -abs(c - (lo + hi) / 2)))
+
+    for d in plan.dims:
+        if d.view != "flat_pattern":
+            continue
+        if d.ref == "flat_w":
+            y = clear(y0, y1, bends_v)
+            d.extra = {**(d.extra or {}), "sheet_pts": [(round(x0, 2), round(y, 2)), (round(x1, 2), round(y, 2))],
+                       "sheet_pos": (round((x0 + x1) / 2, 2), round(y0 - 10, 2)), "orient": "h"}
+        elif d.ref == "flat_h":
+            x = clear(x0, x1, bends_u)
+            d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(y0, 2)), (round(x, 2), round(y1, 2))],
+                       "sheet_pos": (round(x1 + 10, 2), round((y0 + y1) / 2, 2)), "orient": "v"}
+        elif d.kind == "callout" and d.at is not None:
+            px, py = F(*d.at)
+            d.extra = {**(d.extra or {}), "sheet_pos": (round(px - _tw(d.text) / 2, 2), round(py + 1, 2))}
 
 
 def overall_dim_sheet(plan: "DrawingPlan", p) -> None:

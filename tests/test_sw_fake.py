@@ -324,3 +324,56 @@ def test_sw_select_edges_rules_and_finish(sw_svc, tmp_path):
     assert all(c[0][0] != (0.05, 0.03, 0.01) for c in sel_calls)  # 孔内环未被选
     names = [c[0] for c in ad.sw.calls]
     assert "FeatureFillet3" in names and "InsertFeatureChamfer" in names
+
+
+def _oplog(tmp_path, name):
+    return json.loads(next((tmp_path / "ws").rglob(f"{name}.oplog.json")).read_text(encoding="utf-8"))
+
+
+def test_sw_shaft_removed_sections_and_dims(sw_svc, tmp_path):
+    """移出断面图：主视图竖直剖切线 → CreateSectionViewAt5（7 参）→ 解除对齐移到规划位置；
+    断面图上槽宽（N9 后缀覆盖）与 d−t（圆弧条件"最大"）走原生 AddDimension2。"""
+    svc, ad = sw_svc
+    svc.change_begin("SHS")
+    svc.build(PartSpec.model_validate(SHAFT))
+    svc.build(DrawingSpec.model_validate({"model": "SH1", "title_block": {"designer": "AI"}}))
+    calls = ad.sw.calls
+    secs = [c[1] for c in calls if c[0] == "CreateSectionViewAt5"]
+    assert len(secs) == 2 and len({s[3] for s in secs}) == 2 and all(len(s[3]) == 1 for s in secs)
+    assert sum(1 for c in calls if c[0] == "RemoveAlignment") == 2
+    log = _oplog(tmp_path, "SH1_DRW")
+    sv = [r for r in log if r["op"] == "section_view"]
+    assert len(sv) == 2 and all(r["ok"] for r in sv)
+    for r in sv:  # 剖切线竖直、跨过主视图
+        (ax, ay), (bx, by) = r["args"]["points"]
+        assert ax == bx and ay > by
+    sec_dims = [r for r in log if r["op"] == "shaft_dimension" and r["args"]["view"].startswith("section:")]
+    assert len(sec_dims) == 4 and all(r["ok"] for r in sec_dims)
+    assert any(c[0] == "SetText" and c[1][1] == "<DIM>N9" for c in calls)
+    assert sum(1 for c in calls if c[0] == "SetArcEndCondition") == 2
+    # 倒角/挡圈槽引出标注不再退回视图中心：有规划位置
+    notes = [r for r in log if r["op"] == "leader_note" and r["args"]["ref"] in ("chamfer", "G1")]
+    assert len(notes) == 2 and all(r["args"].get("text_pos") and r["args"].get("anchor") for r in notes)
+
+
+def test_sw_flat_pattern_dims(sw_svc, tmp_path):
+    """展开图总宽/总高走原生 AddDimension2（规划层给出外轮廓边上的点），折弯说明放到规划位置。
+    （零件建模的边线法兰另行实现，这里直接对规划出图。）"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir.resolve import resolve_part
+    _, ad = sw_svc
+    sm = {"name": "SMB", "part_no": "SM-01", "title": "钣金支架", "material": "SPCC", "category": "sheet_metal",
+          "base": {"type": "sheet_metal", "profile": {"shape": "rect", "width": 120, "height": 80}, "thickness": 2,
+                   "flanges": [{"edge": "front", "length": 40}, {"edge": "back", "length": 40}]}}
+    r = resolve_part(PartSpec.model_validate(sm))
+    plan = plan_part_drawing(DrawingSpec.model_validate({"model": "SMB", "views": [
+        {"type": "front"}, {"type": "top"}, {"type": "flat_pattern"}]}), r)
+    plan.name = "SMB_DRW"
+    out = tmp_path / "ws"
+    out.mkdir(exist_ok=True)
+    ad.build_drawing(plan, tmp_path / "smb.sldprt", out, r)
+    log = _oplog(tmp_path, "SMB_DRW")
+    flat = [r for r in log if r["op"] == "overall_dimension" and r["args"]["view"] == "flat_pattern"]
+    assert len(flat) == 2 and all(r["ok"] and r["args"]["pts"] for r in flat)
+    bends = [r for r in log if r["op"] == "leader_note" and r["args"]["ref"].startswith("bend")]
+    assert len(bends) == 2 and all(r["args"].get("text_pos") for r in bends)
