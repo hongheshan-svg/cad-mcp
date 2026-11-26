@@ -99,3 +99,11 @@ def test_auto_flange_cover():
     # 有配合内孔时仍按套类规则（内孔为基准）
     q = resolve_part(PartSpec.model_validate({**EC, "base": {**EC["base"], "bores": [{"diameter": 40, "tolerance": "H7"}]}}))
     assert [d["target"] for d in q.datums] == ["bore:0"]
+
+
+def test_cast_material_notes_without_casting_spec():
+    p = resolve_part(PartSpec.model_validate(EC))
+    notes = plan_part_drawing(DrawingSpec(model="EC1"), p).notes
+    assert any("人工时效" in x for x in notes) and any("砂眼" in x for x in notes)
+    q = resolve_part(PartSpec.model_validate({**EC, "material": "45#"}))
+    assert not any("砂眼" in x for x in plan_part_drawing(DrawingSpec(model="EC1"), q).notes)

@@ -473,6 +473,11 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     for line in p.casting.get("notes", []):
         notes.append(f"{n}. {line}")
         n += 1
+    if not p.casting:  # 铸造材料但没做毛坯设计（如车削的灰铸铁端盖）：仍要写铸件质量与去应力要求
+        from .materials import cast_part_notes
+        for line in cast_part_notes(p.material):
+            notes.append(f"{n}. {line}")
+            n += 1
     if p.base_type == "sheet_metal" and p.bends:
         bd = p.bends[0]
         notes.append(f"{n}. 板厚 t{p.thickness:g}；未注折弯内半径 R{bd['radius']:g}；"

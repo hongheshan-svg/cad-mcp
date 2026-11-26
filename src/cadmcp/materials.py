@@ -30,6 +30,20 @@ HEAT_TREATMENT = {
 }
 HEAT_PROCESS = {"quench_temper": "调质处理", "normalize": "正火处理"}
 
+# 车/铣成形但材料为铸件（未给 casting 毛坯设计）时的铸件技术要求（按材料大类）
+CAST_PART_NOTES = {
+    "HT": ["铸件不得有砂眼、气孔、缩松、裂纹等铸造缺陷。", "铸件经人工时效处理，消除内应力。"],
+    "QT": ["铸件不得有砂眼、气孔、缩松、裂纹等铸造缺陷。", "铸件经退火处理，消除内应力。"],
+    "ZG": ["铸件不得有砂眼、气孔、缩孔、裂纹等铸造缺陷。", "铸钢件经正火处理。"],
+    "ZL": ["铸件不得有气孔、缩松、裂纹等铸造缺陷。"],
+}
+
+
+def cast_part_notes(material: str) -> list[str]:
+    if "cast_min_wall" not in MATERIALS.get(material, {}):
+        return []
+    return next((v for k, v in CAST_PART_NOTES.items() if material.startswith(k)), [])
+
 
 def density(name: str) -> float:
     if name not in MATERIALS:
