@@ -14,6 +14,7 @@ from typing import Any
 from ...errors import CAPABILITY_UNSUPPORTED, NATIVE_ERROR, TARGET_UNAVAILABLE, CadError
 from ..base import CAPABILITIES, BuildResult, CadAdapter
 from .compile import compile_part
+from .edit import CreoEditor
 
 
 def creo_kind(path: Path) -> str:
@@ -36,6 +37,7 @@ class CreoAdapter(CadAdapter):
         self.ext = {"part": ".prt", "assembly": ".asm", "drawing": ".drw"}
         self.start_part, self.udf_dir, self.library_root = start_part, udf_dir, library_root
         self.c = creopyson.Client(ip_adress=host, port=port)
+        self.editor = CreoEditor(self.c)
         try:
             self.c.connect()
         except Exception as e:  # noqa: BLE001
@@ -93,6 +95,26 @@ class CreoAdapter(CadAdapter):
 
     def mass_properties(self, path: Path) -> dict[str, Any]:
         return self.c.file_massprops(file_=path.name)
+
+    # ---- 修改现有模型（逻辑在 edit.py）----
+    def inspect(self, path: Path) -> dict[str, Any]:
+        return self.editor.inspect(path)
+
+    def apply_edits(self, path: Path, edits: list[Any]) -> dict[str, Any]:
+        return self.editor.apply_edits(path, edits)
+
+    def references(self, path: Path) -> list[str] | None:
+        return self.editor.references(path)
+
+    def refresh(self, path: Path, preload: list[Path] | None = None) -> dict[str, Any]:
+        return self.editor.refresh(path, preload)
+
+    def retarget(self, path: Path, by_name: dict[str, Path]) -> int:
+        """Creo 装配/工程图按"模型名 + 搜索路径"引用，文件里不存路径，回写后无需改写引用。"""
+        return 0
+
+    def close_all(self) -> None:
+        self.c.file_erase()  # 不带 file_：清出会话中所有模型（回滚前释放）
 
     def build_part(self, spec, resolved, out_dir: Path) -> BuildResult:
         plan = compile_part(spec, resolved)
