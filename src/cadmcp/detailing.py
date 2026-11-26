@@ -355,6 +355,10 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
                 k = 0.7071
                 return view, (u - h.max_dia / 2 * k, w - h.max_dia / 2 * k), (-k, -k)
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
+        if k == "pocket":  # 型腔底面：主视图（全剖）底面线上，符号立在型腔内，靠左 1/4
+            pk = next(x for x in p.pockets if x["name"] == ref)
+            u0, u1, _, _ = pk["profile"].bbox2d
+            return "front", (u0 + 0.25 * (u1 - u0), p.bbox.zmax - pk["depth"]), (0, 1)
         if k == "bore":
             return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
         if k == "keyway":  # 键槽中心平面：槽宽尺寸线上（轴键槽在断面图，见 _shaft_section_dim_sheet；轮毂键槽在左视图）

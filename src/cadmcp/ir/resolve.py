@@ -930,6 +930,8 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         kind, _, ref = tgt.partition(":")
         ok = (kind == "face" and ref in FACE_NORMAL and not isinstance(base, ShaftBase)) or \
              (kind == "hole" and any(h.name == ref for h in holes)) or \
+             (kind == "pocket" and what == "roughness" and any(pk["name"] == ref and not pk["through"]
+                                                               and pk["face"] == "top" for pk in pockets)) or \
              (kind == "step" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(steps)) or \
              (kind == "bore" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(base.bores)) or \
              (kind == "shoulder" and what.startswith("tolerance") and isinstance(base, ShaftBase) and ref.isdigit()
@@ -939,7 +941,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                    or any(b.get("kw") and b["kw"]["name"] == ref for b in shaft_bores)))
         if not ok:
             raise CadError(SPEC_INVALID, f"{what}: invalid target {tgt!r}",
-                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>、bore:<内孔序号>、"
+                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、pocket:<顶面盲型腔名>（仅粗糙度，型腔底面）、step:<段号>、bore:<内孔序号>、"
                                 "shoulder:<i>（轴类；仅几何公差，且第 i、i+1 段直径不同）、keyway:<键槽名>（仅几何公差，如对称度）")
         return kind, ref
 

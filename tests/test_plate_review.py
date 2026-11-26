@@ -54,3 +54,22 @@ def test_pocket_corner_radius_drawn():
     assert not render(plan, p)[1]["crossings"]
     ords = {(x.axis, x.value) for x in plan.dims if x.kind == "ordinate" and x.view == "top"}
     assert {("x", 30.0), ("y", 20.0)} <= ords  # 型腔左下角定位
+
+
+def test_pocket_floor_roughness():
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    import pytest
+    from cadmcp.errors import CadError
+    spec = {"name": "PF", "part_no": "PF-01", "title": "型腔板", "material": "45#", "surface_treatment": "发黑",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 80}, "thickness": 25},
+            "features": [{"feature": "pocket", "name": "PK", "depth": 15,
+                          "profile": {"shape": "rect", "width": 60, "height": 40, "corner_radius": 4}}],
+            "roughness": [{"target": "pocket:PK", "ra": 1.6}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model="PF"), p)
+    d = next(d for d in plan.dims if d.ref == "ra:pocket:PK")
+    assert d.view == "front" and d.at == (-15.0, 10.0) and d.extra["normal"] == (0, 1)  # 底面 z = 25 − 15
+    bad = {**spec, "tolerances": [{"type": "flatness", "value": 0.02, "target": "pocket:PK"}]}
+    with pytest.raises(CadError):
+        resolve_part(PartSpec.model_validate(bad))
