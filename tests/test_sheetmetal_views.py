@@ -40,3 +40,18 @@ def test_back_face_blind_pocket_is_hidden():
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     svg, _ = render(plan, p)
     assert "stroke-dasharray='3,1'" in svg  # 底面 120×60 型腔在俯视图中为细虚线
+
+
+def test_flat_pattern_bend_lines_located():
+    """展开图：折弯线自外轮廓起有基线定位尺寸；尺寸值不带多余的 .0。"""
+    p = _part()
+    plan = plan_part_drawing(DrawingSpec(model="SMB"), p)
+    fl = {d.ref: d for d in plan.dims if d.view == "flat_pattern" and d.kind == "linear"}
+    assert fl["flat_w"].text == "120"
+    bends = sorted((d for r, d in fl.items() if r.startswith("flat_bend")), key=lambda d: d.value)
+    assert len(bends) == 2 and bends[0].value < bends[1].value < fl["flat_h"].value
+    assert all(len(d.extra["sheet_pts"]) == 2 and d.extra["orient"] == "v" for d in bends)
+    assert bends[0].extra["sheet_pos"][0] > bends[1].extra["sheet_pos"][0]  # 远的一道在外层
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    ops = [o for o in compile_drawing(plan, "SMB.SLDPRT") if o.op == "overall_dimension"]
+    assert {"flat_bend0", "flat_bend1"} <= {o.args["ref"] for o in ops}

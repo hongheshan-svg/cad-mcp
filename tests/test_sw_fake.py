@@ -374,6 +374,6 @@ def test_sw_flat_pattern_dims(sw_svc, tmp_path):
     ad.build_drawing(plan, tmp_path / "smb.sldprt", out, r)
     log = _oplog(tmp_path, "SMB_DRW")
     flat = [r for r in log if r["op"] == "overall_dimension" and r["args"]["view"] == "flat_pattern"]
-    assert len(flat) == 2 and all(r["ok"] and r["args"]["pts"] for r in flat)
+    assert len(flat) == 4 and all(r["ok"] and r["args"]["pts"] for r in flat)
     bends = [r for r in log if r["op"] == "leader_note" and r["args"]["ref"].startswith("bend")]
     assert len(bends) == 2 and all(r["args"].get("text_pos") for r in bends)

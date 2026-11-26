@@ -252,7 +252,7 @@ def test_sheet_metal_drawing(tmp_path):
                                                         {"type": "flat_pattern"}]}))
     assert r["rules"]["passed"]
     texts = [d["text"] for d in svc.get_model("SMB_DRW")["dimensions"]]
-    assert texts.count("上折 90° R2") == 2 and "120.0" in texts
+    assert texts.count("上折 90° R2") == 2 and "120" in texts and "38.3" in texts
     notes = svc.get_model("SMB_DRW")["plan"]["notes"]
     assert any("板厚 t2" in n and "K=0.44" in n for n in notes)
 

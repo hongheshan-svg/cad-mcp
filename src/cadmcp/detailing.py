@@ -599,8 +599,13 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         dims += _precision_dims(p, views, vtypes, False)
         if "flat_pattern" in vtypes and p.flat_box:
             fu0, fu1, fv0, fv1 = p.flat_box
-            dims.append(Dim("flat_pattern", "linear", "u", fu1 - fu0, f"{fu1 - fu0:.1f}", "flat_w"))
-            dims.append(Dim("flat_pattern", "linear", "v", fv1 - fv0, f"{fv1 - fv0:.1f}", "flat_h"))
+            dims.append(Dim("flat_pattern", "linear", "u", fu1 - fu0, f"{round(fu1 - fu0, 1):g}", "flat_w"))
+            dims.append(Dim("flat_pattern", "linear", "v", fv1 - fv0, f"{round(fv1 - fv0, 1):g}", "flat_h"))
+            for i, bd in enumerate(p.bends):  # 折弯线定位：自展开外轮廓起的基线尺寸（下料划线/折弯机挡料用）
+                lo = fv0 if bd["flat_axis"] == "v" else fu0
+                L = bd["flat_pos"] - lo
+                dims.append(Dim("flat_pattern", "linear", "u" if bd["flat_axis"] != "v" else "v", L,
+                                f"{round(L, 1):g}", f"flat_bend{i}", extra={"bend": i}))
             for i, bd in enumerate(p.bends):
                 word = "上折" if bd["direction"] == "up" else "下折"
                 at = ((fu0 + fu1) / 2 * 0.4 + fu1 * 0.6, bd["flat_pos"]) if bd["flat_axis"] == "v" \
@@ -1637,6 +1642,22 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             x = clear(x0, x1, bends_u)
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(y0, 2)), (round(x, 2), round(y1, 2))],
                        "sheet_pos": (round(x1 + 10, 2), round((y0 + y1) / 2, 2)), "orient": "v"}
+        elif d.ref.startswith("flat_bend"):
+            bd = p.bends[d.extra["bend"]]
+            same = sorted((b_["flat_pos"], j) for j, b_ in enumerate(p.bends) if b_["flat_axis"] == bd["flat_axis"])
+            k = [j for _, j in same].index(d.extra["bend"])  # 基线尺寸由近到远逐层外移
+            if bd["flat_axis"] == "v":  # 水平折弯线：竖直尺寸，放展开图左侧
+                yb = F(0, bd["flat_pos"])[1]
+                x = clear(x0, x1, bends_u)
+                xx = x0 - 10 - 8 * k
+                d.extra = {**d.extra, "sheet_pts": [(round(x0, 2), round(y0, 2)), (round(x, 2), round(yb, 2))],
+                           "sheet_pos": (round(xx, 2), round((y0 + yb) / 2, 2)), "orient": "v"}
+            else:  # 竖直折弯线：水平尺寸，放展开图上方
+                xb = F(bd["flat_pos"], 0)[0]
+                y = clear(y0, y1, bends_v)
+                yy = y1 + 10 + 8 * k
+                d.extra = {**d.extra, "sheet_pts": [(round(x0, 2), round(y1, 2)), (round(xb, 2), round(y, 2))],
+                           "sheet_pos": (round((x0 + xb) / 2, 2), round(yy, 2)), "orient": "h"}
         elif d.kind == "callout" and d.at is not None:
             px, py = F(*d.at)
             d.extra = {**(d.extra or {}), "sheet_pos": (round(px - _tw(d.text) / 2, 2), round(py + 1, 2))}

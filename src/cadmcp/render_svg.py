@@ -166,13 +166,30 @@ def _draw_flat(s, cx, cy, sc, part, plan, refs):
             s.line(x0, yy, x1, yy)
             s.line(x0, y0 - 2, x0, yy - 1.5)
             s.line(x1, y0 - 2, x1, yy - 1.5)
+            _arrow_pair(s, (x0, yy), (x1, yy))
             s.text((x0 + x1) / 2, yy + 1, d.text, 3.5, "middle")
         elif d.ref == "flat_h":
             xx = x1 + 10
             s.line(xx, y0, xx, y1)
             s.line(x1 + 2, y0, xx + 1.5, y0)
             s.line(x1 + 2, y1, xx + 1.5, y1)
+            _arrow_pair(s, (xx, y0), (xx, y1))
             s.text(xx + 4.5, (y0 + y1) / 2, d.text, 3.5, "middle", -90)
+        elif d.ref.startswith("flat_bend") and d.extra.get("sheet_pts"):
+            (ax, ay), (bx, by) = d.extra["sheet_pts"]
+            px, py = d.extra["sheet_pos"]
+            if d.extra["orient"] == "v":  # 尺寸界线自外轮廓左边引出
+                s.line(px, ay, px, by)
+                s.line(x0 - 2, ay, px - 1.5, ay)
+                s.line(x0 - 2, by, px - 1.5, by)
+                _arrow_pair(s, (px, ay), (px, by))
+                s.text(px - 1, (ay + by) / 2, d.text, 3.5, "middle", -90)
+            else:
+                s.line(ax, py, bx, py)
+                s.line(ax, y1 + 2, ax, py + 1.5)
+                s.line(bx, y1 + 2, bx, py + 1.5)
+                _arrow_pair(s, (ax, py), (bx, py))
+                s.text((ax + bx) / 2, py + 1, d.text, 3.5, "middle")
         elif d.kind == "callout" and d.at is not None:
             px, py = F(*d.at)
             s.text(px, py + 1, d.text, 3, "middle")
@@ -526,6 +543,14 @@ def _arrow_head(s, tip, d):
     px, py = -d[1] * 0.8, d[0] * 0.8
     pts = [(x, y), (bx + px, by + py), (bx - px, by - py)]
     return f"<polygon points='{' '.join(f'{a:.2f},{s.y(b):.2f}' for a, b in pts)}' fill='{STROKE}'/>"
+
+
+def _arrow_pair(s, a, b):
+    """尺寸线两端箭头（指向尺寸界线）。"""
+    L = math.dist(a, b) or 1.0
+    d = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+    s.parts.append(_arrow_head(s, a, (-d[0], -d[1])))
+    s.parts.append(_arrow_head(s, b, d))
 
 
 def _draw_hole_table(s, x0, y_bottom, rows, out_rows) -> float:
