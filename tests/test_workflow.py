@@ -118,3 +118,25 @@ def test_sw_sheet_flange_hole_is_blind():
     spec = PartSpec.model_validate(sm)
     cut = next(o for o in compile_part(spec, resolve_part(spec)) if o.op == "extrude_cut" and o.args["feature"] == "F")
     assert cut.args["end"] == "blind" and cut.args["depth"] == 2
+
+
+def test_revisions_on_drawings(svc, tmp_path):
+    build_station(svc)
+    r = svc.commit("A", by="张工")
+    assert r["revision_entry"]["description"] == "首次发布"
+    plan = svc.get_model(f"{BASE_PLATE['name']}_DRW")["plan"]
+    assert plan["title_block"]["revision"] == "A" and plan["revisions"][0]["rev"] == "A"
+    # 第二版：改参数 → 更改记录两行，最新的说明写入
+    svc.change_begin("CS01")
+    for spec in (BASE_PLATE, MOUNT_PLATE):
+        svc.build(PartSpec.model_validate(spec))
+    svc.build(AssemblySpec.model_validate(ASSEMBLY))
+    for m in (BASE_PLATE["name"], MOUNT_PLATE["name"], ASSEMBLY["name"]):
+        svc.build(DrawingSpec.model_validate({"model": m, "title_block": {"designer": "AI"}}))
+    svc.set_parameters(BASE_PLATE["name"], {"pitch": 180})
+    r = svc.commit("B", description="立柱间距 160→180")
+    plan = svc.get_model(f"{BASE_PLATE['name']}_DRW")["plan"]
+    assert [x["rev"] for x in plan["revisions"]] == ["A", "B"]
+    assert plan["revisions"][1]["description"] == "立柱间距 160→180"
+    with pytest.raises(CadError):
+        svc.change_begin("CS01"); svc.build(PartSpec.model_validate(BASE_PLATE)); svc.commit("A")

@@ -97,6 +97,7 @@ class DrawingPlan:
     title_block: dict[str, str]
     bom: list[dict[str, Any]] = field(default_factory=list)
     balloons: list[dict[str, Any]] = field(default_factory=list)
+    revisions: list[dict[str, str]] = field(default_factory=list)
     flat_pattern: tuple[float, float] | None = None
     name: str = ""  # 图纸文件名（默认 <model>_DRW）
     missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
@@ -441,6 +442,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
     plan.missing_views = sorted(missing_views)
+    plan.revisions = list(spec.revisions)
     return plan
 
 
@@ -509,7 +511,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         dims += _precision_dims(p, views, {"front"}, True)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     return DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
-                       layout="shaft")
+                       layout="shaft", revisions=list(spec.revisions))
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
     sheet, scale, views = _layout(a.bbox, spec, None, spec.sheet, kind="assembly")
@@ -532,7 +534,7 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
           "designer": "", "checker": "", "approver": "", "date": (today or date.today()).isoformat()}
     tb.update(spec.title_block)
     return DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
-                       bom=bom, balloons=balloons)
+                       bom=bom, balloons=balloons, revisions=list(spec.revisions))
 
 
 def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> list[dict[str, Any]]:

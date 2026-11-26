@@ -18,7 +18,7 @@ from .. import rules
 from ..adapters.base import CadAdapter
 from ..adapters.mock import MockAdapter
 from ..detailing import check_drawing, plan_assembly_drawing, plan_part_drawing
-from ..errors import (CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
+from ..errors import (POLICY_DENIED, CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
                       TARGET_UNAVAILABLE, CadError)
 from ..ir import AssemblySpec, DrawingSpec, PartSpec
 from ..ir.assembly_resolve import (ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
@@ -421,12 +421,32 @@ class CadService:
         path = self._target().adapter.export(m.file, fmt, out)
         return {"ok": True, "file": str(path)}
 
-    def commit(self, revision: str) -> dict[str, Any]:
+    def commit(self, revision: str, description: str = "", by: str = "") -> dict[str, Any]:
+        """发布：先把版本号与更改记录写进每张图纸（标题栏 + 更改记录表）并重出图，再门禁检查、归档。"""
+        from datetime import date as _date
         s = self._session()
+        hist_file = self.policy.release_root / s.project / "revisions.json"
+        history = json.loads(hist_file.read_text(encoding="utf-8")) if hist_file.exists() else []
+        if any(h["rev"] == revision for h in history):
+            raise CadError(POLICY_DENIED, f"revision {revision} already released", hint="使用新的修订号")
+        changed = sorted(n for n, m in self._models().items() if m.kind != "drawing")
+        entry = {"rev": revision, "date": _date.today().isoformat(),
+                 "description": description or ("首次发布" if not history else "更改：" + "、".join(changed)),
+                 "by": by}
+        for n, m in list(self._models().items()):
+            if m.kind != "drawing":
+                continue
+            tb = dict(m.spec.title_block)
+            tb["revision"] = revision
+            if by and not tb.get("designer"):
+                tb["designer"] = by
+            spec = m.spec.model_copy(update={"title_block": tb, "revisions": [*history, entry]})
+            self._build(spec, cascade=False)
         gates = self._gates()
         report = {"models": [m.brief() for m in self._models().values()]}
         dest = s.commit(revision, gates, report)
-        return {"ok": True, "release": str(dest), "gates": gates}
+        hist_file.write_text(json.dumps([*history, entry], ensure_ascii=False, indent=1), encoding="utf-8")
+        return {"ok": True, "release": str(dest), "gates": gates, "revision_entry": entry}
 
     def build_frame(self, spec_dict: dict[str, Any]) -> dict[str, Any]:
         """型材机架：生成装配 spec 并建模，返回下料清单。"""

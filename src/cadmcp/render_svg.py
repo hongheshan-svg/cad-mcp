@@ -361,7 +361,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     x0, y0 = W - 5 - tbw, 5
     s.rect(x0, y0, tbw, tbh)
     tb = plan.title_block
-    rows = [("名称", tb.get("name", "")), ("图号", tb.get("part_no", "")), ("材料", tb.get("material", "")),
+    rows = [("名称", tb.get("name", "")), ("图号", tb.get("part_no", "") + (f"  版本 {tb['revision']}" if tb.get("revision") else "")), ("材料", tb.get("material", "")),
             ("比例", tb.get("scale", "")), ("质量", tb.get("mass", "")), ("投影", tb.get("projection", "")),
             ("设计", tb.get("designer", "")), ("日期", tb.get("date", ""))]
     for i, (k, val) in enumerate(rows):
@@ -370,6 +370,21 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         s.rect(cx0, cy0, 90, 14, THIN)
         s.text(cx0 + 2, cy0 + 5, k, 3)
         s.text(cx0 + 18, cy0 + 5, val, 4 if k in ("名称", "图号") else 3.5)
+    # 更改记录（标题栏左侧，最新在上）
+    if plan.revisions:
+        cols = [("版本", 14), ("更改内容", 78), ("日期", 24), ("签名", 18)]
+        rx = x0 - sum(w for _, w in cols)
+        ry = y0
+        for row in [*plan.revisions[::-1][:6], None]:
+            vals = [n for n, _ in cols] if row is None else [row.get("rev", ""), row.get("description", "")[:26],
+                                                             row.get("date", ""), row.get("by", "")]
+            xx = rx
+            for (_, w), val in zip(cols, vals):
+                s.rect(xx, ry, w, 7, THIN)
+                s.text(xx + 1.5, ry + 2.2, str(val), 3)
+                xx += w
+            ry += 7
+        rendered_refs.append("revisions")
     # 技术要求
     ny = y0 + tbh + 6 + 5 * len(plan.notes)
     for n in plan.notes:

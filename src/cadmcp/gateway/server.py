@@ -116,9 +116,10 @@ def cad_change_rollback(to: int = 0) -> dict[str, Any]:
 
 @mcp.tool(annotations=COMMIT)
 @safe
-def cad_change_commit(revision: str) -> dict[str, Any]:
-    """把工作区发布为新修订版本（不可覆盖）。门禁（再生无错、规则无 error、图纸无 error）不通过会被拒绝。"""
-    return svc().commit(revision)
+def cad_change_commit(revision: str, description: str = "", by: str = "") -> dict[str, Any]:
+    """把工作区发布为新修订版本（不可覆盖）。门禁（再生无错、规则无 error、图纸无 error）不通过会被拒绝。
+    description 为更改内容（写进图纸更改记录表；首版可省略），by 为更改人。图纸标题栏自动写入版本号。"""
+    return svc().commit(revision, description, by)
 
 
 # ---------- 建模 ----------

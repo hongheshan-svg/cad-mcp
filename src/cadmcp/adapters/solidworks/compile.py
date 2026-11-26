@@ -257,7 +257,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             "PartNo": plan.title_block.get("part_no", ""), "Description": plan.title_block.get("name", ""),
             "Material": plan.title_block.get("material", ""), "Scale": plan.title_block.get("scale", ""),
             "Weight": plan.title_block.get("mass", ""), "DrawnBy": plan.title_block.get("designer", ""),
-            "CheckedBy": plan.title_block.get("checker", ""), "Date": plan.title_block.get("date", "")}},
+            "CheckedBy": plan.title_block.get("checker", ""), "Date": plan.title_block.get("date", ""),
+            "Revision": plan.title_block.get("revision", "")}},
             "模板标题栏用 $PRP 链接这些属性"),
     ]
     for v in plan.views:
@@ -297,6 +298,10 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     if plan.title_block.get("surface_finish") and plan.model_kind == "part":
         ops.append(NativeOp("note", {"text": f"其余 √{plan.title_block['surface_finish']} (√)", "anchor": "above_notes"}))
     ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block"}))
+    if plan.revisions:  # P1：改用 SW 修订表（InsertRevisionTable2）；先以注释输出
+        ops.append(NativeOp("note", {"text": "更改记录：\n" + "\n".join(
+            f"{r.get('rev', '')}  {r.get('description', '')}  {r.get('date', '')}  {r.get('by', '')}" for r in plan.revisions),
+            "anchor": "left_of_title_block"}))
     if plan.bom:
         ops.append(NativeOp("bom_table", {"view": plan.views[0].type, "anchor": "above_title_block",
                                           "columns": ["序号", "图号", "名称", "数量", "材料/规格"]}))

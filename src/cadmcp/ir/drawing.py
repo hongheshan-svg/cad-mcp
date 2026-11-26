@@ -35,3 +35,4 @@ class DrawingSpec(Strict):
     bom_table: bool = Field(True, description="assemblies only")
     balloons: bool = Field(True, description="assemblies only")
     title_block: dict[str, str] = Field({}, description="overrides: designer, checker, approver, date, ...")
+    revisions: list[dict[str, str]] = Field([], description="版本记录（发布时由平台写入）：rev/date/description/by")
