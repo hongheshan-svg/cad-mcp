@@ -24,7 +24,7 @@ NON_CRITICAL = {"probe_gdt_constants", "datum_tag", "gtol", "surface_finish", "h
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons", "cut_list_properties", "weld_symbol"}
+                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table"}
 
 
 class OpFailed(Exception):
@@ -837,17 +837,28 @@ class SwExecutor:
         if v is None:
             raise OpFailed(f"view {view} not on sheet")
         self.model.ActivateView(v.Name)
+        # 先选中 anchor 处的模型边线：选中实体后 InsertNote 会自动带引线并附着；选不中则退回无引线注释
+        self.model.ClearSelection2(True)
+        attached = False
+        if anchor is not None:
+            try:
+                attached = bool(self.model.Extension.SelectByID2("", "EDGE", anchor[0] * MM, anchor[1] * MM, 0,
+                                                                  False, 0, None, 0))
+            except Exception:  # noqa: BLE001
+                attached = False
         note = self.model.InsertNote(text)
         if note is None:
             raise OpFailed("InsertNote failed")
         ann = note.GetAnnotation()
-        if text_pos is not None:  # 规划层排好的位置（图纸 mm）；引线关联到模型边线需先选中边线（P1）
+        if text_pos is not None:  # 规划层排好的位置（图纸 mm）
             ann.SetPosition2(text_pos[0] * MM, text_pos[1] * MM, 0)
         else:
             pos = v.Position  # 视图中心（图纸坐标，m）
             ann.SetPosition2(pos[0] + 0.03, pos[1] + 0.02, 0)
+        if attached:
+            self.readback["leaders_attached"] = self.readback.get("leaders_attached", 0) + 1
         self.readback.setdefault("notes", []).append(ref)
-        return {}
+        return {"attached": attached}
 
     # ---- 精度符号（GB/T 1182 / GB/T 131）：原生符号，失败时退回带引线注释 ----
     # 几何特征枚举名以实机类型库为准：按候选名依次查找，都查不到就退回注释（D019）
@@ -970,6 +981,33 @@ class SwExecutor:
             ole.Invoke(ole.GetIDsOfNames("Text"), 0, getattr(pythoncom, "DISPATCH_PROPERTYPUT", 4), 0, r, c, text)
         except ImportError:  # 非 Windows（假对象测试）：只记录调用
             tbl.Text(r, c)
+
+    def op_revision_table(self, origin, columns, widths, rows, fallback_text: str):
+        """原生修订表：InsertRevisionTable2 → AddRevision 逐行 → 写单元格；任一步失败退回注释。
+        行序 = rows 顺序（最新在上，同 render_svg），回读非空行数写 readback["revision_rows"]。"""
+        try:
+            anchor = self._k("swBOMConfigurationAnchor_BottomLeft", 3)
+            rev = self.model.InsertRevisionTable2(False, origin[0] * MM, origin[1] * MM, anchor, "")
+            if rev is None:
+                raise OpFailed("InsertRevisionTable2 failed")
+            rev = self._qi(rev, "IRevisionTableAnnotation")
+            tbl = self._qi(rev, "ITableAnnotation")
+            for i, r in enumerate(rows, 1):
+                rev.AddRevision(str(r[0]))
+                for c, val in enumerate(r):
+                    self._set_cell(tbl, i, c, str(val))
+            got = 0
+            for i in range(1, len(rows) + 1):
+                if any(str(tbl.Text(i, c)).strip() for c in range(len(columns))):
+                    got += 1
+            self.readback["revision_rows"] = got
+            return {"rows": len(rows), "read": got}
+        except Exception as e:  # noqa: BLE001
+            note = self.model.InsertNote(fallback_text)
+            if note is not None:
+                note.GetAnnotation().SetPosition2(origin[0] * MM, (origin[1] + 8) * MM, 0)
+            self.readback.setdefault("revision_fallback", []).append(f"{type(e).__name__}: {e}")
+            return {"fallback": True}
 
     def op_hole_table(self, box, columns, widths, rows):
         x0, y0 = box[0] * MM, box[1] * MM

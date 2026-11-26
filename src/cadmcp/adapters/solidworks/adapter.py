@@ -118,8 +118,8 @@ class SolidWorksAdapter(CadAdapter):
                               getattr(model, "shaft_features", None))
         ex, regen = self._run(ops, out_dir, plan.name)
         rendered = {"dim_count": ex.readback.get("dim_count", 0), "notes": ex.readback.get("notes", [])}
-        for k in ("bom_rows", "balloon_items", "cut_list_rows", "weld_symbols", "sections", "hole_table_rows", "gdt_native", "gdt_fallback"):  # 回读到才核对（D011~D014）
-            if ex.readback.get(k):
+        for k in ("bom_rows", "balloon_items", "cut_list_rows", "weld_symbols", "sections", "hole_table_rows", "gdt_native", "gdt_fallback", "revision_rows", "leaders_attached"):  # 回读到才核对（D011~D014）
+            if ex.readback.get(k) or (k == "revision_rows" and k in ex.readback):  # 0 行也要回报（D020）
                 rendered[k] = ex.readback[k]
         return BuildResult(ex.saved_path, regen, extra={"rendered": rendered,
                                                         "exports": ex.readback.get("exports", [])})

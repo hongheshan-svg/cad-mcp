@@ -1086,6 +1086,33 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         d.extra = {**(d.extra or {}), "sheet_at": (round(ax, 2), round(ay, 2)), "sheet_pos": (round(pos[0], 2), round(pos[1], 2))}
 
 
+REV_COLUMNS = (("版本", 14), ("更改内容", 78), ("日期", 24), ("签名", 18))  # (表头, 列宽 mm)，与 render_svg 一致
+REV_MAX_ROWS = 6
+
+
+def revision_rows(plan: "DrawingPlan") -> list[dict[str, str]]:
+    """图上显示的修订行：最新在上，最多 REV_MAX_ROWS 行（render_svg 与 SW 修订表共用）。"""
+    return list(plan.revisions[::-1][:REV_MAX_ROWS])
+
+
+def revision_table_origin(plan: "DrawingPlan") -> tuple[float, float]:
+    """修订表左下角（图纸 mm）：标题栏左侧，底边与标题栏对齐（同 render_svg）。"""
+    W, _ = plan.sheet_size
+    return (W - 5 - 180 - sum(w for _, w in REV_COLUMNS), 5.0)
+
+
+def check_revision_table(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
+    """D020 图上修订表行数与方案不一致。"""
+    if "revision_rows" not in rendered or not plan.revisions:
+        return []
+    want = len(revision_rows(plan))
+    if rendered["revision_rows"] != want:
+        return [{"rule": "D020", "severity": "error",
+                 "message": f"修订表 {rendered['revision_rows']} 行，方案要求 {want} 行",
+                 "fix": "核对 InsertRevisionTable2 / AddRevision 回读"}]
+    return []
+
+
 def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
     """图上明细表、序号与方案（= 装配 BOM）是否一致：D011 明细表行、D012 序号缺失/重复/无对应行。"""
     out = []
@@ -1192,6 +1219,8 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         out += check_bom_association(plan, rendered)
     if rendered is not None and plan.layout == "weldment":
         out += check_weldment_drawing(plan, rendered)
+    if rendered is not None:
+        out += check_revision_table(plan, rendered)
     out += [{k: v for k, v in x.items()} for x in plan.extra_findings]
     if plan.section_skipped:
         f("D015", "warning", "零件有沉孔/螺纹孔/盲孔/型腔等内部结构，主视图未剖开，只能靠虚线和标注表达",
