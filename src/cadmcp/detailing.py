@@ -3363,10 +3363,51 @@ def local_section_sheet(plan: "DrawingPlan", s) -> dict[str, Any] | None:
     return {"boundary": out, "cut_points": [_p3(s.view, h0, d, z), _p3(s.view, h1, d, z)]}
 
 
+def spread_1d(xs: list[float], gap: float) -> list[float]:
+    """一维摊开：保持顺序，相邻间距 ≥ gap，每串挤在一起的整体以原位置均值为中心。"""
+    n = len(xs)
+    if n == 0:
+        return []
+    order = sorted(range(n), key=lambda i: xs[i])
+    groups: list[list[int]] = []
+    for i in order:
+        groups.append([i])
+        while len(groups) > 1:  # 与前一串重叠则合并
+            g0, g1 = groups[-2], groups[-1]
+            c0 = sum(xs[j] for j in g0) / len(g0)
+            c1 = sum(xs[j] for j in g1) / len(g1)
+            end0 = c0 + gap * (len(g0) - 1) / 2
+            start1 = c1 - gap * (len(g1) - 1) / 2
+            if start1 - end0 >= gap - 1e-9:
+                break
+            groups[-2:] = [g0 + g1]
+    out = [0.0] * n
+    for g in groups:
+        c = sum(xs[j] for j in g) / len(g)
+        for k, j in enumerate(g):
+            out[j] = c + gap * (k - (len(g) - 1) / 2)
+    return out
+
+
+def ordinate_layout(plan: "DrawingPlan", view: ViewPlan, bbox) -> dict[int, float]:
+    """坐标尺寸数字沿边线的位置（图纸坐标：横向标注为 x，纵向为 y）：按要素位置摊开，相邻 ≥ 3 mm，
+    摊开后的数字用折线引线接到要素位置。返回 id(Dim) → 数字位置；预览与 CAD 共用。"""
+    if view.type not in VIEW_AXES:
+        return {}
+    ha, va = VIEW_AXES[view.type]
+    out: dict[int, float] = {}
+    for axis, k in ((ha, 0), (va, 1)):
+        ds = [d for d in plan.dims if d.view == view.type and d.kind == "ordinate" and d.at is not None and d.axis == axis]
+        xs = [_uv_sheet(view, bbox, d.at)[k] for d in ds]
+        for d, x in zip(ds, spread_1d(xs, 3.0)):
+            out[id(d)] = x
+    return out
+
+
 def ordinate_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     """坐标尺寸的图纸坐标（mm），与 render_svg 的坐标尺寸带一致，供 CAD 原生坐标尺寸选边：
     extra["sheet_pts"] = [基准轮廓边上一点（横向取左边线、纵向取下边线），被标注要素边上一点（孔取圆周最近点）]，
-    extra["sheet_pos"] = 数字位置（横向在视图下方、纵向在视图右侧，奇偶错开），extra["orient"] = h | v。"""
+    extra["sheet_pos"] = 数字位置（横向在视图下方、纵向在视图右侧，挤在一起的沿边线摊开），extra["orient"] = h | v。"""
     for v in plan.views:
         if v.type not in VIEW_AXES:
             continue
@@ -3374,7 +3415,7 @@ def ordinate_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         (ulo, uhi), (wlo, whi) = vrange(p.bbox, ha), vrange(p.bbox, va)
         (x0, y0), (x1, y1) = _uv_sheet(v, p.bbox, (ulo, wlo)), _uv_sheet(v, p.bbox, (uhi, whi))
         mid = _uv_sheet(v, p.bbox, ((ulo + uhi) / 2, (wlo + whi) / 2))
-        n_h = n_v = 0
+        lay = ordinate_layout(plan, v, p.bbox)
         for d in plan.dims:
             if d.view != v.type or d.kind != "ordinate" or d.at is None:
                 continue
@@ -3383,12 +3424,10 @@ def ordinate_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                       if abs(vc(i.xyz, ha) - d.at[0]) < 1e-6 and abs(vc(i.xyz, va) - d.at[1]) < 1e-6), 0.0)
             if d.axis == ha:
                 pts = [(x0, mid[1]), (px, py + r)]  # 圆周最上点；r=0 时要素点本身就在边上
-                pos, orient = (px, y0 - 6.5 - (n_h % 2) * 3), "h"
-                n_h += 1
+                pos, orient = (lay.get(id(d), px), y0 - 6.5), "h"
             elif d.axis == va:
                 pts = [(mid[0], y0), (px + r, py)]
-                pos, orient = (x1 + 5 + (n_v % 2) * 3, py), "v"
-                n_v += 1
+                pos, orient = (x1 + 5, lay.get(id(d), py)), "v"
             else:
                 continue
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(a, 2), round(b, 2)) for a, b in pts],

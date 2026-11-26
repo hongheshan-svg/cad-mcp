@@ -727,6 +727,14 @@ def _dim_boxes(plan, vtype) -> list[tuple[float, float, float, float]]:
             continue
         (x1, y1), (x2, y2) = ex["sheet_pts"][0], ex["sheet_pts"][-1]
         px, py = ex["sheet_pos"]
+        if d.kind == "ordinate":  # 坐标值：引线 + 数字（字高 2.5）
+            tw = _text_w(d.text, 2.5)
+            fx, fy = ex["sheet_pts"][-1]
+            if ex.get("orient") == "h":  # 靠近剖切符号时数字再外移 8 mm（见坐标尺寸绘制），按外移后的范围占位
+                out.append((min(fx, px) - 1.5, py - 8 - tw - 0.5, max(fx, px) + 1.5, fy))
+            else:
+                out.append((fx, min(fy, py) - 1.5, px + 8 + tw + 0.5, max(fy, py) + 1.5))
+            continue
         tw = _text_w(d.text, 3.5)
         if ex.get("orient") == "h":
             out += [(px - tw / 2 - 1, py - 1, px + tw / 2 + 1, py + 4.5), (min(x1, x2), py - 0.5, max(x1, x2), py + 0.5)]
@@ -761,8 +769,8 @@ def _draw_cut_line(s, sec, part, V, avoid=None):
         ux_, uy_ = b[0] - a[0], b[1] - a[1]
         L_ = math.hypot(ux_, uy_) or 1.0
         ux_, uy_ = -ux_ / L_, -uy_ / L_  # 粗短画朝外的方向
-        cands = [(a[0] + dx * 9, a[1] + dy * 9 - 1.5), (a[0] + dx * 4 + ux_ * 4, a[1] + dy * 4 + uy_ * 4 - 1.5),
-                 (a[0] + dx * 9 + ux_ * 4, a[1] + dy * 9 + uy_ * 4 - 1.5)]
+        cands = [(a[0] + dx * t_ + ux_ * u_, a[1] + dy * t_ + uy_ * u_ - 1.5)
+                 for t_, u_ in ((9, 0), (4, 4), (9, 4), (4, -4), (9, -4), (13, 0), (13, 4), (13, -4))]
 
         def bad(c):
             bx = (c[0] - 1.6, c[1] - 1.0, c[0] + 1.6, c[1] + 4.0)
@@ -1297,7 +1305,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         # 尺寸
         vx0, vy0 = P(ulo, wlo)
         vx1, vy1 = P(uhi, whi)
-        ord_h = ord_v = 0
+        from .detailing import ordinate_layout
+        ord_lay = ordinate_layout(plan, v, part.bbox if part is not None else (asm.bbox if asm is not None else None)) \
+            if (part is not None or asm is not None) else {}
         has_ord_h = any(d.view == v.type and d.kind == "ordinate" and d.axis == ha for d in plan.dims)
         prec = [d.extra["normal"] for d in plan.dims if d.view == v.type and d.kind in ("datum", "gtol", "roughness")
                 and d.extra and not d.extra.get("attach")]
@@ -1360,16 +1370,18 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 # 与剖切符号起止端（粗短画 + 箭头）同一位置的坐标值外移，避开剖切符号
                 cut_ends = [V(sec_.cut_points[k]) for sec_ in plan.sections if sec_.parent == v.type and sec_.cut_points
                             for k in (0, -1)]
-                if d.axis == ha:
-                    o = 8.0 if any(abs(ex_ - px) < 3 and ey_ < vy0 + 1 for ex_, ey_ in cut_ends) else 0.0
-                    s.line(px, vy0 - 1 - o, px, vy0 - 4 - o - (ord_h % 2) * 3, 0.18)
-                    s.text(px, vy0 - 6.5 - o - (ord_h % 2) * 3, d.text, 2.5, "middle", -90)
-                    ord_h += 1
+                if d.axis == ha:  # 引线：自轮廓外 1 mm 起，1 mm 直段后折到摊开后的数字位置
+                    tx_ = ord_lay.get(id(d), px)
+                    o = 8.0 if any(abs(ex_ - tx_) < 13 and ey_ < vy0 + 1 for ex_, ey_ in cut_ends) else 0.0  # 剖切箭头+字母约 13 mm
+                    s.line(px, vy0 - 1 - o, px, vy0 - 2 - o, 0.18)
+                    s.line(px, vy0 - 2 - o, tx_, vy0 - 4 - o, 0.18)
+                    s.text(tx_, vy0 - 6.5 - o, d.text, 2.5, "middle", -90)
                 else:
-                    o = 8.0 if any(abs(ey_ - py) < 3 and ex_ > vx1 - 1 for ex_, ey_ in cut_ends) else 0.0
-                    s.line(vx1 + 1 + o, py, vx1 + 4 + o + (ord_v % 2) * 3, py, 0.18)
-                    s.text(vx1 + 5 + o + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
-                    ord_v += 1
+                    ty_ = ord_lay.get(id(d), py)
+                    o = 8.0 if any(abs(ey_ - ty_) < 13 and ex_ > vx1 - 1 for ex_, ey_ in cut_ends) else 0.0
+                    s.line(vx1 + 1 + o, py, vx1 + 2 + o, py, 0.18)
+                    s.line(vx1 + 2 + o, py, vx1 + 4 + o, ty_, 0.18)
+                    s.text(vx1 + 5 + o, ty_ - 0.8, d.text, 2.5)
             elif d.kind == "weld":
                 _weld_symbol(s, *P(*d.at), d)
             elif d.kind in ("datum", "gtol", "roughness"):
