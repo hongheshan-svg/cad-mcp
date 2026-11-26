@@ -1074,12 +1074,14 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 (ax_, ay_), (bx_, by_) = d.extra["sheet_pts"]
                 px_, py_ = d.extra["sheet_pos"]
                 tw_ = _text_w(d.text, 3.5)
+                right = d.extra.get("side", 1) > 0
                 if d.extra["orient"] == "h":
-                    s.line(ax_, ay_, px_ + tw_, ay_, 0.18)
+                    s.line(min(ax_, px_), ay_, max(bx_, px_ + tw_), ay_, 0.18)
                     s.text(px_, ay_ + 0.8, d.text, 3.5)
                 else:
-                    s.line(ax_, ay_, ax_, py_ + tw_, 0.18)
+                    s.line(ax_, min(ay_, py_), ax_, max(by_, py_ + tw_), 0.18)
                     s.text(ax_ - 0.8, py_, d.text, 3.5, "start", -90)
+                del right
                 _arrow_pair(s, (ax_, ay_), (bx_, by_))
                 rendered_refs.append(d.ref)
                 continue

@@ -1454,15 +1454,27 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                         ["技术要求："] + ["x"] * (3 + len(spec.notes)), {}, bom=bom if spec.bom_table else [])
     _balance_views(probe)
     balloons: list[dict[str, Any]] = []
+    fdims = fit_dims(a, views, None, SHEETS[sheet]) if spec.dimensions != "none" else []
+    avoid = []
+    for d in fdims:  # 配合尺寸先排，序号气泡让开：文字框 + 尺寸线（细长框）
+        ex = d.extra
+        (ax_, ay_), (bx_, by_) = ex["sheet_pts"]
+        px_, py_ = ex["sheet_pos"]
+        tw_ = text_width(d.text, 3.5)
+        if ex["orient"] == "h":
+            avoid += [(px_ - 1, py_ - 1, px_ + tw_ + 1, py_ + 4.5),
+                      (min(ax_, px_), ay_ - 0.3, max(bx_, px_ + tw_), ay_ + 0.3)]
+        else:
+            avoid += [(px_ - 4.5, py_ - 1, px_ + 1, py_ + tw_ + 1),
+                      (ax_ - 0.3, min(ay_, py_), ax_ + 0.3, max(by_, py_ + tw_))]
     if spec.balloons and bom:
-        bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet])
+        bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet], avoid)
     if not spec.bom_table:
         bom = []
     notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
     inst_dims, inst_note = install_dims(a, views) if spec.dimensions != "none" else ([], None)
     dims += inst_dims
-    if spec.dimensions != "none":
-        dims += fit_dims(a, views)
+    dims += fdims
     if inst_note:
         notes.append(f"3. {inst_note}")
     notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, len(notes))]
@@ -1477,11 +1489,30 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     return plan
 
 
-def fit_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> list[Dim]:
+def fit_dims(a: ResolvedAssembly, views: list[ViewPlan], balloons: list[dict[str, Any]] | None = None,
+             sheet_size: tuple[float, float] = (420.0, 297.0)) -> list[Dim]:
+    """两种候选顺序（中点优先 / 两端优先）各排一遍，取总冲突少的（多个配合挤在同一段时两端优先才排得开）。"""
+    best = None
+    for ts in ((0.5, 0.2, 0.8, 0.35, 0.65, 0.1, 0.9), (0.15, 0.85, 0.5, 0.3, 0.7)):
+        dims, cost = _fit_dims(a, views, balloons, sheet_size, ts)
+        if best is None or cost < best[1]:
+            best = (dims, cost)
+    return best[0]
+
+
+def _fit_dims(a, views, balloons, sheet_size, ts) -> tuple[list[Dim], int]:
     """配合尺寸（GB/T 4458.5，装配图注 Φd 孔公差带/轴公差带）：在轴线平行于图面的第一个视图上，
     于重叠段中点横跨直径画尺寸线（箭头抵两侧轮廓），尺寸线延伸出视图包络后写配合代号。"""
     from .ir.assembly_resolve import assembly_fits
     out: list[Dim] = []
+    obst = [(b_["pos"][0] - 5, b_["pos"][1] - 5, b_["pos"][0] + 5, b_["pos"][1] + 5) for b_ in (balloons or []) if "pos" in b_]
+    total = 0
+    segs: list[tuple[tuple[float, float], tuple[float, float]]] = []  # 已排配合尺寸的尺寸线
+    texts: list[tuple[float, float, float, float]] = []
+
+    def seg_box(a_, b_, bx):  # 线段与矩形是否相交（取样）
+        return any(bx[0] <= a_[0] + (b_[0] - a_[0]) * k_ / 40 <= bx[2] and bx[1] <= a_[1] + (b_[1] - a_[1]) * k_ / 40 <= bx[3]
+                   for k_ in range(41))
     for k, f in enumerate(assembly_fits(a)):
         u = [f["p1"][i] - f["p0"][i] for i in range(3)]
         for v in views:
@@ -1491,28 +1522,60 @@ def fit_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> list[Dim]:
             n_ax = ({"x", "y", "z"} - {ha[-1], va[-1]}).pop()
             if abs(u["xyz".index(n_ax)]) > 1e-6:
                 continue  # 轴线不平行于图面
-            m3 = tuple((f["p0"][i] + f["p1"][i]) / 2 for i in range(3))
             p0 = _uv_sheet(v, a.bbox, (vc(f["p0"], ha), vc(f["p0"], va)))
             p1 = _uv_sheet(v, a.bbox, (vc(f["p1"], ha), vc(f["p1"], va)))
-            mx, my = _uv_sheet(v, a.bbox, (vc(m3, ha), vc(m3, va)))
             r = f["d"] / 2 * v.scale
             cx, cy = v.origin_on_sheet
             vw, vh = v.size_mm
             vertical_axis = abs(p1[0] - p0[0]) < abs(p1[1] - p0[1])
-            if vertical_axis:  # 尺寸线水平，向右伸出视图
-                pts = [(round(mx - r, 2), round(my, 2)), (round(mx + r, 2), round(my, 2))]
-                pos = (round(max(cx + vw / 2, mx + r) + 3, 2), round(my, 2))
-                orient, axis = "h", ha
-            else:  # 尺寸线竖直，向上伸出视图
-                pts = [(round(mx, 2), round(my - r, 2)), (round(mx, 2), round(my + r, 2))]
-                pos = (round(mx, 2), round(max(cy + vh / 2, my + r) + 3, 2))
-                orient, axis = "v", va
+            tw = text_width(f["text"], 3.5)
+            best = None
+            # 候选：沿重叠段取点 × 文字再外移；文字框不压已排的配合文字与序号气泡
+            others = [(o.origin_on_sheet[0] - o.size_mm[0] / 2 - 2, o.origin_on_sheet[1] - o.size_mm[1] / 2 - 2,
+                       o.origin_on_sheet[0] + o.size_mm[0] / 2 + 2, o.origin_on_sheet[1] + o.size_mm[1] / 2 + 2)
+                      for o in views if o is not v]
+            for o in views:  # 总体尺寸带：视图左侧（竖直）与下方（水平），见 overall_dim_sheet
+                ox, oy = o.origin_on_sheet
+                ow, oh = o.size_mm
+                others.append((ox - ow / 2 - 16, oy - oh / 2, ox - ow / 2 - 2, oy + oh / 2))
+                others.append((ox - ow / 2, oy - oh / 2 - 16, ox + ow / 2, oy - oh / 2 - 2))
+            W_, H_ = sheet_size
+            cands = [(t_, push, side) for push in (0.0, 1.0, 2.0) for side in (1, -1)
+                     for t_ in ts]
+            for t_, push, side in cands:
+                mx, my = p0[0] + (p1[0] - p0[0]) * t_, p0[1] + (p1[1] - p0[1]) * t_
+                if vertical_axis:  # 尺寸线水平，伸出视图右侧（或左侧）写代号
+                    pts = [(round(mx - r, 2), round(my, 2)), (round(mx + r, 2), round(my, 2))]
+                    x_ = max(cx + vw / 2, mx + r) + 3 + push * 10 if side > 0 else min(cx - vw / 2, mx - r) - 3 - push * 10 - tw
+                    pos = (round(x_, 2), round(my, 2))
+                    box = (pos[0] - 1, my - 1, pos[0] + tw + 1, my + 4.5)
+                    line = ((pts[0] if side > 0 else pts[1]), (pos[0] + tw, my) if side > 0 else (pos[0], my))
+                    orient, axis = "h", ha
+                else:  # 尺寸线竖直，伸出视图上方（或下方）
+                    pts = [(round(mx, 2), round(my - r, 2)), (round(mx, 2), round(my + r, 2))]
+                    y_ = max(cy + vh / 2, my + r) + 3 + push * 10 if side > 0 else min(cy - vh / 2, my - r) - 3 - push * 10 - tw
+                    pos = (round(mx, 2), round(y_, 2))
+                    box = (mx - 4.5, pos[1] - 1, mx + 1, pos[1] + tw + 1)
+                    line = ((pts[0] if side > 0 else pts[1]), (mx, pos[1] + tw) if side > 0 else (mx, pos[1]))
+                    orient, axis = "v", va
+                out_ = box[0] < 7 or box[1] < 7 or box[2] > W_ - 7 or box[3] > H_ - 7
+                hit = 10 * out_ + 3 * sum(_box_hit(box, o) > 0 for o in obst + texts + others) \
+                    + 3 * sum(seg_box(*sg, box) for sg in segs) + 3 * sum(seg_box(*line, t__) for t__ in texts) \
+                    + sum(seg_box(*line, t__) for t__ in obst + others)
+                if best is None or hit < best[0]:
+                    best = (hit, pts, pos, box, orient, axis, line, side)
+                if hit == 0:
+                    break
+            total += best[0]
+            _, pts, pos, box, orient, axis, line, side = best
+            texts.append(box)
+            segs.append(line)
             out.append(Dim(v.type, "linear", axis, f["d"], f["text"], f"fit:{f['inst_hole']}.{f['hole']}",
-                           extra={"fit": True, "sheet_pts": pts, "sheet_pos": pos, "orient": orient,
+                           extra={"fit": True, "sheet_pts": pts, "sheet_pos": pos, "orient": orient, "side": side,
                                   "prefix": "Φ", "suffix": f["text"].split(f"{f['d']:g}", 1)[1],  # CAD：Φ<DIM>H7/k6
                                   "pair": [f["inst_hole"], f["inst_shaft"]]}))
             break
-    return out
+    return out, total
 
 
 def install_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> tuple[list[Dim], str | None]:
@@ -1571,7 +1634,8 @@ def _project(view, a, p3: tuple[float, float, float]) -> tuple[float, float]:
     return (cx + (vc(p3, ha) - (ulo + uhi) / 2) * view.scale, cy + (vc(p3, va) - (wlo + whi) / 2) * view.scale)
 
 
-def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size, avoid: list | None = None
+                    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """序号排布（GB/T 4458.2）：序号沿主视图四周排成整齐的行/列，按顺时针方向依次编号；
     明细表序号随之重排（只进明细表、图上没有的件排在最后）。同一边内按引出点位置排序，引线不交叉。
     返回 (重新编号的 bom, 序号列表[item, instance, anchor, pos, side])。"""
@@ -1631,16 +1695,42 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size) -> tuple[lis
             continue
         span = BALLOON_GAP * (n - 1)
         mid = sum(along) / n
-        start = min(max(mid - span / 2 if side == "top" else mid + span / 2, lo_lim + (0 if side == "top" else span)),
-                    hi_lim - (span if side == "top" else 0))
-        for k, p in enumerate(group):
-            if side == "top":
-                pos = (start + k * BALLOON_GAP, min(cy + h / 2 + BALLOON_OFF, H - 12))
-            elif side == "right":
-                pos = (min(cx + w / 2 + BALLOON_OFF, W - 12), start - k * BALLOON_GAP)
-            else:
-                pos = (max(cx - w / 2 - BALLOON_OFF, 12), start - span + k * BALLOON_GAP)
-            p["pos"] = (round(pos[0], 2), round(pos[1], 2))
+        start0 = min(max(mid - span / 2 if side == "top" else mid + span / 2, lo_lim + (0 if side == "top" else span)),
+                     hi_lim - (span if side == "top" else 0))
+
+        def place(start):
+            out_ = []
+            for k, p in enumerate(group):
+                if side == "top":
+                    pos = (start + k * BALLOON_GAP, min(cy + h / 2 + BALLOON_OFF, H - 12))
+                elif side == "right":
+                    pos = (min(cx + w / 2 + BALLOON_OFF, W - 12), start - k * BALLOON_GAP)
+                else:
+                    pos = (max(cx - w / 2 - BALLOON_OFF, 12), start - span + k * BALLOON_GAP)
+                out_.append((round(pos[0], 2), round(pos[1], 2)))
+            return out_
+
+        def clash(poss):  # 与配合尺寸文字/尺寸线（avoid）冲突：气泡压上，或引线穿过文字
+            n_ = 0
+            for p, q in zip(group, poss):
+                bb = (q[0] - 5, q[1] - 5, q[0] + 5, q[1] + 5)
+                for o in avoid or []:
+                    n_ += _box_hit(bb, o) > 0
+                    a_ = p["anchor"]
+                    n_ += any(o[0] <= a_[0] + (q[0] - a_[0]) * t / 30 <= o[2] and o[1] <= a_[1] + (q[1] - a_[1]) * t / 30 <= o[3]
+                              for t in range(31)) and (o[3] - o[1]) > 1 and (o[2] - o[0]) > 1
+            return n_
+        start, poss = start0, place(start0)
+        if avoid:  # 整列平移让开配合尺寸
+            for d_ in (6, -6, 12, -12, 18, -18, 24, -24):
+                if not clash(poss):
+                    break
+                st = min(max(start0 + d_, lo_lim + (0 if side == "top" else span)), hi_lim - (span if side == "top" else 0))
+                cand = place(st)
+                if clash(cand) < clash(poss):
+                    start, poss = st, cand
+        for p, q in zip(group, poss):
+            p["pos"] = q
             order.append(p)
     new_bom, item = [], 1
     for p in order:

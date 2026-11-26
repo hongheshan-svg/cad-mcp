@@ -190,3 +190,129 @@ items:
     references:
       CS_Head: {origin: [0, 0, 0]}
     properties: {等级: "8.8"}
+  - code: BRG-6004
+    title: 深沟球轴承 6004
+    category: standard
+    vendor: GB/T 276
+    model: "6004"
+    mass_kg: 0.069
+    bbox: [-21, 21, -21, 21, 0, 12]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 12]}
+    properties: {规格: "20×42×12"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ42H7）
+      - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 内圈}
+      - {role: shaft, d: 42, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 外圈}
+  - code: BRG-6005
+    title: 深沟球轴承 6005
+    category: standard
+    vendor: GB/T 276
+    model: "6005"
+    mass_kg: 0.08
+    bbox: [-23.5, 23.5, -23.5, 23.5, 0, 12]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 12]}
+    properties: {规格: "25×47×12"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ47H7）
+      - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 内圈}
+      - {role: shaft, d: 47, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 12], name: 外圈}
+  - code: BRG-6006
+    title: 深沟球轴承 6006
+    category: standard
+    vendor: GB/T 276
+    model: "6006"
+    mass_kg: 0.12
+    bbox: [-27.5, 27.5, -27.5, 27.5, 0, 13]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 13]}
+    properties: {规格: "30×55×13"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ30k6、Φ55H7）
+      - {role: hole, d: 30, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 13], name: 内圈}
+      - {role: shaft, d: 55, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 13], name: 外圈}
+  - code: BRG-6204
+    title: 深沟球轴承 6204
+    category: standard
+    vendor: GB/T 276
+    model: "6204"
+    mass_kg: 0.106
+    bbox: [-23.5, 23.5, -23.5, 23.5, 0, 14]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 14]}
+    properties: {规格: "20×47×14"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ47H7）
+      - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 14], name: 内圈}
+      - {role: shaft, d: 47, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 14], name: 外圈}
+  - code: BRG-6205
+    title: 深沟球轴承 6205
+    category: standard
+    vendor: GB/T 276
+    model: "6205"
+    mass_kg: 0.129
+    bbox: [-26, 26, -26, 26, 0, 15]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 15]}
+    properties: {规格: "25×52×15"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ52H7）
+      - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 内圈}
+      - {role: shaft, d: 52, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 外圈}
+  - code: BRG-6206
+    title: 深沟球轴承 6206
+    category: standard
+    vendor: GB/T 276
+    model: "6206"
+    mass_kg: 0.199
+    bbox: [-31, 31, -31, 31, 0, 16]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 16]}
+    properties: {规格: "30×62×16"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ30k6、Φ62H7）
+      - {role: hole, d: 30, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 16], name: 内圈}
+      - {role: shaft, d: 62, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 16], name: 外圈}
+  - code: BRG-6207
+    title: 深沟球轴承 6207
+    category: standard
+    vendor: GB/T 276
+    model: "6207"
+    mass_kg: 0.288
+    bbox: [-36, 36, -36, 36, 0, 17]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 17]}
+    properties: {规格: "35×72×17"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ35k6、Φ72H7）
+      - {role: hole, d: 35, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 内圈}
+      - {role: shaft, d: 72, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 外圈}
+  - code: BRG-6304
+    title: 深沟球轴承 6304
+    category: standard
+    vendor: GB/T 276
+    model: "6304"
+    mass_kg: 0.144
+    bbox: [-26, 26, -26, 26, 0, 15]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 15]}
+    properties: {规格: "20×52×15"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ20k6、Φ52H7）
+      - {role: hole, d: 20, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 内圈}
+      - {role: shaft, d: 52, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 15], name: 外圈}
+  - code: BRG-6305
+    title: 深沟球轴承 6305
+    category: standard
+    vendor: GB/T 276
+    model: "6305"
+    mass_kg: 0.232
+    bbox: [-31, 31, -31, 31, 0, 17]
+    references:
+      CS_Face: {origin: [0, 0, 0]}
+      CS_Back: {origin: [0, 0, 17]}
+    properties: {规格: "25×62×17"}
+    fits:  # 内圈孔/外圈：公差带由轴承标准定（装配图只注轴、座孔一侧，如 Φ25k6、Φ62H7）
+      - {role: hole, d: 25, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 内圈}
+      - {role: shaft, d: 62, tol: bearing, p0: [0, 0, 0], p1: [0, 0, 17], name: 外圈}

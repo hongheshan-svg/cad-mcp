@@ -70,3 +70,38 @@ def test_fit_gap_rule():
     g = fit_gaps(a)
     assert len(g) == 1 and "plate.Pin[0]（孔）" in g[0]["message"]
     assert any(f["rule"] == "A005" for f in r["rules"]["findings"])
+
+
+def test_bearing_fits_one_side():
+    """滚动轴承：轴颈注 Φ25k6、座孔注 Φ52H7（轴承一侧不注）；座孔没写公差带 → A005。"""
+    from cadmcp.ir.assembly_resolve import assembly_fits, fit_gaps
+    shaft = {"name": "BS", "part_no": "BS-01", "title": "轴", "material": "45#", "surface_treatment": "发黑",
+             "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 25, "tolerance": "k6"},
+                                                             {"length": 10, "diameter": 32}]}}
+    housing = {"name": "BH", "part_no": "BH-01", "title": "轴承座板", "material": "HT200", "surface_treatment": "喷漆",
+               "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 100}, "thickness": 15},
+               "features": [{"feature": "hole", "name": "Seat", "type": "simple", "size": 52, "tolerance": "H7",
+                             "positions": [[0, 0]]}]}
+    asm = {"name": "BA", "part_no": "BA-00", "title": "轴承组件",
+           "components": [{"id": "shaft", "source": "part:BS"},
+                          {"id": "brg", "source": "lib:BRG-6205", "place": {"offset": [0, 0, 5]}},
+                          {"id": "seat", "source": "part:BH", "place": {"offset": [0, 0, 5]}}]}
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("B")
+    for d in (shaft, housing):
+        svc.build(PartSpec.model_validate(d))
+    svc.build(AssemblySpec.model_validate(asm))
+    a = svc._models()["BA"].resolved
+    assert sorted(f["text"] for f in assembly_fits(a)) == ["Φ25k6", "Φ52H7"]
+    assert fit_gaps(a) == []
+    plan = plan_assembly_drawing(DrawingSpec(model="BA"), a)
+    assert sorted(d.text for d in plan.dims if d.ref.startswith("fit:")) == ["Φ25k6", "Φ52H7"]
+    _, out = render(plan, a)
+    assert out["crossings"] == [] and out["collisions"] == []  # 两个配合挤在同一段：上下错开，序号让开
+    # 座孔没写公差带
+    h2 = {**housing, "name": "BH2", "features": [{**housing["features"][0], "tolerance": None}]}
+    svc.build(PartSpec.model_validate(h2))
+    svc.build(AssemblySpec.model_validate({**asm, "name": "BA2", "components": asm["components"][:2] + [
+        {"id": "seat", "source": "part:BH2", "place": {"offset": [0, 0, 5]}}]}))
+    g = fit_gaps(svc._models()["BA2"].resolved)
+    assert len(g) == 1 and "seat.Seat[0]（孔）" in g[0]["message"]

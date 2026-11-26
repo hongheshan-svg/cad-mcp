@@ -25,6 +25,7 @@ class LibraryPart:
     parameters: dict[str, float] = field(default_factory=dict)
     properties: dict[str, str] = field(default_factory=dict)
     vendor: str = ""
+    fits: list[dict[str, Any]] = field(default_factory=list)  # 配合面（轴承内/外圈），tol="bearing" 表示由轴承标准定
 
 
 class Library:
@@ -67,5 +68,7 @@ class Library:
         refs.setdefault("CS_Origin", ResolvedRef("CS_Origin", "csys", (0.0, 0.0, 0.0), auto=True))
         mass = it["mass_kg"] if "mass_kg" in it else it["mass_per_mm"] * params.get("L", 0)
         model = it["model"].format(**{k: f"{v:g}" for k, v in params.items()})
+        fits = [{"role": f["role"], "d": ev(f["d"]), "tol": f.get("tol"), "name": f.get("name", f["role"]),
+                 "p0": tuple(ev(c) for c in f["p0"]), "p1": tuple(ev(c) for c in f["p1"])} for f in it.get("fits", [])]
         return LibraryPart(code, it["title"], it["category"], model, mass, bb, refs, params,
-                           {k: str(v) for k, v in it.get("properties", {}).items()}, it.get("vendor", ""))
+                           {k: str(v) for k, v in it.get("properties", {}).items()}, it.get("vendor", ""), fits)

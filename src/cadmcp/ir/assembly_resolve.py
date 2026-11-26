@@ -171,7 +171,12 @@ def assembly_fits(a: "ResolvedAssembly") -> list[dict[str, Any]]:
     for ih, fh, js, fs, p0, p1 in _coaxial_pairs(a):
         if fh["tol"] and fs["tol"]:
             d = fh["d"]
-            out.append({"d": d, "text": f"Φ{d:g}{fh['tol']}/{fs['tol']}", "hole": fh["name"], "shaft": fs["name"],
+            # 与滚动轴承配合：只注零件一侧（GB/T 4458.5），轴承内圈孔、外圈的公差由轴承标准规定
+            text = f"Φ{d:g}{fs['tol']}" if fh["tol"] == "bearing" else f"Φ{d:g}{fh['tol']}" if fs["tol"] == "bearing" \
+                else f"Φ{d:g}{fh['tol']}/{fs['tol']}"
+            if fh["tol"] == fs["tol"] == "bearing":
+                continue
+            out.append({"d": d, "text": text, "hole": fh["name"], "shaft": fs["name"],
                         "inst_hole": ih.id, "inst_shaft": js.id, "p0": p0, "p1": p1})
     return out
 
@@ -181,13 +186,13 @@ def fit_gaps(a: "ResolvedAssembly") -> list[dict[str, Any]]:
     零件图上也缺加工依据。"""
     out = []
     for ih, fh, js, fs, _, _ in _coaxial_pairs(a):
-        if fh["tol"] and fs["tol"]:
+        if fh["tol"] and fs["tol"] or fh["tol"] == fs["tol"] == "bearing":
             continue
         miss = [f"{ih.id}.{fh['name']}（孔）" for _ in [0] if not fh["tol"]] + \
                [f"{js.id}.{fs['name']}（轴）" for _ in [0] if not fs["tol"]]
         out.append({"rule": "A005", "severity": "warning", "target": f"{ih.id}.{fh['name']}~{js.id}.{fs['name']}",
                     "message": f"Φ{fh['d']:g} 孔与轴同轴配合，但 {'、'.join(miss)} 未注公差带",
-                    "hint": "按配合性质补公差带：定位销 H7/m6、轴承座孔 H7、齿轮孔 H7/k6，间隙配合 H7/f7、H8/f7"})
+                    "hint": "按配合性质补公差带：滚动轴承位轴 k6/js6、座孔 H7/J7；定位销 H7/m6、轴承座孔 H7、齿轮孔 H7/k6，间隙配合 H7/f7、H8/f7"})
     return out
 
 
