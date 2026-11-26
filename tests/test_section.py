@@ -165,3 +165,21 @@ def test_section_outline_continuous_across_hole_mouths():
     _draw_section(s, sec, lambda q: (q[0], q[2]), None, 0, 0)
     for z in (0, 10):  # 上下表面在孔口 x ∈ [-10, 10] 处有线
         assert any(abs(a[1] - z) < 1e-6 and abs(a[3] - z) < 1e-6 and min(a[0], a[2]) < 0 < max(a[0], a[2]) for a in segs)
+
+
+def test_full_section_hides_holes_in_front_of_cut():
+    """全剖视图：剖切面前方被移去部分里的孔不画；剖到的孔只由剖面几何画截面（不再画螺纹 3/4 圆弧）。"""
+    from cadmcp.render_svg import _hole_cut_by
+    from cadmcp.section import SectionPlan
+
+    def hole(depth):
+        p = resolve_part(PartSpec.model_validate({
+            "name": "BK", "part_no": "BK", "title": "块", "material": "45#",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 50},
+            "features": [{"feature": "hole", "name": "P", "face": "front", "type": "tapped", "size": "M12",
+                          "depth": depth, "thread_depth": min(20, depth - 4), "positions": [[0, 25]]}]}))
+        return p.holes[0]
+    sec = SectionPlan(label="A", kind="full", view="front", parent="top", path=[(-50.0, 50.0, 0.0)])
+    for depth, cut in ((40, True), (12, False)):  # 前表面 y=-30，剖切面 y=0
+        h = hole(depth)
+        assert _hole_cut_by(sec, h, h.instances[0]) is cut

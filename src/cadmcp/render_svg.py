@@ -436,6 +436,19 @@ def _draw_section(s, sec, V, v, cx, cy, g=None):
         s.text(cx, cy + v.size_mm[1] / 2 + 5, f"{sec.label}-{sec.label}", 5, "middle")
 
 
+def _hole_cut_by(sec, h, inst) -> bool:
+    """孔轴垂直剖切面的孔实例是否被剖切面切到（含钻尖）。"""
+    from .section import AX, FRAME, hole_profile
+    hi_, di_ = AX[FRAME[sec.view][0]], AX[FRAME[sec.view][1]]
+    axis = [i for i in range(3) if inst.normal[i] != 0][0]
+    if axis != di_:
+        return False
+    inward = -inst.normal[axis]
+    total = hole_profile(h)[-1][0]
+    x = inst.xyz
+    return any(h0 - 1e-6 <= x[hi_] <= h1 + 1e-6 and 0 <= (d - x[di_]) * inward <= total for h0, h1, d in sec.path)
+
+
 def _draw_local(s, sec, V):
     """局部剖：擦除原视图在波浪线区域内的线（含虚线），再画剖面；波浪线为细实线，不画成轮廓。"""
     g = sec.geometry
@@ -773,6 +786,12 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             hid = HIDDEN if (h.face != v.type and not h.through) else None  # 背面盲孔不可见：细虚线
             for inst in h.instances:
                 c = V(inst.xyz)
+                if sec is not None and sec.kind in ("full", "step"):
+                    # 全剖/阶梯剖：剖切面前方已移去；剖到的孔截面由剖面几何画出，这里只补中心线；未剖到的孔不可见，不画
+                    if _hole_cut_by(sec, h, inst):
+                        s.line(c[0] - h.drill * 0.7 * sc, c[1], c[0] + h.drill * 0.7 * sc, c[1], 0.18, "4,1,1,1")
+                        s.line(c[0], c[1] - h.drill * 0.7 * sc, c[0], c[1] + h.drill * 0.7 * sc, 0.18, "4,1,1,1")
+                    continue
                 if hid:
                     s.circle(*c, h.drill / 2 * sc, THIN, hid)
                     s.line(c[0] - h.drill * 0.7 * sc, c[1], c[0] + h.drill * 0.7 * sc, c[1], 0.18, "4,1,1,1")
