@@ -180,7 +180,8 @@ def test_no_read_allow_warns(svc, tmp_path):
 
 
 def test_many_dependents_scale(svc, tmp_path):
-    import time
+    import sys
+import time
     from legacy import HDR
     designs = tmp_path / "designs"
     old = write_legacy(designs / "OLD")
@@ -199,7 +200,8 @@ def test_many_dependents_scale(svc, tmp_path):
     assert len(info["used_by_outside"]) == 50
     r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
     assert r["applied"] and r["imported_count"] == 2002 and len(r["refreshed"]) == 2002
-    assert time.perf_counter() - t0 < 30
+    # 防止退回 O(n²)（旧实现本机 109 s）；Windows runner 复制 2002 个文件本身就要 30 s 左右
+    assert time.perf_counter() - t0 < (90 if sys.platform == "win32" else 30)
     svc.policy.max_import_dependents = 1000  # 超过上限：拒绝
     r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 14}])
     assert not r["applied"] and "上限 1000" in r["error"]
