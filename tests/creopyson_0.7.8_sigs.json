@@ -1,0 +1,781 @@
+{
+"_creoson_post": [
+"command",
+"function",
+"data",
+"key_data"
+],
+"bom_get_paths": [
+"file_",
+"paths",
+"skeletons",
+"top_level",
+"get_transforms",
+"exclude_inactive",
+"get_simpreps"
+],
+"connect": [],
+"creo_cd": [
+"dirname"
+],
+"creo_delete_files": [
+"filename",
+"dirname"
+],
+"creo_get_config": [
+"name"
+],
+"creo_get_std_color": [
+"color_type"
+],
+"creo_list_dirs": [
+"dirname"
+],
+"creo_list_files": [
+"filename"
+],
+"creo_mkdir": [
+"dirname"
+],
+"creo_pwd": [],
+"creo_rmdir": [
+"dirname"
+],
+"creo_set_config": [
+"name",
+"value",
+"ignore_errors"
+],
+"creo_set_creo_version": [
+"version"
+],
+"creo_set_std_color": [
+"color_type",
+"red",
+"green",
+"blue"
+],
+"dimension_copy": [
+"name",
+"to_name",
+"file_",
+"to_file"
+],
+"dimension_list": [
+"name",
+"file_",
+"dim_type",
+"encoded",
+"select"
+],
+"dimension_list_detail": [
+"name",
+"file_",
+"dim_type",
+"encoded",
+"select"
+],
+"dimension_set": [
+"name",
+"value",
+"file_",
+"encoded"
+],
+"dimension_set_text": [
+"name",
+"file_",
+"text",
+"encoded"
+],
+"dimension_show": [
+"name",
+"file_",
+"assembly",
+"path"
+],
+"dimension_user_select": [
+"file_",
+"maxi"
+],
+"disconnect": [],
+"drawing_add_model": [
+"model",
+"drawing"
+],
+"drawing_add_sheet": [
+"position",
+"drawing"
+],
+"drawing_create": [
+"template",
+"model",
+"drawing",
+"scale",
+"display",
+"activate",
+"new_window"
+],
+"drawing_create_gen_view": [
+"model_view",
+"point",
+"drawing",
+"view",
+"sheet",
+"model",
+"scale",
+"display_data",
+"exploded"
+],
+"drawing_create_proj_view": [
+"parent_view",
+"point",
+"drawing",
+"view",
+"sheet",
+"display_data",
+"exploded"
+],
+"drawing_create_symbol": [
+"symbol_file",
+"point",
+"drawing",
+"replace_values",
+"sheet"
+],
+"drawing_delete_models": [
+"model",
+"drawing",
+"delete_views"
+],
+"drawing_delete_sheet": [
+"sheet",
+"drawing"
+],
+"drawing_delete_symbol_def": [
+"symbol_file",
+"drawing"
+],
+"drawing_delete_symbol_inst": [
+"symbol_id",
+"drawing"
+],
+"drawing_delete_view": [
+"view",
+"drawing",
+"sheet",
+"del_children"
+],
+"drawing_get_cur_model": [
+"drawing"
+],
+"drawing_get_cur_sheet": [
+"drawing"
+],
+"drawing_get_num_sheets": [
+"drawing"
+],
+"drawing_get_sheet_format": [
+"sheet",
+"drawing"
+],
+"drawing_get_sheet_scale": [
+"sheet",
+"drawing",
+"model"
+],
+"drawing_get_sheet_size": [
+"sheet",
+"drawing"
+],
+"drawing_get_view_loc": [
+"view",
+"drawing"
+],
+"drawing_get_view_scale": [
+"view",
+"drawing"
+],
+"drawing_get_view_sheet": [
+"view",
+"drawing"
+],
+"drawing_is_symbol_def_loaded": [
+"symbol_file",
+"drawing"
+],
+"drawing_list_models": [
+"model",
+"drawing"
+],
+"drawing_list_symbols": [
+"drawing",
+"symbol_file",
+"sheet"
+],
+"drawing_list_view_details": [
+"view",
+"drawing"
+],
+"drawing_list_views": [
+"view",
+"drawing"
+],
+"drawing_load_symbol_def": [
+"symbol_file",
+"symbol_dir",
+"drawing"
+],
+"drawing_regenerate": [
+"drawing"
+],
+"drawing_regenerate_sheet": [
+"sheet",
+"drawing"
+],
+"drawing_rename_view": [
+"view",
+"new_view",
+"drawing"
+],
+"drawing_scale_sheet": [
+"sheet",
+"scale",
+"drawing",
+"model"
+],
+"drawing_scale_view": [
+"scale",
+"view",
+"drawing"
+],
+"drawing_select_sheet": [
+"sheet",
+"drawing"
+],
+"drawing_set_cur_model": [
+"model",
+"drawing"
+],
+"drawing_set_sheet_format": [
+"sheet",
+"file_format",
+"dirname",
+"drawing"
+],
+"drawing_set_view_loc": [
+"view",
+"point",
+"drawing"
+],
+"drawing_view_bound_box": [
+"view",
+"drawing"
+],
+"familytable_add_inst": [
+"instance",
+"file_"
+],
+"familytable_create_inst": [
+"instance",
+"file_"
+],
+"familytable_delete": [
+"file_"
+],
+"familytable_delete_inst": [
+"instance",
+"file_"
+],
+"familytable_exists": [
+"instance",
+"file_"
+],
+"familytable_get_cell": [
+"instance",
+"colid",
+"file_"
+],
+"familytable_get_header": [
+"file_"
+],
+"familytable_get_parents": [
+"file_"
+],
+"familytable_get_row": [
+"instance",
+"file_"
+],
+"familytable_list": [
+"file_",
+"instance"
+],
+"familytable_list_tree": [
+"file_",
+"erase"
+],
+"familytable_replace": [
+"cur_model",
+"new_inst",
+"file_",
+"cur_inst",
+"path"
+],
+"familytable_set_cell": [
+"instance",
+"colid",
+"value",
+"file_"
+],
+"feature_delete": [
+"name",
+"file_",
+"status",
+"type_",
+"clip"
+],
+"feature_delete_param": [
+"name",
+"file_",
+"param"
+],
+"feature_list": [
+"file_",
+"name",
+"status",
+"type_",
+"paths",
+"no_datum",
+"inc_unnamed",
+"no_comp"
+],
+"feature_list_group_features": [
+"group_name",
+"type_",
+"file_"
+],
+"feature_list_params": [
+"file_",
+"name",
+"type_",
+"no_datum",
+"inc_unnamed",
+"no_comp",
+"param",
+"value",
+"encoded"
+],
+"feature_list_pattern_features": [
+"patter_name",
+"type_",
+"file_"
+],
+"feature_list_selected": [],
+"feature_param_exists": [
+"file_",
+"name",
+"param"
+],
+"feature_rename": [
+"name",
+"new_name",
+"file_"
+],
+"feature_resume": [
+"file_",
+"name",
+"status",
+"type_",
+"with_children"
+],
+"feature_set_param": [
+"param",
+"file_",
+"name",
+"type_",
+"value",
+"encoded",
+"designate",
+"description",
+"no_create"
+],
+"feature_suppress": [
+"file_",
+"name",
+"status",
+"type_",
+"clip",
+"with_children"
+],
+"feature_user_select_csys": [
+"file_",
+"max_"
+],
+"file_assemble": [
+"file_",
+"dirname",
+"generic",
+"into_asm",
+"path",
+"ref_model",
+"transform",
+"constraints",
+"package_assembly",
+"walk_children",
+"assemble_to_root",
+"suppress"
+],
+"file_backup": [
+"target_dir",
+"file_"
+],
+"file_close_window": [
+"file_"
+],
+"file_delete_material": [
+"material",
+"file_"
+],
+"file_display": [
+"file_",
+"activate"
+],
+"file_erase": [
+"file_",
+"erase_children"
+],
+"file_erase_not_displayed": [],
+"file_exists": [
+"file_"
+],
+"file_get_accuracy": [
+"file_"
+],
+"file_get_active": [],
+"file_get_cur_material": [
+"file_"
+],
+"file_get_cur_material_wildcard": [
+"file_",
+"include_non_matching_parts"
+],
+"file_get_fileinfo": [
+"file_"
+],
+"file_get_length_units": [
+"file_"
+],
+"file_get_mass_units": [
+"file_"
+],
+"file_get_transform": [
+"asm",
+"path",
+"csys"
+],
+"file_has_instances": [
+"file_"
+],
+"file_is_active": [
+"file_"
+],
+"file_list": [
+"file_"
+],
+"file_list_instances": [
+"file_"
+],
+"file_list_materials": [
+"file_",
+"material"
+],
+"file_list_materials_wildcard": [
+"file_",
+"material",
+"include_non_matching_parts"
+],
+"file_list_simp_reps": [
+"file_",
+"rep"
+],
+"file_load_material_file": [
+"material",
+"dirname",
+"file_"
+],
+"file_massprops": [
+"file_"
+],
+"file_open": [
+"file_",
+"dirname",
+"generic",
+"display",
+"activate",
+"new_window",
+"regen_force"
+],
+"file_open_errors": [
+"file_"
+],
+"file_postregen_relations_get": [
+"file_"
+],
+"file_postregen_relations_set": [
+"file_",
+"relations"
+],
+"file_refresh": [
+"file_"
+],
+"file_regenerate": [
+"file_",
+"display"
+],
+"file_relations_get": [
+"file_"
+],
+"file_relations_set": [
+"file_",
+"relations"
+],
+"file_rename": [
+"new_name",
+"file_",
+"onlysession"
+],
+"file_repaint": [
+"file_"
+],
+"file_save": [
+"file_"
+],
+"file_set_cur_material": [
+"material",
+"file_"
+],
+"file_set_length_units": [
+"units",
+"file_",
+"convert"
+],
+"file_set_mass_units": [
+"units",
+"file_",
+"convert"
+],
+"geometry_bound_box": [
+"file_"
+],
+"geometry_get_edges": [
+"surface_ids",
+"file_"
+],
+"geometry_get_surfaces": [
+"file_"
+],
+"interface_export_3dpdf": [
+"file_",
+"filename",
+"dirname",
+"height",
+"width",
+"dpi",
+"use_drawing_settings",
+"sheet_range"
+],
+"interface_export_file": [
+"file_type",
+"file_",
+"filename",
+"dirname",
+"geom_flags",
+"advanced"
+],
+"interface_export_image": [
+"file_type",
+"file_",
+"filename",
+"height",
+"width",
+"dpi",
+"depth"
+],
+"interface_export_pdf": [
+"file_",
+"filename",
+"dirname",
+"height",
+"width",
+"dpi",
+"use_drawing_settings",
+"sheet_range"
+],
+"interface_export_program": [
+"file_"
+],
+"interface_import_file": [
+"filename",
+"file_type",
+"dirname",
+"new_name",
+"new_model_type"
+],
+"interface_import_program": [
+"file_",
+"filename",
+"dirname"
+],
+"interface_mapkey": [
+"script",
+"delay"
+],
+"interface_plot": [
+"file_",
+"dirname",
+"driver"
+],
+"is_creo_running": [],
+"jlpoint": [
+"y",
+"z"
+],
+"layer_delete": [
+"name",
+"file_"
+],
+"layer_exists": [
+"name",
+"file_"
+],
+"layer_list": [
+"name",
+"file_"
+],
+"layer_show": [
+"name",
+"file_",
+"show_"
+],
+"note_copy": [
+"name",
+"to_name",
+"file_",
+"to_file"
+],
+"note_delete": [
+"name",
+"file_"
+],
+"note_exists": [
+"file_",
+"name"
+],
+"note_get": [
+"name",
+"file_"
+],
+"note_list": [
+"file_",
+"name",
+"value",
+"get_expanded",
+"select"
+],
+"note_set": [
+"name",
+"file_",
+"location",
+"encoded",
+"value"
+],
+"parameter_copy": [
+"name",
+"to_name",
+"file_",
+"to_file",
+"designate"
+],
+"parameter_delete": [
+"name",
+"file_"
+],
+"parameter_exists": [
+"name",
+"file_"
+],
+"parameter_list": [
+"name",
+"file_",
+"encoded",
+"value"
+],
+"parameter_set": [
+"name",
+"value",
+"file_",
+"type_",
+"encoded",
+"designate",
+"description",
+"no_create"
+],
+"parameter_set_designated": [
+"name",
+"designate",
+"file_"
+],
+"server_pwd": [],
+"view_activate": [
+"name",
+"file_"
+],
+"view_list": [
+"file_",
+"name"
+],
+"view_list_exploded": [
+"file_",
+"name"
+],
+"view_save": [
+"name",
+"file_"
+],
+"windchill_authorize": [
+"user",
+"password"
+],
+"windchill_clear_workspace": [
+"workspace",
+"filenames"
+],
+"windchill_create_workspace": [
+"workspace",
+"context_name"
+],
+"windchill_delete_workspace": [
+"workspace"
+],
+"windchill_file_checked_out": [
+"filename",
+"workspace"
+],
+"windchill_get_workspace": [],
+"windchill_list_workspace_files": [
+"workspace",
+"filename"
+],
+"windchill_list_workspaces": [],
+"windchill_server_exists": [
+"server_url"
+],
+"windchill_set_server": [
+"server_url"
+],
+"windchill_set_workspace": [
+"workspace"
+],
+"windchill_workspace_exists": [
+"workspace"
+]
+}

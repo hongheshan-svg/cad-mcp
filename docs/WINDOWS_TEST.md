@@ -274,3 +274,42 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 - `retarget`：Creo 装配/工程图按模型名 + 搜索路径引用，不在文件内存路径，直接返回 0（不是错误）。
 - `refresh` 的悬空标注数（`dangling`）固定为 0：CREOSON 没有读取命令，需扩展；工程图 refresh 也不导出 PDF。
 - 包围盒 `bbox_mm` 为 None；`set_material` 要求材料已在 Creo 材料库（`file_set_cur_material`）。
+
+## Creo 出图（CREOSON / creopyson，partial）
+
+实现在 `src/cadmcp/adapters/creo/drawing.py`；节点配置（`config/node.windows.example.yaml` 的 creo 目标）可加：
+`templates: {drawing_A3: "a3_gb.drw", drawing_A4: …}`（各图幅 Creo 图纸模板，含参数化标题栏）、
+`sheet_unit_scale: 1.0`（模板图纸单位 mm；英寸模板填 0.03937）、`view_map: {iso: "TRIMETRIC"}`（规划视图 → 模型命名视图）。
+函数名与参数名已对照 creopyson 0.7.8 源码核对（`tests/creopyson_0.7.8_sigs.json`，`tests/test_creopyson_sigs.py` 保证假模块不偏离）；实机仍需核对的是返回值形态、坐标/单位与朝向，以及 `cadmcp` 扩展命令（J-Link 侧需另行实现）。
+
+### creopyson API 假设（先 `help(creopyson.Client.<name>)` 核对函数名和参数名）
+- `drawing_create(template, model, drawing, scale, display, activate, new_window)`：返回图纸名；`scale` 是数值（1:2 → 0.5）。
+- `drawing_create_gen_view(model_view, point, drawing, view, sheet, model, scale, ...)`、
+  `drawing_create_proj_view(parent_view, point, drawing, view, sheet, ...)`：`point` 为 `{"x","y","z"}`。
+- `drawing_regenerate(drawing)`、`drawing_list_views(drawing)`（假设返回视图名字符串列表；若返回 dict 列表，执行器取 `view` 键）。
+- `parameter_set(name, value, file_, type_="STRING")`、`file_open(file_, dirname, display, activate)`、`file_save(file_)`、
+  `interface_export_pdf(file_, dirname, filename)`（与既有 `export()` 同一调用；PDF 导出选项可能需 `pdf_export_*` 配置项）。
+- 扩展命令走 `Client._creoson_post({"command": "cadmcp", "function": <name>, "data": {...}})`（私有方法，版本间可能改名）。
+
+### 坐标/朝向假设
+1. `origin_on_sheet`（mm）按图纸左下角为原点写入 `point`；核对视图是否落在预期位置，不对则调 `sheet_unit_scale` 或记录实际原点。
+2. 模型有命名视图 FRONT/TOP/LEFT/RIGHT/BOTTOM/BACK/TRIMETRIC，且 FRONT 与规划主视图（从 -Y 看、Z 向上）一致；
+   `cadmcp_start.prt` 需按此定向，否则用 `view_map` 覆盖或在起始件里重定义视图。
+3. 俯/左视图用投影视图（`proj_view`），投影方向由相对主视图的位置决定；模板 `projection_type` 须为 first_angle（GB），
+   creopyson 不能设置，需在模板 drawing setup 文件中固定。
+4. 轴测图（iso）以 0.5×主比例创建；视图显示样式（隐藏线/消隐）未设置，沿用模板 `drawing_view_display` 默认，请核对虚线是否符合预期。
+
+### 能力边界与企业扩展（缺失时 oplog/regen.warnings 有明确警告，不静默）
+creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计划里规划为 CREOSON 扩展命令（需 J-Link 实现，约定同 `compile.py`）：
+`cadmcp_show_dims`（显示模型尺寸并回读）、`cadmcp_note`（技术要求/其余粗糙度/更改记录）、`cadmcp_table`（BOM/孔表/切割清单）、
+`cadmcp_section_view`（剖视/局部剖/移出断面）、`cadmcp_flat_pattern_view`、`cadmcp_gdt`（基准/形位公差/粗糙度/焊缝）、`cadmcp_balloons`。
+未部署扩展时：图纸只有视图 + 标题栏参数 + PDF，`regen.status = warnings`，warnings 逐条列出缺哪些内容。
+扩展就绪后在此补每个命令的 data 字段验收（字段见 `compile_drawing` 的 args）。
+
+### 实机核对步骤
+1. 配好 `templates` 后出 `tests/test_core.py` 的 PLATE_PRECISION 零件图：确认 drawing 创建、视图数 = 方案、比例/位置正确、PDF 生成。
+2. 标题栏：模板中用 `&PART_NO &TITLE &MATERIAL &SCALE &MASS &DRAWN_BY &CHECKED_BY &DATE &REVISION` 引用模型参数；
+   检查是否显示。若模板读的是图纸（drawing）参数而非模型参数，需改为 `&mdl_param` 或改本实现为同时给 .drw 设参数。
+3. 打开 `<name>.oplog.json`：逐条看 ok/error；`creoson.*` 关键步骤失败会中止并报 NATIVE_ERROR，把 oplog 发回。
+4. 保存路径：本实现 `creo_cd(out_dir)` 后保存；确认 .drw 落在 out_dir（Creo 可能生成 `.drw.N` 版本号文件）。
+5. `rendered.views` 只含 `drawing_list_views` 回读到的视图名；尺寸/注释数量未回读（无 API），D005 因此不会触发。

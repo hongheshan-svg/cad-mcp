@@ -72,7 +72,7 @@ def make_adapter(cfg: dict[str, Any]) -> CadAdapter:
         return SolidWorksAdapter(str(cfg["version"]), **{k: cfg[k] for k in keys if k in cfg})
     if kind == "creo":
         from ..adapters.creo.adapter import CreoAdapter
-        keys = ("start_part", "udf_dir", "library_root")
+        keys = ("start_part", "udf_dir", "library_root", "templates", "sheet_unit_scale", "view_map")
         return CreoAdapter(str(cfg["version"]), **cfg.get("creoson", {}), **{k: cfg[k] for k in keys if k in cfg})
     raise CadError(TARGET_UNAVAILABLE, f"unknown adapter {kind!r}")
 
