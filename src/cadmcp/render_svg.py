@@ -799,11 +799,48 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
         ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
     if len(boxes) > 1:  # 焊接件杆件/板、装配零件包围盒 → 画家算法消隐（白色填充可见面，由远及近）
-        for bb in _painter_order(boxes):
+        for bb in _painter_order(_disjoint_boxes(boxes)):
             _iso_box_faces(s, iso, bb)
         return
     for bb in boxes:
         _iso_box(s, iso, bb, THIN if asm is not None or len(boxes) > 1 else THICK)
+
+
+def _box_minus(a, b):
+    """长方体 a 减去 b，返回互不相交的子长方体（先 x 两侧、再 y 两侧、最后 z 上下）。"""
+    from .ir.resolve import Box
+    if not (a.xmin < b.xmax and b.xmin < a.xmax and a.ymin < b.ymax and b.ymin < a.ymax
+            and a.zmin < b.zmax and b.zmin < a.zmax):
+        return [a]
+    out = []
+    x0, x1 = max(a.xmin, b.xmin), min(a.xmax, b.xmax)
+    y0, y1 = max(a.ymin, b.ymin), min(a.ymax, b.ymax)
+    if a.xmin < x0:
+        out.append(Box(a.xmin, x0, a.ymin, a.ymax, a.zmin, a.zmax))
+    if x1 < a.xmax:
+        out.append(Box(x1, a.xmax, a.ymin, a.ymax, a.zmin, a.zmax))
+    if a.ymin < y0:
+        out.append(Box(x0, x1, a.ymin, y0, a.zmin, a.zmax))
+    if y1 < a.ymax:
+        out.append(Box(x0, x1, y1, a.ymax, a.zmin, a.zmax))
+    if a.zmin < b.zmin:
+        out.append(Box(x0, x1, y0, y1, a.zmin, b.zmin))
+    if b.zmax < a.zmax:
+        out.append(Box(x0, x1, y0, y1, b.zmax, a.zmax))
+    return out
+
+
+def _disjoint_boxes(boxes):
+    """相交的包围盒（装配：销穿过板）：小的减去大的，得到互不相交的块，画家算法才成立。"""
+    vol = lambda b: (b.xmax - b.xmin) * (b.ymax - b.ymin) * (b.zmax - b.zmin)  # noqa: E731
+    order = sorted(range(len(boxes)), key=lambda i: -vol(boxes[i]))
+    out = []
+    for k, i in enumerate(order):
+        pieces = [boxes[i]]
+        for j in order[:k]:  # 比它大的盒子
+            pieces = [q for pc in pieces for q in _box_minus(pc, boxes[j])]
+        out += pieces
+    return out
 
 
 def _painter_order(boxes):
@@ -1032,6 +1069,19 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         prec_left = any(tuple(n) == (-1, 0) for n in prec)
         for d in plan.dims:
             if d.view != v.type:
+                continue
+            if d.kind == "linear" and (d.extra or {}).get("fit"):  # 配合尺寸：横跨直径，延伸出视图后写配合代号
+                (ax_, ay_), (bx_, by_) = d.extra["sheet_pts"]
+                px_, py_ = d.extra["sheet_pos"]
+                tw_ = _text_w(d.text, 3.5)
+                if d.extra["orient"] == "h":
+                    s.line(ax_, ay_, px_ + tw_, ay_, 0.18)
+                    s.text(px_, ay_ + 0.8, d.text, 3.5)
+                else:
+                    s.line(ax_, ay_, ax_, py_ + tw_, 0.18)
+                    s.text(ax_ - 0.8, py_, d.text, 3.5, "start", -90)
+                _arrow_pair(s, (ax_, ay_), (bx_, by_))
+                rendered_refs.append(d.ref)
                 continue
             if d.kind == "linear" and ((d.extra or {}).get("install") or (d.extra or {}).get("pitch")) \
                     and d.extra.get("sheet_pts"):  # 安装尺寸 / 等距节距：规划层给定图纸坐标

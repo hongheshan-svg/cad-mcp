@@ -103,6 +103,76 @@ class SourceInfo:
     mounts: dict[str, dict[str, Any]] = field(default_factory=dict)  # 零件：CS_<mount> → 接口信息
     interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
     install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
+    fits: list[dict[str, Any]] = field(default_factory=list)  # 零件：带配合公差的圆柱面 {role hole|shaft, d, tol, p0, p1(轴线段，零件坐标), name}
+
+
+def part_fits(p) -> list[dict[str, Any]]:
+    """零件上带配合公差带的圆柱面（孔：带 tolerance 的光孔/内孔；轴：带 tolerance 的轴段），轴线段为零件坐标。"""
+    out: list[dict[str, Any]] = []
+    for h in p.holes:
+        if not h.tolerance or h.type not in ("simple",) or h.slot:
+            continue
+        for i in h.instances:
+            n = i.normal
+            q = tuple(i.xyz[k] - n[k] * h.depth for k in range(3))
+            out.append({"role": "hole", "d": h.drill, "tol": h.tolerance, "p0": tuple(i.xyz), "p1": q,
+                        "name": f"{h.name}[{i.index}]"})
+    for k, tol in enumerate(getattr(p, "shaft_tolerances", []) or []):
+        if tol:
+            z0, z1 = p.step_z(k)
+            out.append({"role": "shaft", "d": p.shaft_steps[k][1], "tol": tol, "p0": (0.0, 0.0, z0), "p1": (0.0, 0.0, z1),
+                        "name": f"step:{k}"})
+    for b in getattr(p, "shaft_bores", []) or []:
+        if b.get("tol"):
+            out.append({"role": "hole", "d": b["d"], "tol": b["tol"], "p0": (0.0, 0.0, b["z0"]), "p1": (0.0, 0.0, b["z1"]),
+                        "name": b["name"]})
+    return out
+
+
+def assembly_fits(a: "ResolvedAssembly") -> list[dict[str, Any]]:
+    """装配中的配合：不同零件上公称直径相同、轴线重合、轴向有重叠的孔与轴（GB/T 4458.5 配合代号 Φd H7/k6）。
+    返回 {d, text, hole, shaft, inst_hole, inst_shaft, p0, p1(重叠段轴线，装配坐标)}，同一孔/轴只配一次。"""
+    feats = []
+    for inst in a.instances:
+        for f in inst.source.fits:
+            feats.append((inst, f, apply(inst.transform, f["p0"]), apply(inst.transform, f["p1"])))
+    out, used = [], set()
+    for ih, fh, h0, h1 in feats:
+        if fh["role"] != "hole":
+            continue
+        for js, fs, s0, s1 in feats:
+            if fs["role"] != "shaft" or js is ih or abs(fh["d"] - fs["d"]) > 1e-6:
+                continue
+            dh = [h1[k] - h0[k] for k in range(3)]
+            L = sum(c * c for c in dh) ** 0.5
+            if L < 1e-9:
+                continue
+            u = [c / L for c in dh]
+            ds = [s1[k] - s0[k] for k in range(3)]
+            Ls = sum(c * c for c in ds) ** 0.5
+            if Ls < 1e-9 or abs(abs(sum(u[k] * ds[k] / Ls for k in range(3))) - 1) > 1e-6:
+                continue  # 不平行
+
+            def off(q):  # 点到孔轴线的距离
+                w = [q[k] - h0[k] for k in range(3)]
+                t = sum(w[k] * u[k] for k in range(3))
+                return sum((w[k] - t * u[k]) ** 2 for k in range(3)) ** 0.5, t
+            (e0, t0), (e1, t1) = off(s0), off(s1)
+            if max(e0, e1) > 0.01:
+                continue  # 不同轴
+            lo, hi = max(0.0, min(t0, t1)), min(L, max(t0, t1))
+            if hi - lo < 1e-3:
+                continue  # 轴向不重叠
+            key = (ih.id, fh["name"])
+            if key in used:
+                continue
+            used.add(key)
+            d = fh["d"]
+            out.append({"d": d, "text": f"Φ{d:g}{fh['tol']}/{fs['tol']}", "hole": fh["name"], "shaft": fs["name"],
+                        "inst_hole": ih.id, "inst_shaft": js.id,
+                        "p0": tuple(h0[k] + u[k] * lo for k in range(3)), "p1": tuple(h0[k] + u[k] * hi for k in range(3))})
+            break
+    return out
 
 
 @dataclass

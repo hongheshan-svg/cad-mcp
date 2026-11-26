@@ -1461,6 +1461,8 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
     inst_dims, inst_note = install_dims(a, views) if spec.dimensions != "none" else ([], None)
     dims += inst_dims
+    if spec.dimensions != "none":
+        dims += fit_dims(a, views)
     if inst_note:
         notes.append(f"3. {inst_note}")
     notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, len(notes))]
@@ -1473,6 +1475,44 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
     overall_dim_sheet(plan, a)
     return plan
+
+
+def fit_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> list[Dim]:
+    """配合尺寸（GB/T 4458.5，装配图注 Φd 孔公差带/轴公差带）：在轴线平行于图面的第一个视图上，
+    于重叠段中点横跨直径画尺寸线（箭头抵两侧轮廓），尺寸线延伸出视图包络后写配合代号。"""
+    from .ir.assembly_resolve import assembly_fits
+    out: list[Dim] = []
+    for k, f in enumerate(assembly_fits(a)):
+        u = [f["p1"][i] - f["p0"][i] for i in range(3)]
+        for v in views:
+            if v.type not in VIEW_AXES:
+                continue
+            ha, va = VIEW_AXES[v.type]
+            n_ax = ({"x", "y", "z"} - {ha[-1], va[-1]}).pop()
+            if abs(u["xyz".index(n_ax)]) > 1e-6:
+                continue  # 轴线不平行于图面
+            m3 = tuple((f["p0"][i] + f["p1"][i]) / 2 for i in range(3))
+            p0 = _uv_sheet(v, a.bbox, (vc(f["p0"], ha), vc(f["p0"], va)))
+            p1 = _uv_sheet(v, a.bbox, (vc(f["p1"], ha), vc(f["p1"], va)))
+            mx, my = _uv_sheet(v, a.bbox, (vc(m3, ha), vc(m3, va)))
+            r = f["d"] / 2 * v.scale
+            cx, cy = v.origin_on_sheet
+            vw, vh = v.size_mm
+            vertical_axis = abs(p1[0] - p0[0]) < abs(p1[1] - p0[1])
+            if vertical_axis:  # 尺寸线水平，向右伸出视图
+                pts = [(round(mx - r, 2), round(my, 2)), (round(mx + r, 2), round(my, 2))]
+                pos = (round(max(cx + vw / 2, mx + r) + 3, 2), round(my, 2))
+                orient, axis = "h", ha
+            else:  # 尺寸线竖直，向上伸出视图
+                pts = [(round(mx, 2), round(my - r, 2)), (round(mx, 2), round(my + r, 2))]
+                pos = (round(mx, 2), round(max(cy + vh / 2, my + r) + 3, 2))
+                orient, axis = "v", va
+            out.append(Dim(v.type, "linear", axis, f["d"], f["text"], f"fit:{f['inst_hole']}.{f['hole']}",
+                           extra={"fit": True, "sheet_pts": pts, "sheet_pos": pos, "orient": orient,
+                                  "prefix": "Φ", "suffix": f["text"].split(f"{f['d']:g}", 1)[1],  # CAD：Φ<DIM>H7/k6
+                                  "pair": [f["inst_hole"], f["inst_shaft"]]}))
+            break
+    return out
 
 
 def install_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> tuple[list[Dim], str | None]:
@@ -1746,7 +1786,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
             hard.append((cx - 10, cy + h / 2 + 2, cx + 10, cy + h / 2 + 9))
     for d in plan.dims:  # 规划层已定位的自由尺寸（等距节距、安装尺寸）：尺寸线与文字占位
         ex = d.extra or {}
-        if ex.get("sheet_pos") and (ex.get("pitch") or ex.get("install")):
+        if ex.get("sheet_pos") and (ex.get("pitch") or ex.get("install") or ex.get("fit")):
             (x1_, y1_), (x2_, y2_) = ex["sheet_pts"]
             px_, py_ = ex["sheet_pos"]
             hard.append((min(x1_, x2_, px_ - 4), min(y1_, y2_, py_) - 1, max(x1_, x2_, px_ + 4), max(y1_, y2_, py_) + 5)
@@ -2855,7 +2895,8 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
         norms = [tuple(d.extra["normal"]) for d in ords if d.kind in ("datum", "gtol", "roughness")
                  and d.extra and "normal" in d.extra and not d.extra.get("attach")]
         for d in ords:
-            if d.kind != "linear" or d.at is not None or (d.extra or {}).get("install") or (d.extra or {}).get("pitch"):
+            ex_ = d.extra or {}
+            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit"):
                 continue
             if d.axis == ha:
                 y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)
