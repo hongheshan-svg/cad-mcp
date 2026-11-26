@@ -99,10 +99,17 @@ def _hollow_section(s, part, P, segs, c, Ltot):
             pts += [P(a if not (c and a == 0) else c, sign * r), P(b if not (c and b == Ltot) else Ltot - c, sign * r)]
         if c:
             pts.append(P(Ltot, sign * max(segs[-1][2] - c, pieces[-1][2])))
-        # 剖面区域 = 外轮廓 + 沿孔壁返回
+        # 剖面区域 = 外轮廓 + 沿孔壁返回（上半：轮毂键槽处孔壁升到槽底）
+        def rin(za, zb, rb):
+            if sign > 0:
+                kb = [b for b in part.shaft_bores if b.get("kw") and b["z0"] - 1e-9 <= (za + zb) / 2 <= b["z1"] + 1e-9
+                      and abs(b["d"] / 2 - rb) < 1e-9]
+                if kb:
+                    return kb[0]["kw"]["top"]
+            return rb
         back = []
         for za, zb, rb in reversed(pieces):
-            back += [P(zb, sign * rb), P(za, sign * rb)]
+            back += [P(zb, sign * rin(za, zb, rb)), P(za, sign * rin(za, zb, rb))]
         poly = pts + back
         cid = f"hollow{'U' if sign > 0 else 'D'}"
         path = " ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in poly)
@@ -117,12 +124,18 @@ def _hollow_section(s, part, P, segs, c, Ltot):
             k += 2.5
         s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(hatch)}</g>")
         s.poly(pts, THICK, close=False)
-        # 孔壁
+        # 孔壁（键槽处为槽底线）；键槽侧壁与孔壁的交线（剖切面之后，可见）
         for za, zb, rb in pieces:
             if rb > 0:
-                s.line(*P(za, sign * rb), *P(zb, sign * rb), THICK)
+                ri = rin(za, zb, rb)
+                s.line(*P(za, sign * ri), *P(zb, sign * ri), THICK)
+                if ri != rb:
+                    hw = next(b["kw"]["width"] / 2 for b in part.shaft_bores if b.get("kw") and abs(b["d"] / 2 - rb) < 1e-9)
+                    yk0 = math.sqrt(max(rb * rb - hw * hw, 0.0))
+                    s.line(*P(za, yk0), *P(zb, yk0), THICK)
         # 端面：孔壁到外轮廓（倒角起点）
-        for z, rb, r in ((0.0, pieces[0][2], segs[0][2] - c), (Ltot, pieces[-1][2], segs[-1][2] - c)):
+        for z, rb, r in ((0.0, rin(0.0, 1e-6, pieces[0][2]), segs[0][2] - c),
+                         (Ltot, rin(Ltot - 1e-6, Ltot, pieces[-1][2]), segs[-1][2] - c)):
             if r > rb + 1e-9:
                 s.line(*P(z, sign * rb), *P(z, sign * r), THICK)
         # 外轴肩：小径到大径
@@ -297,8 +310,47 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             s.text(tx + 0.5, ty + 0.8, d.text, 3)
         refs.append(d.ref)
 
+    # 左视图（套类内键槽）：外圆、端部倒角圆、从左端可见的孔（带键槽缺口），尺寸按规划层图纸坐标
+    lv = next((v for v in plan.views if v.type == "left"), None)
+    if lv is not None:
+        from .render_gear import draw_sheet_linear
+        ex, ey = lv.origin_on_sheet
+        Dm = max(d for _, d in part.shaft_steps)
+        s.circle(ex, ey, Dm / 2 * sc, THICK)
+        d0 = part.shaft_steps[0][1]
+        if abs(d0 - Dm) > 1e-9:
+            s.circle(ex, ey, d0 / 2 * sc, THICK)
+        if c:
+            s.circle(ex, ey, (d0 / 2 - c) * sc, THICK)
+        for b in sorted((b for b in part.shaft_bores if b["z0"] < 1e-9), key=lambda b: -b["d"]):
+            rb = b["d"] / 2 * sc
+            if b.get("kw"):  # 键槽朝上（与主视图一致）
+                hw = b["kw"]["width"] / 2 * sc
+                a0 = math.asin(min(1.0, hw / rb))
+                pts = [(ex + rb * math.sin(a), ey + rb * math.cos(a)) for a in [a0 + (2 * math.pi - 2 * a0) * k / 96 for k in range(97)]]
+                yk = ey + b["kw"]["top"] * sc
+                s.poly(pts + [(ex - hw, yk), (ex + hw, yk)], THICK)
+            else:
+                s.circle(ex, ey, rb, THICK)
+        R_ = Dm / 2 * sc
+        s.line(ex - R_ - 4, ey, ex + R_ + 4, ey, THIN, CENTER)
+        s.line(ex, ey - R_ - 4, ex, ey + R_ + 4, THIN, CENTER)
+        for d in plan.dims:
+            if d.view == "left" and d.kind == "linear" and (d.extra or {}).get("sheet_pts"):
+                draw_sheet_linear(s, d)
+                refs.append(d.ref)
+            elif d.view == "left" and d.kind == "callout" and (d.extra or {}).get("label"):
+                lb = d.extra["label"]
+                s.line(*lb["anchor"], *lb["elbow"], THIN)
+                s.line(*lb["elbow"], *lb["end"], THIN)
+                _arrow(s, *lb["anchor"], lb["anchor"][0] - lb["elbow"][0], lb["anchor"][1] - lb["elbow"][1])
+                s.text(*lb["text_at"], d.text, 3.5)
+                refs.append(d.ref)
+
     # 断面图
     for v in plan.views[1:]:
+        if v.type != "section":
+            continue
         f = next(k for k in kws if k["name"] == v.target)
         vx, vy = v.origin_on_sheet
         r = f["d"] / 2 * sc

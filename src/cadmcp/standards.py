@@ -69,6 +69,19 @@ CIRCLIP_GROOVE = {
 }
 
 
+# GB/T 1095 轮毂槽深 t2（按键宽 b）
+HUB_T2 = {2: 1.0, 3: 1.4, 4: 1.8, 5: 2.3, 6: 2.8, 8: 3.3, 10: 3.3, 12: 3.3, 14: 3.8, 16: 4.3, 18: 4.4, 20: 4.9,
+          22: 5.4, 25: 5.4, 28: 6.4}
+
+
+def hub_keyway(d: float, width: float | None = None) -> tuple[float, float]:
+    """孔径 d 的轮毂键槽 (b, t2)：b 缺省按 GB/T 1095 查表。"""
+    b = width if width is not None else keyway(d)[0]
+    if b not in HUB_T2:
+        raise CadError(SPEC_INVALID, f"键宽 {b:g} 不在 GB/T 1095 系列 {sorted(HUB_T2)}")
+    return float(b), HUB_T2[b]
+
+
 def keyway(d: float) -> tuple[float, float, float]:
     for lo, hi, b, h, t1 in KEYWAY:
         if lo < d <= hi:

@@ -437,3 +437,14 @@ def test_sw_shaft_end_holes(sw_svc):
     r = svc.build(DrawingSpec.model_validate({"model": "EH1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
     assert "InsertCosmeticThread3" in [c[0] for c in ad.sw.calls]
+
+
+def test_sw_sleeve_hub_keyway(sw_svc):
+    """套类内键槽：键槽切除、左视图（*Back 转 180°）+ 槽宽/d+t2 + 孔径引线，规则检查通过。"""
+    from test_shaft_bores import SL
+    svc, ad = sw_svc
+    spec = {**SL, "base": {**SL["base"], "bores": [{"diameter": 30, "tolerance": "H7", "keyway": True}]}}
+    svc.change_begin("SLK")
+    svc.build(PartSpec.model_validate(spec))
+    r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]

@@ -9,7 +9,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from .detailing import (GAP, MARGIN, SHEETS, DrawingPlan, Dim, ViewPlan, _choose, _notes_and_title, text_width)
+from .detailing import (GAP, MARGIN, SHEETS, DrawingPlan, Dim, ViewPlan, _choose, _notes_and_title, hub_keyway_dims,
+                        text_width)
 from .ir.drawing import DrawingSpec
 from .ir.resolve import ResolvedPart
 
@@ -99,27 +100,7 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
         if kw is not None and bore is not None:
-            rb = bore.max_dia / 2
-            w = kw["width"]
-            top = kw["top"]
-            yk = cy + top * sc
-            tw_ = dev(tol_text(w, "JS9"))
-            tx = ex - w / 2 * sc - 1.5 - text_width(tw_, 3.5) / 2  # 文字放在左尺寸界线之外，不压中心线与界线
-            yw = (yk + cy + (rb * rb - w * w / 4) ** 0.5 * sc) / 2  # 键槽侧壁中点
-            dims.append(Dim("left", "linear", "x", w, tw_, f"{kw['name']}_w", None, {
-                "sheet_pts": [(round(ex - w / 2 * sc, 2), round(yk, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
-                "pick_pts": [(round(ex - w / 2 * sc, 2), round(yw, 2)), (round(ex + w / 2 * sc, 2), round(yw, 2))],
-                "sheet_pos": (round(tx, 2), round(yk + 8, 2)), "orient": "h"}))
-            t = hub_t2_tol(w)
-            tt = dev(f"{top + rb:g}(+{t:g}/0)")
-            half = text_width(tt, 3.5) / 2
-            ty = max(cy + (top - rb) / 2 * sc, cy + half + 1.5)  # 文字不压水平中心线
-            if ty + half > yk - 1:  # 也不压槽底的尺寸界线：放不下就移到尺寸界线之外（上方），尺寸线延长
-                ty = yk + 1.5 + half
-            dims.append(Dim("left", "linear", "y", top + rb, tt, f"{kw['name']}_t", None, {
-                "sheet_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
-                "pick_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex, 2), round(yk, 2))],  # 孔底象限点、槽底中点
-                "sheet_pos": (round(ex + rb * sc + 8, 2), round(ty, 2)), "orient": "v"}))
+            dims += hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev)
         for h in parts["others"]:
             dims.append(Dim("left", "callout", None, None, h.callout, h.name, None, {}))
     # 表面结构：齿面 Ra 注在分度线上（GB/T 4459.2），轴孔 Ra 注在孔壁（剖视）

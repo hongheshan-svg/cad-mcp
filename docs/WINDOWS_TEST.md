@@ -470,3 +470,9 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 样例：`tests/test_end_holes.py`。SW：底孔 FeatureCut4（Φ = d − P，平底）+ 孔口圆边 `InsertCosmeticThread3`（Internal、Metric Tap）；
 核对孔口边选点 (tap/2, 0, z端) 能否选中、主视图隐藏线（swHIDDEN_GREYED）是否显示螺孔虚线。
 Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺纹能否加在拉伸切除的孔面上（原用于孔特征）。
+
+### 套类内键槽（bores[].keyway）
+- 模型里键槽在 **−Y**：按 SW 轴类主视图 `*Right` 转 180° 时 −Y 朝上推算，左视图用 `*Back` 转 180°（从左端看、−Y 朝上）。
+  实机核对两个视图里键槽是否都朝上、左视图是否真是从 z=0 端看；不对就改 `SW_SHAFT_VIEW` 与左视图映射（compile.py 一处）。
+- Creo 左视图是主视图的投影视图，随主视图朝向（仍依赖 FRONT 命名视图定向为轴线水平）。
+- 轮毂槽深 t2 表（`standards.HUB_T2`）按 GB/T 1095 常用值录入，未对照原文。

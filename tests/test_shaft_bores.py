@@ -97,3 +97,27 @@ def test_bore_precision_targets_and_auto():
 def test_bad_bore_target():
     with pytest.raises(CadError, match="invalid target"):
         _p({**SL, "datums": [{"name": "A", "target": "bore:5"}]})
+
+
+def test_hub_keyway_sleeve():
+    spec = {**SL, "base": {**SL["base"], "bores": [{"diameter": 30, "tolerance": "H7", "keyway": True},
+                                                   {"diameter": 36, "length": 8, "side": "start"}]}}
+    sp = PartSpec.model_validate(spec)
+    p = resolve_part(sp)
+    assert p.shaft_bores[0]["kw"] == {"name": "BORE1_KW", "width": 8.0, "t2": 3.3, "top": 18.3}
+    plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
+    assert [v.type for v in plan.views] == ["front", "left"]
+    texts = {d.ref: d.text for d in plan.dims}
+    assert texts["BORE1_KW_w"] == "8JS9(+0.018/-0.018)" and texts["BORE1_KW_t"] == "33.3(+0.2/0)"
+    assert next(d for d in plan.dims if d.ref == "bore0_dia").view == "left"  # 剖切面过键槽：孔径移到左视图
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    sw = compile_part(sp, p)
+    kw = next(o for o in sw if o.op == "sketch_polyline_closed" and o.args["sketch"] == "SK_BORE1_KW")
+    assert min(y for _, y in kw.args["points"]) == -18.3  # 键槽在 −Y（SW 主视图朝上）
+    ops = compile_drawing(plan, "SL1.SLDPRT")
+    assert any(o.op == "model_view" and o.args["view"] == "left" and o.args["sw_view"] == "*Back" for o in ops)
+    assert {o.args["ref"] for o in ops if o.op == "shaft_dimension" and o.args["view"] == "left"} == {"BORE1_KW_w", "BORE1_KW_t"}
+    assert any(o.op == "tk.feat.extrude" and o.args["feature"] == "BORE1_KW" for o in creo_part(sp, p))
+    with pytest.raises(CadError, match="GB/T 1095"):
+        resolve_part(PartSpec.model_validate({**SL, "base": {**SL["base"], "bores": [{"diameter": 30, "keyway": True, "keyway_width": 7}]}}))

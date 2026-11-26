@@ -105,32 +105,8 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
         if d.kind == "diameter" and "sheet_pts" in ex_:
             (xf, ya), (_, yb) = ex_["sheet_pts"]
             _vdim_text(s, ex_["sheet_pos"][0], xf, ya, yb, d.text)
-        elif d.kind == "linear" and ex_.get("orient") == "h" and "sheet_pts" in ex_:
-            (xa, ya), (xb, yb) = ex_["sheet_pts"]
-            px, py = ex_["sheet_pos"]
-            if abs(px - (xa + xb) / 2) < 0.5:
-                _hdim(s, xa, xb, ya, yb, py, d.text)
-            else:  # 文字偏到一侧：尺寸线延长到文字下方
-                from .render_svg import _text_w
-                tw = _text_w(d.text, 3.5)
-                for x, yf in ((xa, ya), (xb, yb)):
-                    s.line(x, yf + 1, x, py + 1.5, THIN)
-                s.line(min(xa, px - tw / 2), py, max(xb, px + tw / 2), py, THIN)
-                _arrow(s, xa, py, 1, 0)
-                _arrow(s, xb, py, -1, 0)
-                s.text(px, py + 0.8, d.text, 3.5, "middle")
-        elif d.kind == "linear" and ex_.get("orient") == "v" and "sheet_pts" in ex_:
-            (xa, ya), (xb, yb) = ex_["sheet_pts"]
-            xl_ = ex_["sheet_pos"][0]
-            s.line(xa + 1, ya, xl_ + 1.5, ya, THIN)
-            s.line(xb + 1, yb, xl_ + 1.5, yb, THIN)
-            s.line(xl_, ya, xl_, max(yb, ex_["sheet_pos"][1] + _text_w(d.text, 3.5) / 2 + 1), THIN)
-            _arrow(s, xl_, ya, 0, -1)
-            _arrow(s, xl_, yb, 0, 1)
-            ty = ex_["sheet_pos"][1]
-            if ty + 0 > max(ya, yb):
-                pass
-            s.text(xl_ - 1, ty, d.text, 3.5, "middle", -90)
+        elif d.kind == "linear" and ex_.get("orient") in ("h", "v") and "sheet_pts" in ex_:
+            draw_sheet_linear(s, d)
         elif d.kind == "roughness" and "sheet_at" in ex_:
             render_gdt.draw(s, "roughness", *ex_["sheet_at"], ex_, d.text)
         elif d.kind == "datum" and "sheet_at" in ex_:
@@ -151,6 +127,34 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
 
     draw_param_table(s, plan.gear_table or param_table(plan, part))
     refs.append("gear_table")
+
+
+def draw_sheet_linear(s, d) -> None:
+    """按规划层图纸坐标画线性尺寸（extra: sheet_pts / sheet_pos / orient h|v）；齿轮图与轴类端视图共用。"""
+    ex_ = d.extra or {}
+    if ex_.get("orient") == "h":
+        (xa, ya), (xb, yb) = ex_["sheet_pts"]
+        px, py = ex_["sheet_pos"]
+        if abs(px - (xa + xb) / 2) < 0.5:
+            _hdim(s, xa, xb, ya, yb, py, d.text)
+        else:  # 文字偏到一侧：尺寸线延长到文字下方
+            tw = _text_w(d.text, 3.5)
+            for x, yf in ((xa, ya), (xb, yb)):
+                s.line(x, yf + 1, x, py + 1.5, THIN)
+            s.line(min(xa, px - tw / 2), py, max(xb, px + tw / 2), py, THIN)
+            _arrow(s, xa, py, 1, 0)
+            _arrow(s, xb, py, -1, 0)
+            s.text(px, py + 0.8, d.text, 3.5, "middle")
+    else:
+        (xa, ya), (xb, yb) = ex_["sheet_pts"]
+        xl_ = ex_["sheet_pos"][0]
+        s.line(xa + 1, ya, xl_ + 1.5, ya, THIN)
+        s.line(xb + 1, yb, xl_ + 1.5, yb, THIN)
+        s.line(xl_, ya, xl_, max(yb, ex_["sheet_pos"][1] + _text_w(d.text, 3.5) / 2 + 1), THIN)
+        _arrow(s, xl_, ya, 0, -1)
+        _arrow(s, xl_, yb, 0, 1)
+        ty = ex_["sheet_pos"][1]
+        s.text(xl_ - 1, ty, d.text, 3.5, "middle", -90)
 
 
 def draw_param_table(s, t) -> None:

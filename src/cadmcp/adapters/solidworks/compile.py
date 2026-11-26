@@ -188,6 +188,14 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
             ops.append(NativeOp("keyway_cut", {"feature": b["name"], "sketch": sk, "start_offset": b["z0"],
                                                "depth": b["z1"] - b["z0"], "flip": False},
                                 "FeatureCut4：起始偏移 z0、深度 = 孔深（平底）"))
+            if b.get("kw"):  # 轮毂键槽在 −Y（SW 轴类主视图 *Right 转 180° 后 −Y 朝上）
+                k = b["kw"]
+                hw = k["width"] / 2
+                ops.append(NativeOp("sketch_on_plane", {"sketch": sk + "_KW", "plane": "Front Plane"}))
+                ops.append(NativeOp("sketch_polyline_closed", {"sketch": sk + "_KW", "points": [
+                    [-hw, 0], [hw, 0], [hw, -k["top"]], [-hw, -k["top"]]]}))
+                ops.append(NativeOp("keyway_cut", {"feature": k["name"], "sketch": sk + "_KW", "start_offset": b["z0"],
+                                                   "depth": b["z1"] - b["z0"], "flip": False}, "轮毂键槽：贯通孔长"))
         for f in p.shaft_features:
             sk = f"SK_{f['name']}"
             if f["kind"] == "thread":  # 外螺纹：选起始端圆边 → 装饰螺纹（Metric Die），长度 = 螺纹长
@@ -542,7 +550,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             continue
         if any(s.view == v.type and s.kind != "local" for s in plan.sections):
             continue  # 由剖视图替代（在父视图之后生成）
-        name, angle = SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front" else SW_VIEW[v.type]
+        name, angle = (SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front"
+                       else ("*Back", 180) if plan.layout == "shaft" and v.type == "left"  # 从左端看，−Y 朝上（同主视图）
+                       else SW_VIEW[v.type])
         ops.append(NativeOp("model_view", {"view": v.type, "sw_view": name, "model": model_file,
                                            "center": v.origin_on_sheet, "scale": v.scale * (0.5 if v.type == "iso" else 1),
                                            "rotate_deg": angle, "display": "hidden_removed" if v.type == "iso" else "hidden_visible"}))
@@ -582,7 +592,15 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                       "widths": [w for _, w in t["columns"]], "rows": [list(r) for r in t["rows"]],
                                       "title": "齿轮参数表"}, "图框右上角齿轮参数表"))
     if plan.layout == "shaft":
+        for d in plan.dims:  # 左视图（套类内键槽）：选边点标注，同齿轮图
+            ex = d.extra or {}
+            if d.view == "left" and d.kind == "linear" and ex.get("pick_pts"):
+                ops.append(NativeOp("shaft_dimension", {"view": "left", "kind": "linear", "text": d.text, "at": None,
+                                                        "ref": d.ref, "pts": ex["pick_pts"], "pos": ex.get("sheet_pos"),
+                                                        "orient": ex.get("orient")}, "键槽宽 JS9 / d+t2：选两条边线"))
         for d in plan.dims:
+            if d.view == "left":
+                continue
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):
                 ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）
                 view = f"section:{ex['section']}" if ex.get("section") else d.view  # 移出断面图按标签区分

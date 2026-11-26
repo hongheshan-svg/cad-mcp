@@ -49,6 +49,8 @@ class ShaftBore(Strict):
     length: Num | None = Field(None, description="孔深（平底）；省略 = 通孔")
     side: Literal["start", "end"] = Field("start", description="从哪一端起（z=0 为 start）")
     tolerance: str | None = Field(None, description="孔公差带，如 H7")
+    keyway: bool = Field(False, description="孔内轮毂键槽（GB/T 1095，按孔径查槽宽 b 与槽深 t2，贯通孔长，槽宽 JS9）")
+    keyway_width: Num | None = Field(None, description="键槽宽，缺省按孔径查表")
 
 
 class CenterHoles(Strict):

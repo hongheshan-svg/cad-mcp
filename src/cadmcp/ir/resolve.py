@@ -584,8 +584,16 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 zz += L
             if wall < 1.0:
                 raise CadError(SPEC_INVALID, f"内孔 Φ{bd:g} 壁厚 {wall:g} mm < 1 mm（超出轴段外径）", hint="减小孔径或孔深")
+            kw = None
+            if b.keyway:
+                from ..standards import hub_keyway
+                kb, t2 = hub_keyway(bd, ev(b.keyway_width) if b.keyway_width is not None else None)
+                kw = {"name": f"BORE{k + 1}_KW", "width": kb, "t2": t2, "top": bd / 2 + t2}
+                if wall - t2 < 1.0:
+                    raise CadError(SPEC_INVALID, f"内孔 Φ{bd:g} 的键槽（t2={t2:g}）处壁厚不足 1 mm")
+                volume -= kb * t2 * (z1 - z0)
             shaft_bores.append({"name": f"BORE{k + 1}", "z0": z0, "z1": z1, "d": bd, "tol": b.tolerance,
-                                "side": "through" if through else b.side, "through": through})
+                                "side": "through" if through else b.side, "through": through, "kw": kw})
             volume -= math.pi * bd * bd / 4 * (z1 - z0)
         for a, b in [(a, b) for i, a in enumerate(shaft_bores) for b in shaft_bores[i + 1:]]:
             if a["z0"] < b["z1"] - 1e-9 and b["z0"] < a["z1"] - 1e-9 and not (a["through"] or b["through"]):

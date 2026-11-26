@@ -224,6 +224,13 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
             feat("feat.extrude", b["name"], "内孔", plane={"ref": "TOP", "offset": b["z0"]},
                  entities=[_circle((0, 0), b["d"] / 2)], depth=b["z1"] - b["z0"], direction="normal", op="cut",
                  through_all=False)
+            if b.get("kw"):  # 轮毂键槽在 −Y（与 SW 一致）
+                k = b["kw"]
+                hw = k["width"] / 2
+                pts = [(-hw, 0.0), (hw, 0.0), (hw, -k["top"]), (-hw, -k["top"])]
+                feat("feat.extrude", k["name"], "轮毂键槽", plane={"ref": "TOP", "offset": b["z0"]},
+                     entities=[_line(pts[i], pts[(i + 1) % 4]) for i in range(4)], depth=b["z1"] - b["z0"],
+                     direction="normal", op="cut", through_all=False)
         for f in p.shaft_features:
             if f["kind"] == "thread":
                 cyl_pt, start_pt = shaft_thread_points(p, f)

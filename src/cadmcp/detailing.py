@@ -1067,6 +1067,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     ch_r = max([text_width(f"GB/T 4459.5-{h['code']}", 3.0) + 12 for h in p.center_holes if h["end"] == "end"]
                + [text_width(h["callout"], 3.0) + 12 for h in p.end_holes if h["side"] == "end"], default=0.0)
     col_w = [Lv + max(92 if p.gear else 0, ch_r)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
+    hub_kws = [b for b in p.shaft_bores if b.get("kw")]
+    if hub_kws:  # 内键槽：主视图右侧加左视图（第一角：从左端看的视图放在右边），注槽宽与 d + t2
+        col_w.append(D + 30)
     # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
@@ -1082,6 +1085,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     front.size_mm = (wv, D * scale)
     front.origin_on_sheet = (x0 + wv / 2, cy_main)
     views = [front]
+    if hub_kws:
+        views.append(ViewPlan("left", scale, (D * scale, D * scale), (x0 + wv + GAP + 4 + D * scale / 2, cy_main)))
     cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
     # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
     used = {d["name"] for d in p.datums} | {"I", "O"}
@@ -1109,8 +1114,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             z += L
         dims.append(Dim("front", "linear", "z", Ltot, f"{Ltot:g}", "overall_z", (0.0, Ltot)))
         for k, b in enumerate(p.shaft_bores):  # 内孔：直径（带公差带与偏差）；盲孔注孔深（从孔口端面起）
-            dims.append(Dim("front", "diameter", None, b["d"], _dia_text(b["d"], b["tol"], spec.fit_deviations),
-                            f"bore{k}_dia", ((b["z0"] + b["z1"]) / 2, b["d"])))
+            if not b.get("kw"):  # 带键槽的孔：剖切面过键槽、主视图无上孔壁 → 直径改在左视图引线标注（见下）
+                dims.append(Dim("front", "diameter", None, b["d"], _dia_text(b["d"], b["tol"], spec.fit_deviations),
+                                f"bore{k}_dia", ((b["z0"] + b["z1"]) / 2, b["d"])))
             if not b["through"]:
                 dims.append(Dim("front", "linear", "z", b["z1"] - b["z0"], f"{b['z1'] - b['z0']:g}", f"{b['name']}_depth",
                                 (b["z0"], b["z1"])))
@@ -1160,6 +1166,25 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
+    if hub_kws and spec.dimensions != "none":  # 视图位置已定（含上方让位下移）后再算端视图尺寸的图纸坐标
+        lv = next(v for v in views if v.type == "left")
+        ex_, ey_ = lv.origin_on_sheet
+        for b in hub_kws:
+            k = b["kw"]
+            dims += hub_keyway_dims("left", ex_, ey_, scale, b["d"] / 2, k["width"],
+                                    k["top"], k["name"], lambda t: t if spec.fit_deviations else t.split("(")[0])
+            # 孔径：左下 45° 引线，箭头在孔壁上（同齿轮轴孔）
+            kb = p.shaft_bores.index(b)
+            rb, kk = b["d"] / 2, 0.7071
+            anchor = (ex_ - rb * scale * kk, ey_ - rb * scale * kk)
+            rr = D / 2 * scale + 6
+            elbow = (ex_ - rr * kk, ey_ - rr * kk)
+            text = _dia_text(b["d"], b["tol"], spec.fit_deviations)
+            tw = text_width(text, 3.5)
+            dims.append(Dim("left", "callout", None, b["d"], text, f"bore{kb}_dia", None, {"label": {
+                "anchor": (round(anchor[0], 2), round(anchor[1], 2)), "elbow": (round(elbow[0], 2), round(elbow[1], 2)),
+                "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
+                "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
     if p.shaft_bores:  # 空心轴/套类：主视图过轴线原位全剖（GB/T 4458.6；剖切面过对称面且按投影配置，不标注）
         f0 = views[0]
         cx_, cy_ = f0.origin_on_sheet
@@ -1712,6 +1737,31 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     if p.gear and any(f["kind"] == "gear" and f["step"] == j for f in p.shaft_features):
         tj = p.gear["tip_tolerance"]
     return _dia_text(p.shaft_steps[j][1], tj, deviations)
+
+
+def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev) -> list[Dim]:
+    """端视图上的轮毂键槽尺寸（GB/T 1095）：槽宽 b（JS9）与 d + t2（上偏差按 b）。键槽在端视图上方。
+    ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。"""
+    from .standards import tol_text
+    yk = cy + top * sc
+    tw_ = dev(tol_text(w, "JS9"))
+    tx = ex - w / 2 * sc - 1.5 - text_width(tw_, 3.5) / 2  # 文字放在左尺寸界线之外，不压中心线与界线
+    yw = (yk + cy + (rb * rb - w * w / 4) ** 0.5 * sc) / 2  # 键槽侧壁中点
+    out = [Dim(view, "linear", "x", w, tw_, f"{name}_w", None, {
+        "sheet_pts": [(round(ex - w / 2 * sc, 2), round(yk, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
+        "pick_pts": [(round(ex - w / 2 * sc, 2), round(yw, 2)), (round(ex + w / 2 * sc, 2), round(yw, 2))],
+        "sheet_pos": (round(tx, 2), round(yk + 8, 2)), "orient": "h"})]
+    t = 0.1 if w <= 6 else 0.2  # GB/T 1095 轮毂槽深 t2 上偏差
+    tt = dev(f"{top + rb:g}(+{t:g}/0)")
+    half = text_width(tt, 3.5) / 2
+    ty = max(cy + (top - rb) / 2 * sc, cy + half + 1.5)  # 文字不压水平中心线
+    if ty + half > yk - 1:  # 也不压槽底的尺寸界线：放不下就移到尺寸界线之外（上方），尺寸线延长
+        ty = yk + 1.5 + half
+    out.append(Dim(view, "linear", "y", top + rb, tt, f"{name}_t", None, {
+        "sheet_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
+        "pick_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex, 2), round(yk, 2))],  # 孔底象限点、槽底中点
+        "sheet_pos": (round(ex + rb * sc + 8, 2), round(ty, 2)), "orient": "v"}))
+    return out
 
 
 def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):

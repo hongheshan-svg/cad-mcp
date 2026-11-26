@@ -102,6 +102,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 套类/空心轴：`base.bores: [{"diameter": 30, "tolerance": "H7"}, {"diameter": 36, "length": 8, "side": "start"}]`
   （省略 length = 通孔；盲孔平底，从 side 端起）。主视图自动过轴线原位全剖，内孔注直径（带偏差）与孔深。
   壁厚 < 1 mm、两端盲孔重叠会报错；暂不支持内孔与键槽/外螺纹/齿轮同在一件上（可用环槽）。
+  内孔加 `"keyway": true` 得轮毂键槽（GB/T 1095 按孔径查 b、t2，贯通孔长）：主视图剖切面过键槽，加左视图注
+  槽宽 JS9、d+t2 与孔径（引线）。
   内孔可作精度目标 `bore:<序号>`（从 0 起）：基准 `{"name": "A", "target": "bore:0"}` 画在孔径尺寸线处的孔壁上；
   `auto_precision: true` 时套类自动以精度最高的配合内孔为基准 A，外圆配合段注对 A 的径向圆跳动，内孔补 Ra。
 - 轴类可设 `"auto_precision": true` 让平台按工程惯例补精度：两端无键槽的轴承位（js/k/m/n、IT5–6）为基准 A、B 并注
