@@ -3090,7 +3090,11 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
                 -abs(z - (z0 + z1) / 2))
     z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
     span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
-    return z, sd, gap(*span) * sc
+    g = gap(*span) * sc
+    if g < 0.2:  # 轮廓内放不下：文字伸到轮廓外，尺寸线取离两侧轴肩最远处（避开相邻粗段的轴肩线）
+        z = min(cands, key=lambda z_: abs(z_ - (z0 + z1) / 2))
+        sd = "left"
+    return z, sd, g
 
 
 def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
