@@ -358,7 +358,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
         if k == "shoulder":  # 轴肩端面：锚点 = 端面上半段中点；框格位置见 shoulder_gtol_geom
             g = shoulder_gtol_geom(p, int(ref), views[0].scale if views else 1.0)
-            return "front", (g["z"], (g["r_small"] + g["r_large"]) / 2), (-g["from"], 0), {"shoulder": int(ref)}
+            return "front", (g["z"], g["r_at"]), (-g["from"], 0), {"shoulder": int(ref)}
         i = int(ref)
         z0, z1 = p.step_z(i)
         d = p.shaft_steps[i][1]
@@ -1751,7 +1751,7 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 g = shoulder_gtol_geom(p, d.extra["shoulder"], v.scale)
                 xf = shaft_sx(v, L, g["z"])
                 xl = shaft_sx(v, L, g["z_leader"])
-                ym = cy + (g["r_small"] + g["r_large"]) / 2 * v.scale
+                ym = cy + g["r_at"] * v.scale
                 d.extra = {**d.extra, "sheet_at": (round(xf, 2), round(ym, 2)), "sheet_pos": (round(xl, 2), round(row, 2)),
                            "elbow": {"x_face": round(xf, 2), "y": round(ym, 2), "x_leader": round(xl, 2), "dir": g["from"]}}
             elif d.kind == "gtol":
@@ -2066,8 +2066,16 @@ def shoulder_gtol_geom(p: ResolvedPart, i: int, sc: float) -> dict[str, float]:
     lay = shaft_gtol_layout(p, sc)
     key = next((k for k in lay if k.endswith(f"@shoulder:{i}")), None)
     zl = lay[key][0] if key else z - sgn * 6 / sc
-    return {"z": z, "r_small": min(da, db) / 2, "r_large": max(da, db) / 2, "from": sgn, "z_leader": zl,
-            "small": i if da < db else i + 1}
+    rs, rl = min(da, db) / 2, max(da, db) / 2
+    big = i + 1 if da < db else i
+    gaps = [(rs, rl)]  # 端面上被法兰孔（剖视中上半剖到孔）断开的部分不可作箭头落点
+    for fh in getattr(p, "flange_holes", None) or []:
+        if fh["step"] == big:
+            ha, hb = fh["pcd"] / 2 - fh["d"] / 2, fh["pcd"] / 2 + fh["d"] / 2
+            gaps = [seg for a, b in gaps for seg in ((a, min(b, ha)), (max(a, hb), b)) if seg[1] - seg[0] > 1e-6]
+    a, b = max(gaps, key=lambda t: t[1] - t[0]) if gaps else (rs, rl)
+    return {"z": z, "r_small": rs, "r_large": rl, "from": sgn, "z_leader": zl,
+            "small": i if da < db else i + 1, "r_at": (a + b) / 2}
 
 
 _LAYOUT_CACHE: dict = {}

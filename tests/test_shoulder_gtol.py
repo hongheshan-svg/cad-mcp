@@ -73,3 +73,29 @@ def test_auto_bearing_shoulders():
     assert not out["crossings"] and not out["collisions"]
     lay = shaft_gtol_layout(p, plan.scale)
     assert len(lay) == 6 and max(r for _, r in lay.values()) <= 2
+
+
+EC = {"name": "EC1", "part_no": "EC-01", "title": "轴承端盖", "material": "HT200", "auto_precision": True,
+      "base": {"type": "shaft", "chamfer": 1, "steps": [
+          {"length": 10, "diameter": 110}, {"length": 18, "diameter": 72, "tolerance": "f9"}],
+          "flange_holes": [{"step": 0, "count": 6, "pcd": 92, "diameter": 9}]}}
+
+
+def test_auto_flange_cover():
+    """盘盖类：止口为基准 A，法兰定位端面对 A 的垂直度；箭头落在端面实体上（避开剖到的法兰孔）。"""
+    from cadmcp.precision import perpendicularity
+    p = resolve_part(PartSpec.model_validate(EC))
+    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "step:1")]
+    assert [(g["type"], g["target"], g["datums"], g["value"]) for g in p.geotols] == \
+        [("perpendicularity", "shoulder:0", ["A"], perpendicularity(110, 8))]
+    assert {r["target"] for r in p.roughness} == {"step:1"}
+    plan = plan_part_drawing(DrawingSpec(model="EC1"), p)
+    g = next(d for d in plan.dims if d.kind == "gtol")
+    cy = plan.views[0].origin_on_sheet[1]
+    r = (g.extra["sheet_at"][1] - cy) / plan.views[0].scale
+    assert 36 < r < 46 - 4.5  # 止口 Φ72 与孔（PCD 92、Φ9）之间
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    # 有配合内孔时仍按套类规则（内孔为基准）
+    q = resolve_part(PartSpec.model_validate({**EC, "base": {**EC["base"], "bores": [{"diameter": 40, "tolerance": "H7"}]}}))
+    assert [d["target"] for d in q.datums] == ["bore:0"]

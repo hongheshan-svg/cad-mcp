@@ -6,9 +6,11 @@
   齿轮段齿顶圆跳动按齿坯公差（gear.blank_runout）。
 - 配合段未注粗糙度时按公差等级补 Ra（与审图规则 G004 一致）。
 - 套类：精度最高的配合内孔（IT ≤ 7）为基准 A，外圆配合段注对 A 的径向圆跳动，内孔按公差等级补 Ra。
+- 盘盖类（法兰均布孔 + 相邻较小的有公差段即止口，IT ≤ 9）：止口为基准 A，法兰定位端面注对 A 的垂直度
+  （GB/T 1184 垂直度，止口 IT ≤ 7 取 7 级、否则 8 级，主参数取法兰直径），止口补 Ra。
 用户已写基准或几何公差时不改动这两类，只补粗糙度。
 
-数值来源核实状态：GB/T 275 轴颈圆柱度与轴肩端面圆跳动、GB/T 1184 圆跳动两张表按设计手册常用值录入，尚未对照标准原文核实
+数值来源核实状态：GB/T 275 轴颈圆柱度与轴肩端面圆跳动、GB/T 1184 圆跳动与垂直度按设计手册常用值录入，尚未对照标准原文核实
 （docs/WINDOWS_TEST.md「待核实的标准数值」）；出图前如有疑问以标准原文为准。
 """
 from __future__ import annotations
@@ -41,6 +43,17 @@ def bearing_shoulder_runout(d: float) -> float:
     return _BEARING_SHOULDER[i] / 1000
 
 
+# GB/T 1184 附录 垂直度（µm）7 级 / 8 级，主参数 L（被测端面直径）段 ≤10、>10–16、>16–25、>25–40、>40–63、
+# >63–100、>100–160、>160–250、>250–400、>400–630。TODO(核对原文)
+_PERP_STEPS = (10, 16, 25, 40, 63, 100, 160, 250, 400, 630)
+_PERP = {7: (6, 8, 10, 12, 15, 20, 25, 30, 40, 50), 8: (10, 12, 15, 20, 25, 30, 40, 50, 60, 80)}
+
+
+def perpendicularity(L: float, grade: int) -> float:
+    i = next((k for k, hi in enumerate(_PERP_STEPS) if L <= hi), len(_PERP_STEPS) - 1)
+    return _PERP[grade][i] / 1000
+
+
 def bearing_cylindricity(d: float) -> float:
     i = next((k for k, hi in enumerate(_DIA) if d <= hi), len(_DIA) - 1)
     return _BEARING_CYL[i] / 1000
@@ -62,6 +75,19 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
     bearings = [i for i, (fd, it) in fits.items() if fd in _BEARING_FITS and it <= 6 and i not in keyed]
     datums, tols, rough = list(spec.datums), list(spec.tolerances), list(spec.roughness)
     bores = [(k, g, float(ev(b.diameter))) for k, b in enumerate(spec.base.bores) if (g := _grade(b.tolerance.lower() if b.tolerance else None)) and g[1] <= 7]
+    flange = {fh.step for fh in spec.base.flange_holes}
+    spig = [(j, g) for f in sorted(flange) for j in (f - 1, f + 1)
+            if 0 <= j < len(steps) and j not in flange and (g := _grade(steps[j][0])) and g[1] <= 9
+            and steps[j][1] < steps[f][1]]
+    if not datums and not tols and spig and not bores:
+        # 盘盖类（法兰 + 止口）：止口为基准 A，法兰定位端面（法兰与止口之间的端面）注对 A 的垂直度（GB/T 1184）
+        j, (_, it) = min(spig, key=lambda t: (t[1][1], -steps[t[0]][1]))
+        f = j - 1 if j - 1 in flange else j + 1
+        datums = [Datum(name="A", target=f"step:{j}")]
+        tols.append(GeoTol(type="perpendicularity", value=perpendicularity(steps[f][1], 7 if it <= 7 else 8),
+                           target=f"shoulder:{min(j, f)}", datums=["A"]))
+        if f"step:{j}" not in {r.target for r in rough} and it in IT_GRADE_RA:
+            rough.append(Roughness(target=f"step:{j}", ra=IT_GRADE_RA[it]))
     if not datums and not tols and bores:
         # 套类：精度最高（同级取最大）的配合内孔为基准 A，外圆配合段注对 A 的径向圆跳动
         kb = min(bores, key=lambda t: (t[1][1], -t[2]))[0]
