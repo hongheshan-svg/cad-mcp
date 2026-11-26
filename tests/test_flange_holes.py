@@ -35,9 +35,15 @@ def test_bad(kw, msg):
         resolve_part(PartSpec.model_validate(_spec(**kw)))
 
 
-def test_needs_bore():
-    with pytest.raises(CadError, match="内孔"):
-        resolve_part(PartSpec.model_validate({**EC, "base": {**EC["base"], "bores": []}}))
+def test_blind_cover():
+    """闷盖（无内孔）：主视图同样全剖，剖面线连过轴线。"""
+    p = resolve_part(PartSpec.model_validate({**EC, "base": {**EC["base"], "bores": []}}))
+    plan = plan_part_drawing(DrawingSpec(model="EC1"), p)
+    assert plan.views[0].full_section is not None
+    svg, out = render(plan, p)
+    assert "hollowU" in svg and not out["crossings"] and not out["collisions"]
+    ops = compile_drawing(plan, "EC1.SLDPRT")
+    assert any(o.op == "broken_out_section" for o in ops)
 
 
 @pytest.mark.parametrize("n", [3, 4, 6, 8])

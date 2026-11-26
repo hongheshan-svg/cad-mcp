@@ -200,10 +200,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
 
     segs = _profile(part)
     c = part.shaft_chamfer
-    if part.shaft_bores:
+    sect = bool(part.shaft_bores or part.flange_holes)  # 主视图全剖：套类/空心轴，或带法兰均布孔的盘盖（含闷盖）
+    if sect:
         _hollow_section(s, part, P, segs, c, Ltot)
+        s.text_bg = True  # 此后的尺寸数字垫白底：压在剖面线上时剖面线断开
     # 外形：上下轮廓线 + 轴肩/槽边竖线（空心件由 _hollow_section 画剖视轮廓）
-    for sign in (() if part.shaft_bores else (1, -1)):
+    for sign in (() if sect else (1, -1)):
         pts = [P(0, 0), P(0, sign * (segs[0][2] - c))]
         if c:
             pts.append(P(c, sign * segs[0][2]))
@@ -213,11 +215,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             pts.append(P(Ltot, sign * (segs[-1][2] - c)))
         pts.append(P(Ltot, 0))
         s.poly(pts, THICK, close=False)
-    for (a, b, r), (a2, b2, r2) in zip(segs, segs[1:]) if not part.shaft_bores else ():
+    for (a, b, r), (a2, b2, r2) in zip(segs, segs[1:]) if not sect else ():
         if abs(r - r2) > 1e-9:
             rm = max(r, r2)
             s.line(*P(b, -rm), *P(b, rm), THICK)
-    if c and not part.shaft_bores:
+    if c and not sect:
         for z, r in ((c, segs[0][2]), (Ltot - c, segs[-1][2])):
             s.line(*P(z, -r), *P(z, r), THICK)
     # 轴端螺孔（不可见螺纹，GB/T 4459.1：全部细虚线）：小径（底孔）到底孔深 + 118° 钻尖，大径与终止线到螺纹深
@@ -252,7 +254,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         s.line(*P(f["z0"], -r1), *P(f["z1"], -r1), THIN)
         zt = f["z0"] if f["side"] == "end" else f["z1"]  # 终止线在螺纹靠轴内的一端
         if 1e-6 < zt < Ltot - 1e-6:
-            if part.shaft_bores:  # 剖视中终止线只画螺纹牙高部分（大径到小径）
+            if sect:  # 剖视中终止线只画螺纹牙高部分（大径到小径）
                 for sg in (1, -1):
                     s.line(*P(zt, sg * r1), *P(zt, sg * f["d"] / 2), THICK)
             else:
@@ -264,7 +266,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             s.line(*P(f["z0"], sign * f["df"] / 2), *P(f["z1"], sign * f["df"] / 2), THIN)
     # 键槽（朝前，主视图显示其实形）
     kws = [f for f in part.shaft_features if f["kind"] == "keyway"]
-    for f in (kws if not part.shaft_bores else ()):  # 空心轴：键槽在上方，由全剖轮廓表达
+    for f in (kws if not sect else ()):  # 全剖：键槽在上方，由剖视轮廓表达
         rad = f["width"] / 2
         za, zb = f["z0"] + rad, f["z1"] - rad
         pts = [P(zb + rad * math.cos(math.radians(a)), rad * math.sin(math.radians(a))) for a in range(-90, 91, 15)]

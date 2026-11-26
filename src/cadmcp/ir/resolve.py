@@ -625,9 +625,6 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             i = fh.step
             if not 0 <= i < len(steps):
                 raise CadError(SPEC_INVALID, f"flange_holes[{k}]: step {i} 超出范围 0..{len(steps) - 1}")
-            if not shaft_bores:
-                raise CadError(CAPABILITY_UNSUPPORTED, "法兰均布孔目前只用于有内孔的盘/套类（主视图全剖）",
-                               hint="加一个内孔 bores，或改用 extrude 底座 + 圆周阵列孔")
             pcd, hd = ev(fh.pcd), ev(fh.diameter)
             z0 = sum(L for L, _ in steps[:i])
             z1 = z0 + steps[i][0]
@@ -933,11 +930,11 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                         "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
-    if shaft_bores and any(f["kind"] == "gear" for f in shaft_feats):
+    if (shaft_bores or flange_holes) and any(f["kind"] == "gear" for f in shaft_feats):
         raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带齿轮",
                        hint="套类零件先用内孔 + 环槽/外螺纹/键槽；或拆成实心轴")
     for f in shaft_feats:
-        if f["kind"] == "keyway" and shaft_bores:
+        if f["kind"] == "keyway" and (shaft_bores or flange_holes):
             # 空心轴主视图全剖：键槽转到上方（−Y，SW 轴类主视图朝上，同轮毂键槽），剖切面过键槽、主视图显示槽深
             if round(f["angle"]) % 360 not in (0, 270):
                 raise CadError(SPEC_INVALID, f"{f['name']}: 空心轴键槽朝向固定为主视图上方（angle 缺省或 270）")

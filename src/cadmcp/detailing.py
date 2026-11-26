@@ -1233,7 +1233,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 "anchor": (round(anchor[0], 2), round(anchor[1], 2)), "elbow": (round(elbow[0], 2), round(elbow[1], 2)),
                 "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
-    if p.shaft_bores:  # 空心轴/套类：主视图过轴线原位全剖（GB/T 4458.6；剖切面过对称面且按投影配置，不标注）
+    if p.shaft_bores or p.flange_holes:  # 空心轴/套类/盘盖：主视图过轴线原位全剖（GB/T 4458.6；剖切面过对称面且按投影配置，不标注）
         f0 = views[0]
         cx_, cy_ = f0.origin_on_sheet
         w_, h_ = f0.size_mm

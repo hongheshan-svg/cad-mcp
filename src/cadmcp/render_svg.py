@@ -28,6 +28,7 @@ class _Svg:
         self.leaders: list[tuple[float, float, float, float]] = []  # 细实线（引线/尺寸线/界线），查穿字
         self.thins: list[tuple[float, float, float, float]] = []  # 线宽 = THIN 的实线（尺寸线、尺寸界线、短引线）
         self.outlines: list[tuple[float, float, float, float]] = []  # 粗实线（可见轮廓），查压字
+        self.text_bg = False  # True：文字下垫白底（剖面线遇尺寸数字断开，GB/T 4457.5）
 
     def collisions(self) -> list[tuple[str, str]]:
         """文字框两两重叠（重叠面积 > 较小框的 15%）。"""
@@ -94,6 +95,9 @@ class _Svg:
         box = (x0, y - 0.2 * size, x0 + w, y + 0.8 * size) if not rotate else \
               (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.1 * size, y + w / 2 if anchor == "middle" else y)
         self.texts.append((s, box))
+        if self.text_bg:
+            self.parts.append(f"<rect x='{box[0]:.2f}' y='{self.y(box[3]):.2f}' width='{box[2] - box[0]:.2f}' "
+                              f"height='{box[3] - box[1]:.2f}' fill='white' stroke='none'/>")
         rot = f" transform='rotate({rotate} {x:.2f} {self.y(y):.2f})'" if rotate else ""
         from .detailing import DEV_GAP, DEV_RATIO, _plain_w, split_deviation
         sp = split_deviation(s)
@@ -736,6 +740,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if part is not None and part.base_type == "shaft":
         from .render_shaft import render_shaft
         render_shaft(s, plan, part, rendered_refs)
+        s.text_bg = False
         if plan.gear_table:
             from .render_gear import draw_param_table
             draw_param_table(s, plan.gear_table)
