@@ -278,3 +278,16 @@ def test_creo_show_axes_per_view():
     ops = tk_detail_ops(plan_part_drawing(DrawingSpec(model="CA"), p))
     views = {o.args["view"] for o in ops if o.op == "tk.drw.show_axes"}
     assert "V_TOP" in views and not any("ISO" in v for v in views)
+
+
+def test_hole_roughness_stays_in_plan_view_when_bore_too_short():
+    """孔穿进对面型腔、剩下的孔壁太矮放不下符号时，Ra 仍标在孔所在面视图的孔旁。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    import sys
+    sys.path.insert(0, "tests")
+    from cast_bracket import cast_base
+    p = resolve_part(PartSpec.model_validate(cast_base()))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    ra = [d for d in plan.dims if d.ref.startswith("ra:hole:")]
+    assert ra and all(not (d.extra or {}).get("in_section") for d in ra)

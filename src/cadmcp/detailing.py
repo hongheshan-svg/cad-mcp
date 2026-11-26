@@ -343,8 +343,9 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             u, w = vc(inst.xyz, ha), vc(inst.xyz, va)
             if kind == "roughness":
                 return view, (u - h.max_dia / 2, w), (-1, 0)
-            if kind == "datum":
-                return view, (u, w - h.max_dia / 2), (0, -1)
+            if kind == "datum":  # 孔的基准符号贴在左下 45° 的轮廓上，沿径向引出：避开孔的十字中心线
+                k = 0.7071
+                return view, (u - h.max_dia / 2 * k, w - h.max_dia / 2 * k), (-k, -k)
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
         i = int(ref)
         z0, z1 = p.step_z(i)
@@ -831,7 +832,15 @@ def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 continue
             prof = hole_profile(h)
             depths = [dd for dd, rr in prof if abs(rr - r) < 1e-6]
-            zmid_depth = (min(depths) + max(depths)) / 2 if depths else h.depth / 2
+            lo_d, hi_d = (min(depths), max(depths)) if depths else (0.0, h.depth)
+            for pk in p.pockets:  # 孔穿进对面的型腔：孔壁只到型腔底
+                if pk["face"] != h.face and pk["face"] in ("top", "bottom") and not pk.get("through"):
+                    u0, u1, v0, v1 = pk["profile"].bbox2d
+                    if u0 <= inst.xyz[0] <= u1 and v0 <= inst.xyz[1] <= v1:
+                        hi_d = min(hi_d, (p.bbox.zmax - p.bbox.zmin) - pk["depth"])
+            if (hi_d - lo_d) * vscale.get(sec.view, 1.0) < 12:  # 孔壁太矮放不下符号（√ 高 8.4 + 文字）
+                continue
+            zmid_depth = (lo_d + hi_d) / 2
             walls = []
             for sgn in (-1, 1):
                 q = list(inst.xyz)
@@ -1352,7 +1361,11 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
             if d.kind == "roughness" and (nx, ny) != (0, 1):  # 同 render_gdt.roughness：引出 8 mm 后画符号
                 hard.append(_ra_box(x, y, nx, ny, d.text))
             else:
-                hard.append((x - 4, y - 14, x + 26, y + 2) if d.kind != "datum" else (x - 5, y - 14, x + 5, y + 2))
+                if d.kind == "datum":  # 三角 + 7 mm 引线 + 方框（沿法线）
+                    bx_, by_ = x + nx * (7 + 3.5), y + ny * (7 + 3.5)
+                    hard.append((min(x, bx_ - 4.5), min(y, by_ - 4.5), max(x, bx_ + 4.5), max(y, by_ + 4.5)))
+                else:
+                    hard.append((x - 4, y - 14, x + 26, y + 2))
     for s in plan.sections:  # 局部剖区域（剖面线 + 波浪线）：文字不得压在上面
         if s.kind == "local":
             loc = local_section_sheet(plan, s)
@@ -1470,15 +1483,17 @@ def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below:
             if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
                 cost += 5000
             cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
-            for sb in soft:  # 压视图：120；骑在视图轮廓线上（部分在内）更差：+250
+            for sb in soft:  # 压视图：120；骑在视图轮廓线上（部分在内）更差：+600
                 a_ = _box_hit(box, sb)
                 if a_ > 0:
-                    cost += 120 + (250 if a_ < (box[2] - box[0]) * (box[3] - box[1]) - 1e-6 else 0)
+                    cost += 120 + (600 if a_ < (box[2] - box[0]) * (box[3] - box[1]) - 1e-6 else 0)
             cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
             cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
             cost += sum(300 for l1, l2 in leaders if _seg_box(l1, l2, box))  # 文字不压先放的引线
             sx_, sy_ = ax + 1.5 * math.cos(math.radians(ang)), ay + 1.5 * math.sin(math.radians(ang))  # 锚点本身可能落在别的框内
             cost += sum(300 for hb in hard if _seg_box((sx_, sy_), (ex, ey), hb))
+            cost += sum(150 for fb in feat if _seg_box((sx_, sy_), (ex, ey), fb)  # 引线穿过别的孔/型腔
+                        and not (fb[0] <= ax0 <= fb[2] and fb[1] <= ay0 <= fb[3]))
             if best is None or cost < best[0]:
                 best = (cost, ex, ey, dirn, box, at_, ax, ay)
     return best

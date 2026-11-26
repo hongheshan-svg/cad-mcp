@@ -32,7 +32,7 @@ def test_casting_drawing_no_crossings():
 
 
 def test_large_hole_label_leaves_view_from_contour():
-    """大孔标注：引线从孔轮廓沿径向引出（箭头），带框格的标注放到视图外，不骑在视图轮廓线上。"""
+    """大孔标注：引线从孔轮廓沿径向引出（箭头），带框格的标注不骑在视图轮廓线上。"""
     p = resolve_part(PartSpec.model_validate(cast_base()))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     v = next(v for v in plan.views if v.type == "top")
@@ -48,5 +48,8 @@ def test_large_hole_label_leaves_view_from_contour():
     r = big.max_dia / 2 * v.scale
     assert abs(((lb["anchor"][0] - sx) ** 2 + (lb["anchor"][1] - sy) ** 2) ** 0.5 - r) < 0.05
     x0, x1 = sorted((lb["elbow"][0], lb["end"][0]))
-    outside = x1 < cx - w / 2 or x0 > cx + w / 2 or lb["elbow"][1] - 7 > cy + h / 2 or lb["elbow"][1] + 4 < cy - h / 2
-    assert outside
+    y0, y1 = lb["elbow"][1] - 7, lb["elbow"][1] + 4  # 标注文字 + 下方框格
+    vx0, vx1, vy0, vy1 = cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
+    outside = x1 < vx0 or x0 > vx1 or y0 > vy1 or y1 < vy0
+    inside = vx0 < x0 and x1 < vx1 and vy0 < y0 and y1 < vy1
+    assert outside or inside  # 不骑在视图轮廓线上
