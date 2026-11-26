@@ -896,13 +896,18 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(vx1 + 6, py, d.text, 3, "start")
             elif d.kind == "ordinate" and d.at is not None:
                 px, py = P(*d.at)
+                # 与剖切符号起止端（粗短画 + 箭头）同一位置的坐标值外移，避开剖切符号
+                cut_ends = [V(sec_.cut_points[k]) for sec_ in plan.sections if sec_.parent == v.type and sec_.cut_points
+                            for k in (0, -1)]
                 if d.axis == ha:
-                    s.line(px, vy0 - 1, px, vy0 - 4 - (ord_h % 2) * 3, 0.18)
-                    s.text(px, vy0 - 6.5 - (ord_h % 2) * 3, d.text, 2.5, "middle", -90)
+                    o = 8.0 if any(abs(ex_ - px) < 3 and ey_ < vy0 + 1 for ex_, ey_ in cut_ends) else 0.0
+                    s.line(px, vy0 - 1 - o, px, vy0 - 4 - o - (ord_h % 2) * 3, 0.18)
+                    s.text(px, vy0 - 6.5 - o - (ord_h % 2) * 3, d.text, 2.5, "middle", -90)
                     ord_h += 1
                 else:
-                    s.line(vx1 + 1, py, vx1 + 4 + (ord_v % 2) * 3, py, 0.18)
-                    s.text(vx1 + 5 + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
+                    o = 8.0 if any(abs(ey_ - py) < 3 and ex_ > vx1 - 1 for ex_, ey_ in cut_ends) else 0.0
+                    s.line(vx1 + 1 + o, py, vx1 + 4 + o + (ord_v % 2) * 3, py, 0.18)
+                    s.text(vx1 + 5 + o + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
                     ord_v += 1
             elif d.kind == "weld":
                 _weld_symbol(s, *P(*d.at), d)
