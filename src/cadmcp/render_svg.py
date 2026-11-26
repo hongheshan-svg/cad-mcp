@@ -668,9 +668,83 @@ def _iso_top_features(s, iso, part, ztop):
             continue
         pts = pk["profile"].drawn()
         s.poly([iso(x, y, ztop) for x, y in pts], THICK)
-        if pk["face"] == "top" and not pk.get("through") and pk["profile"].shape != "circle":
+        if pk["face"] == "top" and not pk.get("through"):
+            # 盲型腔：侧壁竖直、口部为凸多边形时，底面上的点可见 ⇔ 其投影落在口部投影之内（视线从口部进入）
             zb = ztop - pk["depth"]
-            s.poly([iso(x, y, zb) for x, y in pts], THIN)
+            mouth = [iso(x, y, ztop) for x, y in pts]
+            n = len(pts)
+            segs = [(iso(*pts[i], zb), iso(*pts[(i + 1) % n], zb)) for i in range(n)]
+            for i in range(n):  # 尖角处的竖棱（圆角/圆形型腔无棱）
+                e1 = (pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+                e2 = (pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1])
+                l1, l2 = math.hypot(*e1), math.hypot(*e2)
+                if l1 and l2 and (e1[0] * e2[0] + e1[1] * e2[1]) / (l1 * l2) < math.cos(math.radians(20)):
+                    segs.append((iso(*pts[i], ztop), iso(*pts[i], zb)))
+            for a, b in segs:
+                c = _clip_convex(a, b, mouth)
+                if c:
+                    s.line(*c[0], *c[1], THICK)
+
+
+def _clip_convex(a, b, poly):
+    """线段 ab 裁剪到凸多边形 poly 内（Cyrus–Beck），无交返回 None。"""
+    n = len(poly)
+    area = sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1] for i in range(n))
+    sg = 1.0 if area > 0 else -1.0
+    t0, t1 = 0.0, 1.0
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    for i in range(n):
+        p, q = poly[i], poly[(i + 1) % n]
+        nx, ny = -(q[1] - p[1]) * sg, (q[0] - p[0]) * sg  # 内法向
+        num = nx * (a[0] - p[0]) + ny * (a[1] - p[1])
+        den = nx * dx + ny * dy
+        if abs(den) < 1e-12:
+            if num < -1e-9:
+                return None
+            continue
+        t = -num / den
+        if den > 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1 - 1e-9:
+            return None
+    return (a[0] + t0 * dx, a[1] + t0 * dy), (a[0] + t1 * dx, a[1] + t1 * dy)
+
+
+ISO_VIEW = (-1.0, -1.0)  # 轴测图视线水平分量（_iso_xy：观察者在 −X、−Y、+Z 方向）
+
+
+def _iso_prism_visible(s, iso, pts, z0, z1) -> bool:
+    """凸轮廓直棱柱的消隐画法：只画朝向观察者的侧面的底边，竖棱只画轮廓线（可见/不可见交界）和
+    两可见侧面相交的尖角。非凸轮廓返回 False（由调用方按旧画法）。"""
+    n = len(pts)
+    if n < 3:
+        return False
+    area = sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)) / 2
+    sg = 1.0 if area > 0 else -1.0
+    cross = [((pts[(i + 1) % n][0] - pts[i][0]) * (pts[(i + 2) % n][1] - pts[(i + 1) % n][1])
+              - (pts[(i + 1) % n][1] - pts[i][1]) * (pts[(i + 2) % n][0] - pts[(i + 1) % n][0])) * sg
+             for i in range(n)]
+    if any(c < -1e-9 for c in cross):
+        return False
+    vis = []
+    for i in range(n):  # 边 i: pts[i] → pts[i+1]，外法向（逆时针）= (dy, −dx)
+        dx, dy = pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]
+        vis.append((dy * sg) * ISO_VIEW[0] + (-dx * sg) * ISO_VIEW[1] > 1e-9)
+    for i in range(n):
+        if vis[i]:
+            s.line(*iso(*pts[i], z0), *iso(*pts[(i + 1) % n], z0), THICK)
+    for i in range(n):  # 顶点 i+1 在边 i 与边 i+1 之间
+        a, b = vis[i], vis[(i + 1) % n]
+        e1 = (pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1])
+        e2 = (pts[(i + 2) % n][0] - pts[(i + 1) % n][0], pts[(i + 2) % n][1] - pts[(i + 1) % n][1])
+        l1, l2 = math.hypot(*e1), math.hypot(*e2)
+        sharp = l1 > 0 and l2 > 0 and (e1[0] * e2[0] + e1[1] * e2[1]) / (l1 * l2) < math.cos(math.radians(20))
+        if a != b or (a and b and sharp):
+            q = pts[(i + 1) % n]
+            s.line(*iso(*q, z0), *iso(*q, z1), THICK)
+    return True
 
 
 def _draw_iso(s, cx, cy, sc, box, part, asm):
@@ -680,13 +754,16 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
         pts = part.profile.drawn()
         z0, z1 = 0.0, part.thickness
-        s.poly([iso(x, y, z0) for x, y in pts], THIN)
         s.poly([iso(x, y, z1) for x, y in pts], THICK)
-        if part.profile.shape == "circle" or pts is not part.profile.outline:  # 圆/圆角：只画轮廓切线
+        if _iso_prism_visible(s, iso, pts, z0, z1):
+            pass  # 凸轮廓：已按可见性画底边与竖棱（消隐）
+        elif part.profile.shape == "circle" or pts is not part.profile.outline:  # 圆/圆角：只画轮廓切线
+            s.poly([iso(x, y, z0) for x, y in pts], THIN)
             xs = [iso(x, y, z0)[0] for x, y in pts]
             for k in (xs.index(min(xs)), xs.index(max(xs))):
                 s.line(*iso(*pts[k], z0), *iso(*pts[k], z1), THICK)
         else:
+            s.poly([iso(x, y, z0) for x, y in pts], THIN)
             for x, y in pts:
                 s.line(*iso(x, y, z0), *iso(x, y, z1), THICK)
         if part.base_type == "sheet_metal":

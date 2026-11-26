@@ -107,3 +107,23 @@ def test_hole_mouth_chamfer():
     import pytest
     with pytest.raises(Exception):
         PartSpec.model_validate({**spec, "features": [{**spec["features"][0], "type": "counterbore"}]})
+
+
+def test_iso_hidden_lines():
+    """轴测图消隐：长方体只画 9 条可见棱（顶 4 + 底 2 + 竖 3）；凹轮廓回退旧画法。"""
+    from cadmcp.render_svg import _clip_convex, _iso_prism_visible
+
+    class S:
+        def __init__(self):
+            self.lines = []
+
+        def line(self, *a):
+            self.lines.append(a)
+    s = S()
+    rect = [(0, 0), (10, 0), (10, 5), (0, 5)]
+    assert _iso_prism_visible(s, lambda x, y, z: (x - y, (x + y) / 2 + z), rect, 0, 2)
+    assert len(s.lines) == 2 + 3
+    assert not _iso_prism_visible(S(), lambda x, y, z: (x, y), [(0, 0), (4, 0), (4, 4), (2, 1), (0, 4)], 0, 1)
+    sq = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    assert _clip_convex((-1, 0.5), (2, 0.5), sq) == ((0, 0.5), (1, 0.5))
+    assert _clip_convex((-1, 2), (2, 2), sq) is None
