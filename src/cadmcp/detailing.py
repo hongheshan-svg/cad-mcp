@@ -784,14 +784,25 @@ def _balance_views(plan: "DrawingPlan") -> None:
         cx, cy = v.origin_on_sheet
         vw, vh = v.size_mm
         return (cx - vw / 2 - pad, cy - dy - vh / 2 - pad, cx + vw / 2 + pad, cy - dy + vh / 2 + pad)
-    fixed = [box(v, 0, 2) for v in plan.views if v.type == "iso"]
-    while m > 2 and any(_box_hit(box(v, m, 16), f) > 0 for v in proj for f in fixed):
+    isos = [v for v in plan.views if v.type == "iso"]
+
+    def iso_room(v):  # 轴测图自身下方可让出的距离（无尺寸，留 4 mm）
+        x0_, y0_, x1_, _ = box(v, 0, 0)
+        return y0_ - 4 - ((col_top + 4) if x1_ > col_x else MARGIN + 2)
+
+    def moves(m):  # 轴测图：能跟着下移就一起移，否则原位
+        return {id(v): (m if iso_room(v) >= m else 0.0) for v in isos}
+    while m > 2:
+        mv = moves(m)
+        if not any(_box_hit(box(v, m, 16), box(w, mv[id(w)], 2)) > 0 for v in proj for w in isos):
+            break
         m -= 2  # 下移后压到轴测图：少移一点
     if m <= 2:
         return
     m = round(m, 1)
-    for v in proj:
-        v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - m)
+    mv = moves(m)
+    for v in proj + isos:
+        v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - mv.get(id(v), m))
 
 
 def notes_x(plan: "DrawingPlan") -> float:
