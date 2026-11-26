@@ -429,8 +429,12 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     n = 1
     if not p.casting.get("blank"):  # 铸件毛坯：尺寸公差按 GB/T 6414（见铸造要求），不倒钝去毛刺
         notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
-        notes.append("2. 锐边倒钝，去毛刺。")
-        n = 3
+        n = 2
+        if spec.general_geometric_tolerance and not p.base_type.startswith("weldment") and p.base_type != "sheet_metal":
+            notes.append(f"{n}. 未注几何公差按 {spec.general_geometric_tolerance}。")
+            n += 1
+        notes.append(f"{n}. 锐边倒钝，去毛刺。")
+        n += 1
     if p.surface_treatment and p.surface_treatment != "无":
         notes.append(f"{n}. 表面处理：{p.surface_treatment}。")
         n += 1
@@ -730,10 +734,30 @@ def right_column_bottom(plan: "DrawingPlan") -> float:
 GR_W, GR_H = 48.0, 10.0  # "其余 √Ra x (√)" 占位（render_gdt.general_roughness）
 
 
+def notes_x(plan: "DrawingPlan") -> float:
+    """技术要求文字块左边 x（图纸 mm）：缺省与标题栏左边对齐；与视图（含 8 mm 尺寸带）重叠时右移到视图右侧，
+    文字仍须在图框内。SVG 与 CAD 共用。"""
+    W, _ = plan.sheet_size
+    x0 = W - 5 - 180
+    if not plan.notes or plan.cut_list or plan.bom:
+        return x0
+    tw = max(text_width(n, 3.5) for n in plan.notes)
+    y_lo, y_hi = 5 + 56 + 6 - 1, 5 + 56 + 6 + 5 * len(plan.notes) + 4
+    boxes = []
+    for v in plan.views:
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        boxes.append((cx - vw / 2 - 8, cy - vh / 2 - 8, cx + vw / 2 + 8, cy + vh / 2 + 8))
+    hit = [b for b in boxes if b[0] < x0 + tw and x0 < b[2] and b[1] < y_hi and y_lo < b[3]]
+    if not hit:
+        return x0
+    x = max(b[2] for b in hit) + 2
+    return x if x + tw <= W - 8 else x0
+
+
 def notes_origin(plan: "DrawingPlan") -> tuple[float, float]:
     """技术要求文字块左下角（图纸 mm，同 render_svg：标题栏上方，最后一行基线）。"""
-    W, _ = plan.sheet_size
-    return (W - 5 - 180, 5 + 56 + 11)
+    return (notes_x(plan), 5 + 56 + 11)
 
 
 def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:

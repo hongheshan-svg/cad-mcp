@@ -1042,8 +1042,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         rendered_refs.append("revisions")
     # 技术要求
     ny = y0 + tbh + 6 + 5 * len(plan.notes)
+    nx = detailing.notes_x(plan)
     for n in plan.notes:
-        s.text(x0, ny, n, 3.5)
+        s.text(nx, ny, n, 3.5)
         ny -= 5
     if plan.notes:
         rendered_refs.append("notes")
