@@ -114,7 +114,8 @@ class SolidWorksAdapter(CadAdapter):
         return BuildResult(ex.saved_path, regen, {"source": "cad"}, {"interferences": rb.get("interferences", [])})
 
     def build_drawing(self, plan, model_file, out_dir, model) -> BuildResult:
-        ops = compile_drawing(plan, str(model_file), {k[8:]: v for k, v in self.templates.items() if k.startswith("drawing_")})
+        ops = compile_drawing(plan, str(model_file), {k[8:]: v for k, v in self.templates.items() if k.startswith("drawing_")},
+                              getattr(model, "shaft_features", None))
         ex, regen = self._run(ops, out_dir, plan.name)
         return BuildResult(ex.saved_path, regen, extra={"rendered": {"dim_count": ex.readback.get("dim_count", 0),
                                                                      "notes": ex.readback.get("notes", [])},

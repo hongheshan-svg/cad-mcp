@@ -8,7 +8,10 @@ AI 不再一步步"点 CAD"：它写一份与 CAD 无关的**设计规格（spec
   <img src="docs/images/part-drawing.png" width="49%" alt="零件图示例：电机安装板">
   <img src="docs/images/assembly-drawing.png" width="49%" alt="装配图示例：气缸推料工位">
 </p>
-<p align="center"><sub>左：Claude Code 根据一句中文需求生成的零件图（模拟 CAD 预览）；右：示例装配图，含明细表与序号</sub></p>
+<p align="center">
+  <img src="docs/images/shaft-drawing.png" width="49%" alt="轴类零件图示例：传动轴（键槽断面、挡圈槽）">
+</p>
+<p align="center"><sub>上左：Claude Code 根据一句中文需求生成的零件图（模拟 CAD 预览）；上右：示例装配图，含明细表与序号；下：轴类零件图，键槽按 GB/T 1095 查表并自动出断面图</sub></p>
 
 > **项目状态：早期（v0.2）**。平台核心已在模拟 CAD 上完整跑通；**SolidWorks COM 执行器与 Creo 适配器已编写、尚未实机验证**。详见 [实现状态](docs/DESIGN.md#16-实现状态2026-11-26)。
 
@@ -112,8 +115,8 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 
 | 支持 | 暂不支持 |
 |------|---------|
-| 板/块/L 形件（外形、螺纹孔/过孔/沉孔/销孔/腰型孔、型腔、凸台、倒角圆角，含内侧面特征） | 键槽、退刀槽、斜孔 |
-| 阶梯轴 | 焊接件、铸件 |
+| 板/块/L 形件（外形、螺纹孔/过孔/沉孔/销孔/腰型孔、型腔、凸台、倒角圆角，含内侧面特征） | 斜孔、螺纹轴端 |
+| 阶梯轴（键槽、挡圈槽、退刀槽、端部倒角、配合公差，自动出断面图） | 焊接件、铸件 |
 | 简单钣金（直边折弯、展开尺寸） | 复杂曲面 |
 | 标准件/外购件装配、BOM | Creo 从零建模（需 UDF 库或 TOOLKIT 授权） |
 

@@ -144,7 +144,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             for iid in r["instances"]:
                 item_of[iid] = r["item"]
 
-    for v in plan.views:
+    if part is not None and part.base_type == "shaft":
+        from .render_shaft import render_shaft
+        render_shaft(s, plan, part, rendered_refs)
+    for v in ([] if part is not None and part.base_type == "shaft" else plan.views):
         sc = v.scale * (0.5 if v.type == "iso" else 1)
         cx, cy = v.origin_on_sheet
         if v.type == "flat_pattern":  # 基本视图按 GB 不标名称；展开图需注明

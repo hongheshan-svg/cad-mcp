@@ -78,6 +78,8 @@ class ViewPlan:
     scale: float
     size_mm: tuple[float, float]  # 图纸上的尺寸
     origin_on_sheet: tuple[float, float]  # 视图中心在图纸上的位置
+    label: str = ""  # 断面图名称（如 A-A）
+    target: str = ""  # 断面图对应的特征
 
 
 @dataclass
@@ -97,6 +99,7 @@ class DrawingPlan:
     flat_pattern: tuple[float, float] | None = None
     name: str = ""  # 图纸文件名（默认 <model>_DRW）
     missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
+    layout: str = "standard"  # standard | shaft（轴线水平 + 移出断面）
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -233,7 +236,37 @@ def _dedupe_notes(extra: list[str], auto: list[str], treatment: str | None) -> l
     return out
 
 
+def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: float, today: date | None):
+    notes = ["技术要求："]
+    notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
+    notes.append("2. 锐边倒钝，去毛刺。")
+    n = 3
+    if p.surface_treatment:
+        notes.append(f"{n}. 表面处理：{p.surface_treatment}。")
+        n += 1
+    if p.base_type == "shaft" and p.shaft_chamfer:
+        notes.append(f"{n}. 未注倒角 C0.5。")
+        n += 1
+    if p.base_type == "sheet_metal" and p.bends:
+        notes.append(f"{n}. 未注折弯半径 R{p.bends[0]['radius']:g}，K 因子按工艺卡。")
+        n += 1
+    for extra in _dedupe_notes(spec.notes, auto=notes, treatment=p.surface_treatment):
+        notes.append(f"{n}. {extra}")
+        n += 1
+
+    tb = {
+        "name": p.title, "part_no": p.part_no, "material": p.material, "scale": scale_label(scale),
+        "mass": f"{p.mass_kg:.3f} kg", "sheet": sheet, "projection": "第一角" if spec.projection == "first_angle" else "第三角",
+        "surface_finish": spec.surface_finish or "", "designer": "", "checker": "", "approver": "",
+        "date": (today or date.today()).isoformat(),
+    }
+    tb.update(spec.title_block)
+    return notes, tb
+
+
 def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
+    if p.base_type == "shaft":
+        return plan_shaft_drawing(spec, p, today)
     b = p.bbox
     min_feat = min((h.drill for h in p.holes), default=0.0)
     sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, min_feat)
@@ -317,32 +350,74 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
 
     if spec.dimensions == "none":
         missing_views = set()
-    notes = ["技术要求："]
-    notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
-    notes.append("2. 锐边倒钝，去毛刺。")
-    n = 3
-    if p.surface_treatment:
-        notes.append(f"{n}. 表面处理：{p.surface_treatment}。")
-        n += 1
-    if p.base_type == "sheet_metal" and p.bends:
-        notes.append(f"{n}. 未注折弯半径 R{p.bends[0]['radius']:g}，K 因子按工艺卡。")
-        n += 1
-    for extra in _dedupe_notes(spec.notes, auto=notes, treatment=p.surface_treatment):
-        notes.append(f"{n}. {extra}")
-        n += 1
-
-    tb = {
-        "name": p.title, "part_no": p.part_no, "material": p.material, "scale": scale_label(scale),
-        "mass": f"{p.mass_kg:.3f} kg", "sheet": sheet, "projection": "第一角" if spec.projection == "first_angle" else "第三角",
-        "surface_finish": spec.surface_finish or "", "designer": "", "checker": "", "approver": "",
-        "date": (today or date.today()).isoformat(),
-    }
-    tb.update(spec.title_block)
+    notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
     plan.missing_views = sorted(missing_views)
     return plan
 
+
+
+# ---------------- 轴类零件图 ----------------
+def _dia_text(d: float, tol: str | None) -> str:
+    return f"Φ{d:g}{tol or ''}"
+
+
+def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
+    """轴类按工程师习惯：主视图轴线水平、键槽朝前；每个键槽一个移出断面图（A-A、B-B…）放在主视图下方。
+    尺寸：各轴段长度（链式）+ 总长、各段直径（带公差带）、键槽长度与定位、断面上的键宽和 d-t1、环槽标注、端部倒角。"""
+    b = p.bbox
+    Ltot = b.zmax - b.zmin
+    D = b.xmax - b.xmin
+    kws = [f for f in p.shaft_features if f["kind"] == "keyway"]
+    sec_d = max((f["d"] for f in kws), default=0.0)
+    col_w = [Ltot]
+    row_h = [D] + ([sec_d] if kws else [])
+    min_feat = min((f["width"] for f in p.shaft_features), default=0.0)
+    sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
+    W, H = SHEETS[sheet]
+    x0 = MARGIN + GAP + 8
+    cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8
+    views = [ViewPlan("front", scale, (Ltot * scale, D * scale), (x0 + Ltot * scale / 2, cy_main))]
+    cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
+    for i, f in enumerate(kws):
+        label = f"{chr(65 + i)}-{chr(65 + i)}"
+        zc = (f["z0"] + f["z1"]) / 2
+        views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (x0 + zc * scale, cy_sec),
+                              label=label, target=f["name"]))
+    dims: list[Dim] = []
+    if spec.dimensions != "none":
+        z = 0.0
+        for i, (L, d) in enumerate(p.shaft_steps):
+            tol = p.shaft_tolerances[i] if p.shaft_tolerances else None
+            dims.append(Dim("front", "diameter", None, d, _dia_text(d, tol), f"step{i}_dia", (z + L / 2, d)))
+            if len(p.shaft_steps) > 1:
+                dims.append(Dim("front", "linear", "z", L, f"{L:g}", f"step{i}_len", (z, z + L)))
+            z += L
+        dims.append(Dim("front", "linear", "z", Ltot, f"{Ltot:g}", "overall_z", (0.0, Ltot)))
+        if p.shaft_chamfer:
+            dims.append(Dim("front", "callout", None, p.shaft_chamfer, f"2×C{p.shaft_chamfer:g}", "chamfer",
+                            (0.0, p.shaft_steps[0][1] / 2)))
+        for f in p.shaft_features:
+            sz0 = p.step_z(f["step"])[0]
+            if f["kind"] == "keyway":
+                dims.append(Dim("front", "linear", "z", f["length"], f"{f['length']:g}", f"{f['name']}_len",
+                                (f["z0"], f["z1"])))
+                if abs(f["z0"] - sz0) > 1e-6:
+                    dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
+                                    (sz0, f["z0"])))
+                dims.append(Dim("section", "linear", "y", f["width"], f"{f['width']:g}N9", f"{f['name']}_w",
+                                (f["d"], f["width"])))
+                dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], f"{f['d'] - f['depth']:g}",
+                                f"{f['name']}_t", (f["d"], f["depth"])))
+            else:
+                dims.append(Dim("front", "callout", None, None, f["callout"], f["name"], ((f["z0"] + f["z1"]) / 2, f["d"] / 2)))
+                if f["z0"] - sz0 > 1e-6:
+                    dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
+                                    (sz0, f["z0"])))
+    notes, tb = _notes_and_title(spec, p, sheet, scale, today)
+    return DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
+                       layout="shaft")
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
     sheet, scale, views = _layout(a.bbox, spec, None, spec.sheet, kind="assembly")

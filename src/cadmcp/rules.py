@@ -111,6 +111,36 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                     if d < limit:
                         out.append(_f("R008", "warning", f"{h.name}[{inst.index}]",
                                       f"孔离 {bend['edge']} 折弯 {d:.2f} mm < 2t+r={limit:.2f} mm，折弯会拉变形"))
+    out += _check_shaft(p)
+    return out
+
+
+def _check_shaft(p: ResolvedPart) -> list[Finding]:
+    from .standards import KEY_LENGTHS
+    out: list[Finding] = []
+    for f in p.shaft_features:
+        z0, z1 = p.step_z(f["step"])
+        if f["z0"] < z0 - 1e-6 or f["z1"] > z1 + 1e-6:
+            out.append(_f("S002", "error", f["name"], f"{f['callout']} 超出所在轴段 {f['step']}（{z0:g}–{z1:g}）",
+                          "缩短长度或调整 offset/position"))
+            continue
+        if f["kind"] == "keyway":
+            if f["length"] not in KEY_LENGTHS:
+                near = min(KEY_LENGTHS, key=lambda x: abs(x - f["length"]))
+                out.append(_f("S001", "warning", f["name"], f"键槽长 {f['length']:g} 不在 GB/T 1096 长度系列",
+                              f"改为 {near}"))
+            margin = min(f["z0"] - z0, z1 - f["z1"])
+            if margin < 2 and not (f["z0"] - z0 < 2 and f["step"] == 0 or z1 - f["z1"] < 2 and f["step"] == len(p.shaft_steps) - 1):
+                out.append(_f("S003", "warning", f["name"], f"键槽距轴肩 {margin:g} mm < 2 mm，铣刀会碰轴肩",
+                              "键槽两端距轴肩留 2–5 mm"))
+    feats = sorted(p.shaft_features, key=lambda f: f["z0"])
+    for a, b in zip(feats, feats[1:]):
+        if b["z0"] < a["z1"] - 1e-6:
+            out.append(_f("S004", "error", f"{a['name']}~{b['name']}", "轴上特征沿轴向重叠", "调整位置"))
+    for i, ((L, d), (L2, d2)) in enumerate(zip(p.shaft_steps, p.shaft_steps[1:])):
+        tol = p.shaft_tolerances
+        if tol and (tol[i] or tol[i + 1]) and abs(d - d2) < 1e-6:
+            out.append(_f("S005", "info", f"step{i}/{i + 1}", "相邻轴段同径但公差不同，加工时需分界线", None))
     return out
 
 

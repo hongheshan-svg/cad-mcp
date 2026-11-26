@@ -22,6 +22,10 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 阵列孔用 `pattern`（grid / circular），不要逐个列坐标。
 - 腰型孔（调节孔）`slot`：`size` 写螺钉规格（如 `"M6"`，宽度取过孔）或数值宽度，`slot_length` 为两端圆心距，`slot_angle` 为方向。
 - L 形/台阶件的内侧平面：孔、型腔、凸台写 `at`（该面所在平面的坐标），例如 L 形立板内侧面 `face: "front", at: 8`。
+- 轴类：`base.type: "shaft"`，`steps` 从左到右写每段 `length`/`diameter`，配合段写 `tolerance`（如 `k6`、`h7`），`chamfer` 为两端倒角。
+  - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
+  - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
+  - 轴类图纸自动采用：主视图轴线水平、键槽朝前、每个键槽一个移出断面图（标 bN9 与 d-t1）、链式轴段长度 + 总长。
 - 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。
 - 每个将被装配的零件都要建 `CS_` 坐标系：放在安装面上、Z 轴朝外。
 - 必填：`part_no`、`title`、`material`、`surface_treatment`（铝件常用"阳极氧化"，钢件"发黑/镀锌"）。

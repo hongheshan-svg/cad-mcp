@@ -3,7 +3,7 @@ import json
 
 import pytest
 from fake_sw import FakeConstants, FakeSw, install_fake_win32
-from test_core import L_BRACKET
+from test_core import L_BRACKET, SHAFT
 from test_workflow import build_station
 
 from cadmcp.adapters.solidworks.adapter import DEFAULT_MATERIAL_MAP, SolidWorksAdapter
@@ -65,3 +65,14 @@ def test_missing_library_gets_placeholder(sw_svc):
     asm = svc.get_model("CS01-000_CylStation")
     a002 = [f for f in asm["findings"] if f["rule"] == "A002"]
     assert {f["target"] for f in a002} >= {"PRF-4040-L250", "CYL-SC32x50"}
+
+
+def test_sw_executor_shaft(sw_svc):
+    svc, ad = sw_svc
+    svc.change_begin("SH")
+    svc.build(PartSpec.model_validate(SHAFT))
+    svc.build(DrawingSpec.model_validate({"model": "SH1", "title_block": {"designer": "AI"}}))
+    names = [c[0] for c in ad.sw.calls]
+    assert names.count("FeatureRevolve2") == 2           # 轴体 + 挡圈槽
+    cuts = [c[1] for c in ad.sw.calls if c[0] == "FeatureCut4"]
+    assert len(cuts) == 2 and cuts[0][24] == pytest.approx((10 - 3.5) / 1000)  # 起始偏移 d/2-t1（m）

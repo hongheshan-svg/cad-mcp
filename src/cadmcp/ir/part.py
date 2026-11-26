@@ -23,12 +23,14 @@ class ExtrudeBase(Strict):
 class ShaftStep(Strict):
     length: Num
     diameter: Num
+    tolerance: str | None = Field(None, description="配合公差带，如 k6、h7、f7；标在直径后")
 
 
 class ShaftBase(Strict):
     """Turned parts: coaxial cylinders stacked along +Z starting at Z=0."""
     type: Literal["shaft"] = "shaft"
     steps: list[ShaftStep] = Field(min_length=1)
+    chamfer: Num = Field(0.0, description="两端倒角 C 值（mm），0 为不倒角")
 
 
 class Flange(Strict):
@@ -128,7 +130,30 @@ class EdgeFinish(Strict):
     size: Num
 
 
-Feature = Annotated[Hole | Pocket | Boss | EdgeFinish, Field(discriminator="feature")]
+class Keyway(Strict):
+    """轴上普通平键键槽（A 型，圆头），位于 +X 方向（angle 绕轴旋转）。宽、深默认按 GB/T 1095 查表。"""
+    feature: Literal["keyway"]
+    name: str
+    step: int = Field(description="所在轴段序号（从 0 起）")
+    length: Num = Field(description="键槽长度，取 GB/T 1096 长度系列")
+    offset: Num | None = Field(None, description="键槽起点距该轴段起点的距离；默认居中")
+    width: Num | None = None
+    depth: Num | None = Field(None, description="轴槽深 t1")
+    angle: Num = 0.0
+
+
+class Groove(Strict):
+    """轴上环槽：circlip=轴用弹性挡圈槽（GB/T 894 查表），undercut=退刀槽（宽×深）。"""
+    feature: Literal["groove"]
+    name: str
+    type: Literal["circlip", "undercut"]
+    step: int
+    position: Literal["start", "end"] | Num = Field("end", description="槽在轴段中的位置：start/end 或距轴段起点的距离")
+    width: Num | None = Field(None, description="undercut 默认 2")
+    depth: Num | None = Field(None, description="undercut 默认 0.5")
+
+
+Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove, Field(discriminator="feature")]
 
 
 # ---------- named references ----------

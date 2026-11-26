@@ -21,7 +21,8 @@ from ..native import NativeOp
 MM = 0.001
 NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
-                "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners"}
+                "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
+                "section_view", "shaft_dimension"}
 
 
 class OpFailed(Exception):
@@ -304,22 +305,67 @@ class SwExecutor:
                 raise OpFailed("CreateLine failed")
         return {"edges": len(pts)}
 
-    def op_sketch_shaft_half_profile(self, sketch: str, steps, axis: str):
-        # Right Plane（YZ）上画半剖面：草图坐标用模型 (0, y, z) 换算
+    def op_sketch_shaft_half_profile(self, sketch: str, steps, axis: str, chamfer: float = 0.0):
+        # Right Plane（YZ）上画半剖面：草图坐标用模型 (0, y, z) 换算；两端倒角直接画进轮廓（不依赖选边）
         sm = self.model.SketchManager
+        c = chamfer
+        total = sum(L for L, _ in steps)
         pts = [(0.0, 0.0, 0.0)]
+        if c:
+            pts += [(0.0, steps[0][1] / 2 - c, 0.0), (0.0, steps[0][1] / 2, c)]
         z = 0.0
-        for L, d in steps:
-            pts.append((0.0, d / 2, z))
+        for i, (L, d) in enumerate(steps):
+            if not (c and i == 0):
+                pts.append((0.0, d / 2, z))
             z += L
-            pts.append((0.0, d / 2, z))
-        pts.append((0.0, 0.0, z))
+            if c and i == len(steps) - 1:
+                pts += [(0.0, d / 2, z - c), (0.0, d / 2 - c, z)]
+            else:
+                pts.append((0.0, d / 2, z))
+        pts.append((0.0, 0.0, total))
         sk_pts = [self._to_sketch(p) for p in pts]
         for a, b in zip(sk_pts, sk_pts[1:] + sk_pts[:1]):
             sm.CreateLine(a[0], a[1], 0, b[0], b[1], 0)
         a, b = self._to_sketch((0, 0, -5)), self._to_sketch((0, 0, z + 5))
         sm.CreateCenterLine(a[0], a[1], 0, b[0], b[1], 0)
         return {"points": len(pts)}
+
+    def op_sketch_slot_3d(self, sketch: str, end1, end2, width: float):
+        p1, p2 = self._to_sketch(end1), self._to_sketch(end2)
+        res = self.model.SketchManager.CreateSketchSlot(self.c.swSketchSlotCreationType_line,
+                                                        self.c.swSketchSlotLengthType_CenterCenter, width * MM,
+                                                        p1[0], p1[1], 0, p2[0], p2[1], 0, 0, 0, 0, 1, False)
+        if res is None:
+            raise OpFailed("CreateSketchSlot failed")
+        return {}
+
+    def op_sketch_polyline_3d(self, sketch: str, points, centerline=None):
+        sm = self.model.SketchManager
+        sk = [self._to_sketch(p) for p in points]
+        for a, b in zip(sk, sk[1:] + sk[:1]):
+            if sm.CreateLine(a[0], a[1], 0, b[0], b[1], 0) is None:
+                raise OpFailed("CreateLine failed")
+        if centerline:
+            a, b = self._to_sketch(centerline[0]), self._to_sketch(centerline[1])
+            sm.CreateCenterLine(a[0], a[1], 0, b[0], b[1], 0)
+        return {"edges": len(sk)}
+
+    def op_keyway_cut(self, feature: str, sketch: str, start_offset: float, depth: float, flip: bool = False):
+        """从草图平面偏移 start_offset 处开始、沿法向切 depth（键槽底面 = 轴心 + d/2 - t1）。"""
+        self._select_sketch(sketch)
+        fm = self.model.FeatureManager
+        feat = None
+        for fl in (flip, not flip):
+            feat = fm.FeatureCut4(True, fl, False, self.c.swEndCondBlind, 0, depth * MM, 0, False, False, False, False,
+                                  0, 0, False, False, False, False, False, True, True, True,
+                                  True, False, self.c.swStartOffset, start_offset * MM, fl, False)
+            if feat is not None:
+                break
+        if feat is None:
+            raise OpFailed("keyway FeatureCut4 failed")
+        feat.Name = feature
+        self.features[feature] = feat
+        return {"feature": feature}
 
     def op_dimension_profile(self, sketch: str, links: dict[str, str]):
         # P1：草图尺寸标注与方程式链接待实机完成；当前仅链接拉伸深度（见 extrude_boss）
@@ -358,9 +404,9 @@ class SwExecutor:
         self.features[feature] = feat
         return {"feature": feature}
 
-    def op_revolve(self, feature: str, sketch: str, angle: float):
+    def op_revolve(self, feature: str, sketch: str, angle: float, cut: bool = False):
         self._select_sketch(sketch)
-        feat = self.model.FeatureManager.FeatureRevolve2(True, True, False, False, False, False,
+        feat = self.model.FeatureManager.FeatureRevolve2(True, True, False, cut, False, False,
                                                          self.c.swEndCondBlind, 0, math.radians(angle), 0,
                                                          False, False, 0, 0, 0, 0, 0, True, True, True)
         if feat is None:
@@ -587,6 +633,12 @@ class SwExecutor:
 
     def op_overall_dimension(self, view: str, axis: str, value: float):
         raise OpFailed("overall dimension on non-ordinate views: P1（需按视图轮廓选边）")
+
+    def op_section_view(self, label: str, parent: str, z: float, center):
+        raise OpFailed("section view: P1 实机实现（在主视图画垂直剖切线 + CreateSectionViewAt5，移出放置）")
+
+    def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str):
+        raise OpFailed("shaft dimension: P1 实机实现（按轴肩边线选边标注 / 直径标注加公差带）")
 
     def op_leader_note(self, view: str, text: str, at_model, ref: str):
         v = self.views.get(view)

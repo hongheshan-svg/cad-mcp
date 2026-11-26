@@ -145,3 +145,38 @@ def test_drawing_layout_and_missing_view(tmp_path):
     # 只给主视图：侧面螺纹孔缺对应视图 → D010
     r = svc.build(DrawingSpec.model_validate({"model": "LB", "name": "LB2", "views": [{"type": "front"}]}))
     assert any(f["rule"] == "D010" for f in r["rules"]["findings"])
+
+
+SHAFT = {
+    "name": "SH1", "part_no": "SH-01", "title": "传动轴", "material": "45#", "surface_treatment": "调质 HB220-250",
+    "base": {"type": "shaft", "chamfer": 1, "steps": [
+        {"length": 40, "diameter": 20, "tolerance": "k6"}, {"length": 12, "diameter": 30},
+        {"length": 60, "diameter": 25, "tolerance": "k6"}, {"length": 18, "diameter": 20, "tolerance": "h7"}]},
+    "features": [
+        {"feature": "keyway", "name": "KW1", "step": 0, "length": 28, "offset": 4},
+        {"feature": "keyway", "name": "KW2", "step": 2, "length": 45},
+        {"feature": "groove", "name": "G1", "type": "circlip", "step": 3, "position": "end"},
+    ],
+}
+
+
+def test_shaft_features_and_drawing(tmp_path):
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate(SHAFT))
+    kw1, kw2, g1 = p.shaft_features
+    assert (kw1["width"], kw1["depth"]) == (6.0, 3.5)        # Φ20 → 6×3.5（GB/T 1095）
+    assert (kw2["width"], kw2["depth"]) == (8.0, 4.0)        # Φ25 → 8×4
+    assert kw2["z0"] == 52 + 7.5                             # 居中
+    assert g1["d2"] == 19.0 and g1["width"] == 1.3           # GB/T 894-20
+    assert not [f for f in rules.check_part(p) if f["severity"] == "error"]
+    bad = dict(SHAFT, features=[{"feature": "keyway", "name": "K", "step": 1, "length": 30}])
+    assert any(f["rule"] == "S002" for f in rules.check_part(resolve_part(PartSpec.model_validate(bad))))
+
+    svc = CadService.from_config(None, None, str(tmp_path)); svc.change_begin("SH")
+    svc.build(PartSpec.model_validate(SHAFT))
+    r = svc.build(DrawingSpec.model_validate({"model": "SH1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    texts = [d["text"] for d in svc.get_model("SH1_DRW")["dimensions"]]
+    assert {"Φ20k6", "Φ25k6", "6N9", "16.5", "8N9", "21", "2×C1", "130"} <= set(texts)
+    assert any("挡圈槽" in t for t in texts)

@@ -47,3 +47,38 @@ def countersink(size: str) -> float:
 
 def is_metric(size: str) -> bool:
     return size.upper() in METRIC
+
+
+# ---------- 轴类 ----------
+# GB/T 1095-2003 普通平键键槽：轴径 (d_min, d_max] → (键宽 b, 键高 h, 轴槽深 t1)
+KEYWAY = [
+    (6, 8, 2, 2, 1.2), (8, 10, 3, 3, 1.8), (10, 12, 4, 4, 2.5), (12, 17, 5, 5, 3.0), (17, 22, 6, 6, 3.5),
+    (22, 30, 8, 7, 4.0), (30, 38, 10, 8, 5.0), (38, 44, 12, 8, 5.0), (44, 50, 14, 9, 5.5), (50, 58, 16, 10, 6.0),
+    (58, 65, 18, 11, 7.0), (65, 75, 20, 12, 7.5), (75, 85, 22, 14, 9.0), (85, 95, 25, 14, 9.0),
+    (95, 110, 28, 16, 10.0),
+]
+# GB/T 1096 平键长度系列
+KEY_LENGTHS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70, 80, 90, 100, 110, 125,
+               140, 160, 180, 200, 220, 250]
+# GB/T 894 轴用弹性挡圈沟槽：轴径 d → (槽底径 d2, 槽宽 m)
+CIRCLIP_GROOVE = {
+    10: (9.6, 1.1), 12: (11.5, 1.1), 14: (13.4, 1.1), 15: (14.3, 1.1), 16: (15.2, 1.1), 17: (16.2, 1.1),
+    18: (17.0, 1.3), 20: (19.0, 1.3), 22: (21.0, 1.3), 25: (23.9, 1.3), 28: (26.6, 1.6), 30: (28.6, 1.6),
+    32: (30.3, 1.6), 35: (33.0, 1.6), 40: (37.5, 1.85), 45: (42.5, 1.85), 50: (47.0, 2.15), 55: (52.0, 2.15),
+    60: (57.0, 2.15), 65: (62.0, 2.65), 70: (67.0, 2.65), 75: (72.0, 2.65), 80: (76.5, 2.65),
+}
+
+
+def keyway(d: float) -> tuple[float, float, float]:
+    for lo, hi, b, h, t1 in KEYWAY:
+        if lo < d <= hi:
+            return float(b), float(h), t1
+    raise CadError(SPEC_INVALID, f"no GB/T 1095 keyway for shaft Φ{d:g}", hint="轴径范围 6–110；或显式给出 width/depth")
+
+
+def circlip_groove(d: float) -> tuple[float, float]:
+    key = round(d)
+    if abs(d - key) > 1e-6 or key not in CIRCLIP_GROOVE:
+        raise CadError(SPEC_INVALID, f"no GB/T 894 circlip groove for shaft Φ{d:g}",
+                       hint=f"可用轴径：{sorted(CIRCLIP_GROOVE)}")
+    return CIRCLIP_GROOVE[key]

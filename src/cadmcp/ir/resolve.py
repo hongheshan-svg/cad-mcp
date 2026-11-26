@@ -14,7 +14,7 @@ from .. import materials, standards
 from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
-from .part import (CircularPattern, EdgeFinish, ExtrudeBase, GridPattern, Hole, PartSpec, Pocket,
+from .part import (CircularPattern, EdgeFinish, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
                    SheetMetalBase, ShaftBase, Boss)
 
 
@@ -123,6 +123,13 @@ class ResolvedPart:
     bends: list[dict[str, Any]] = field(default_factory=list)
     shaft_steps: list[tuple[float, float]] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
+    shaft_tolerances: list[str | None] = field(default_factory=list)
+    shaft_chamfer: float = 0.0
+    shaft_features: list[dict[str, Any]] = field(default_factory=list)  # keyway / groove
+
+    def step_z(self, i: int) -> tuple[float, float]:
+        z0 = sum(L for L, _ in self.shaft_steps[:i])
+        return z0, z0 + self.shaft_steps[i][0]
 
     def summary(self) -> dict[str, Any]:
         sx, sy, sz = self.bbox.size
@@ -135,6 +142,8 @@ class ResolvedPart:
             "references": sorted(self.references),
             "parameters": self.parameters,
             **({"flat_pattern_mm": [round(v, 2) for v in self.flat_pattern]} if self.flat_pattern else {}),
+            **({"shaft_features": [{"name": f["name"], "callout": f["callout"]} for f in self.shaft_features]}
+               if self.shaft_features else {}),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -408,6 +417,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     flat = None
     bends: list[dict[str, Any]] = []
     steps: list[tuple[float, float]] = []
+    shaft_chamfer = 0.0
 
     if isinstance(base, ExtrudeBase):
         profile = resolve_profile(base.profile, ev)
@@ -424,6 +434,9 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         R = max(d for _, d in steps) / 2
         box = Box(-R, R, -R, R, 0.0, sum(L for L, _ in steps))
         volume = sum(math.pi * d * d / 4 * L for L, d in steps)
+        shaft_chamfer = ev(base.chamfer)
+        for d in (steps[0][1], steps[-1][1]):
+            volume -= math.pi * d * shaft_chamfer ** 2 / 2  # 端部 45° 倒角近似
     elif isinstance(base, SheetMetalBase):
         profile = resolve_profile(base.profile, ev)
         t = thickness = ev(base.thickness)
@@ -458,6 +471,42 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         raise CadError(SPEC_INVALID, "unknown base type")
 
     pockets, bosses, finishes, holes = [], [], [], []
+    shaft_feats: list[dict[str, Any]] = []
+    for f in spec.features:
+        if isinstance(f, (Keyway, Groove)):
+            if not isinstance(base, ShaftBase):
+                raise CadError(SPEC_INVALID, f"{f.feature} {f.name}: only valid on a shaft base")
+            if not 0 <= f.step < len(steps):
+                raise CadError(SPEC_INVALID, f"{f.name}: step {f.step} out of range (0..{len(steps) - 1})")
+            sz0 = sum(L for L, _ in steps[:f.step])
+            L, d = steps[f.step]
+            if isinstance(f, Keyway):
+                b, _, t1 = standards.keyway(d)
+                b = ev(f.width) if f.width is not None else b
+                t1 = ev(f.depth) if f.depth is not None else t1
+                kl = ev(f.length)
+                off = ev(f.offset) if f.offset is not None else (L - kl) / 2
+                volume -= ((kl - b) * b + math.pi * b * b / 4) * t1
+                shaft_feats.append({"kind": "keyway", "name": f.name, "step": f.step, "d": d, "width": b,
+                                    "depth": t1, "length": kl, "z0": sz0 + off, "z1": sz0 + off + kl,
+                                    "offset": off, "angle": ev(f.angle),
+                                    "callout": f"键槽 {b:g}N9×{kl:g} 深{t1:g}",
+                                    "section_dim": f"{d - t1:g}"})
+            else:
+                if f.type == "circlip":
+                    d2, m = standards.circlip_groove(d)
+                    label = f"挡圈槽 Φ{d2:g}×{m:g}（GB/T 894-{d:g}）"
+                else:
+                    m = ev(f.width) if f.width is not None else 2.0
+                    d2 = d - 2 * (ev(f.depth) if f.depth is not None else 0.5)
+                    label = f"退刀槽 {m:g}×{(d - d2) / 2:g}"
+                pos = {"start": 0.0, "end": L - m}.get(f.position) if isinstance(f.position, str) else ev(f.position)
+                if f.type == "circlip" and f.position == "end":
+                    pos = L - m - 1.0 if L - m - 1.0 > 0 else L - m  # 挡圈槽离轴段端面留 1mm 以上（挡圈承载边）
+                volume -= math.pi / 4 * (d * d - d2 * d2) * m
+                shaft_feats.append({"kind": "groove", "type": f.type, "name": f.name, "step": f.step, "d": d,
+                                    "d2": d2, "width": m, "z0": sz0 + pos, "z1": sz0 + pos + m, "offset": pos,
+                                    "callout": label})
     for f in spec.features:
         if isinstance(f, Boss):
             pr = resolve_profile(f.profile, ev)
@@ -531,4 +580,6 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         parameters=params, bbox=box, volume_mm3=volume, mass_kg=volume * 1e-9 * dens, thickness=thickness,
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
+        shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats,
     )

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from ...errors import CAPABILITY_UNSUPPORTED, CadError
+
 from ...ir.part import PartSpec
 from ...ir.resolve import ResolvedPart
 from ..native import NativeOp, to_sw_equation
@@ -76,8 +78,31 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
     elif p.base_type == "shaft":
         ops.append(NativeOp("sketch_on_plane", {"sketch": "SK_Shaft", "plane": "Right Plane"}))
         ops.append(NativeOp("sketch_shaft_half_profile", {"sketch": "SK_Shaft", "steps": p.shaft_steps,
-                                                           "axis": "Z"}))
+                                                           "axis": "Z", "chamfer": p.shaft_chamfer}))
         ops.append(NativeOp("revolve", {"feature": "Base", "sketch": "SK_Shaft", "angle": 360}))
+        for f in p.shaft_features:
+            sk = f"SK_{f['name']}"
+            if f["kind"] == "keyway":
+                # 键槽朝向：0/180 → 在 Right Plane(YZ) 画槽形，沿 ±X 切；90/270 → Top Plane(XZ)，沿 ±Y 切
+                ang = round(f["angle"]) % 360
+                if ang not in (0, 90, 180, 270):
+                    raise CadError(CAPABILITY_UNSUPPORTED, f"keyway {f['name']}: angle must be a multiple of 90 in v0")
+                plane = "Right Plane" if ang in (0, 180) else "Top Plane"
+                hw = f["width"] / 2
+                ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": plane}))
+                ops.append(NativeOp("sketch_slot_3d", {"sketch": sk, "end1": [0, 0, f["z0"] + hw],
+                                                       "end2": [0, 0, f["z1"] - hw], "width": f["width"]}))
+                ops.append(NativeOp("keyway_cut", {"feature": f["name"], "sketch": sk,
+                                                   "start_offset": f["d"] / 2 - f["depth"], "depth": f["depth"] + 1,
+                                                   "flip": ang in (180, 270)},
+                                    "FeatureCut4：起始偏移 d/2-t1，向外切到轴表面以外"))
+            else:
+                r0, r1 = f["d2"] / 2, f["d"] / 2 + 1
+                ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Right Plane"}))
+                ops.append(NativeOp("sketch_polyline_3d", {"sketch": sk, "points": [
+                    [0, r0, f["z0"]], [0, r1, f["z0"]], [0, r1, f["z1"]], [0, r0, f["z1"]]],
+                    "centerline": [[0, 0, -5], [0, 0, p.bbox.zmax + 5]]}))
+                ops.append(NativeOp("revolve", {"feature": f["name"], "sketch": sk, "angle": 360, "cut": True}))
     else:  # sheet_metal
         ops.append(NativeOp("sketch_on_plane", {"sketch": "SK_Base", "plane": "Front Plane"}))
         ops += _profile_ops(p.profile, "SK_Base")
@@ -210,8 +235,14 @@ SW_VIEW = {"top": ("*Front", 0), "bottom": ("*Back", 0), "front": ("*Bottom", 0)
            "right": ("*Right", 90), "left": ("*Left", -90), "iso": ("*Isometric", 0)}
 
 
-def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | None = None) -> list[NativeOp]:
+# 轴类主视图：从 +X 看（键槽朝前），旋转 180° 使轴线 Z 向右。需实机核对。
+SW_SHAFT_VIEW = ("*Right", 180)
+
+
+def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | None = None,
+                    model_features: list | None = None) -> list[NativeOp]:
     sheet_templates = sheet_templates or {}
+    model_features = model_features or []
     W, H = plan.sheet_size
     ops: list[NativeOp] = [
         NativeOp("new_drawing", {"sheet": plan.sheet, "template": sheet_templates.get(plan.sheet, ""),
@@ -227,7 +258,13 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         if v.type == "flat_pattern":
             ops.append(NativeOp("flat_pattern_view", {"model": model_file, "center": v.origin_on_sheet, "scale": v.scale}))
             continue
-        name, angle = SW_VIEW[v.type]
+        if v.type == "section":
+            f = next((x for x in model_features if x["name"] == v.target), None)
+            ops.append(NativeOp("section_view", {"label": v.label, "parent": plan.views[0].type,
+                                                 "z": (f["z0"] + f["z1"]) / 2 if f else 0.0,
+                                                 "center": v.origin_on_sheet}, "移出断面图（剖切线垂直轴线）"))
+            continue
+        name, angle = SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front" else SW_VIEW[v.type]
         ops.append(NativeOp("model_view", {"view": v.type, "sw_view": name, "model": model_file,
                                            "center": v.origin_on_sheet, "scale": v.scale * (0.5 if v.type == "iso" else 1),
                                            "rotate_deg": angle, "display": "hidden_removed" if v.type == "iso" else "hidden_visible"}))
@@ -239,8 +276,13 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     for d in plan.dims:
         if d.kind == "linear" and d.view not in ordinate_views and d.at is None:
             ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value}))
+    if plan.layout == "shaft":
+        for d in plan.dims:
+            if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):
+                ops.append(NativeOp("shaft_dimension", {"view": d.view, "kind": d.kind, "text": d.text,
+                                                        "at": d.at, "ref": d.ref}))
     for d in plan.dims:
-        if d.kind in ("callout", "radius", "diameter"):
+        if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref}))
     ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block"}))
     if plan.bom:
