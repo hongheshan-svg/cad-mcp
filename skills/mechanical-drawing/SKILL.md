@@ -25,6 +25,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 轴类：`base.type: "shaft"`，`steps` 从左到右写每段 `length`/`diameter`，配合段写 `tolerance`（如 `k6`、`h7`），`chamfer` 为两端倒角。
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
   - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
+  - 外螺纹 `{"feature": "thread", "step": 段号, "size": "M20"}`（细牙 `"M16x1.5"`）：该段直径须等于螺纹公称直径；
+    螺距按 GB/T 193 查，默认 6g、全段螺纹，`length` 指定螺纹长度（自动标注），`side` 为 start/end（缺省：首段在左端、其余在右端）。
+    图上以螺纹代号代替 Φ 标在大径上（GB/T 4459.1），SW/Creo 生成装饰螺纹。螺纹收尾处通常配退刀槽 `undercut`。
   - 轴类图纸自动采用：主视图轴线水平、键槽朝前、每个键槽一个移出断面图（标 bN9 与 d-t1）、链式轴段长度 + 总长。
 - 钣金：`base.type: "sheet_metal"`，`profile` 为底板外形，`flanges` 写翻边所在边、外形高度、方向；
   翻边上的孔写 `face: "front"` 等（坐标为 (x, z)，z 为距底板外表面的高度），展开位置由平台计算。
@@ -54,7 +57,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   机架以 `asm:<name>` 装进总装；附件、紧固件只进 BOM 时用装配的 `bom_extras`。
 - 选型先于建模：气缸、伺服+丝杠、同步带模组、受力螺栓先 `cad_calc` 计算（计算书随版本归档），
   按 `selection` 选库里的型号（`library_matches`），按缸径/法兰定安装板孔位；`warnings` 必须向用户说明。
-- 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。
+- 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）、D022（引线/尺寸线穿过标注文字）要处理：
+  按提示调整 `views` 或 `sheet`（多为图幅偏小、标注过密）。
+- 等距一排的孔自动标成 `n×p(=L)` 节距尺寸（不进孔表）；装配图的底板安装孔自动标孔距并写入技术要求。
 - 每个将被装配的零件都要建 `CS_` 坐标系：放在安装面上、Z 轴朝外。
 - 必填：`part_no`、`title`、`material`、`surface_treatment`（铝件常用"阳极氧化"，钢件"发黑/镀锌"）。
 
@@ -78,8 +83,10 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 不满意随时 `cad_checkpoint` / `cad_change_rollback`。
 
 ## 能力边界（如实告诉用户）
-- 当前 spec 支持：板/块类机加工件、阶梯轴、简单钣金（直边折弯）、标准件/外购件装配。
-- 不支持：铸件、焊接件、复杂曲面、斜孔、螺纹以外的特殊工艺 → 告诉用户需要人工建模，或提出扩展 spec。
+- 当前 spec 支持：板/块类机加工件、阶梯轴（键槽、挡圈槽、退刀槽、外螺纹）、简单钣金（直边折弯）、
+  型钢焊接件、铸件（含毛坯图）、标准件/外购件装配。
+- 不支持：复杂曲面、斜孔、齿轮/花键等专用特征、曲线折弯钣金 → 告诉用户需要人工建模，或提出扩展 spec。
+- Creo 目标首期完整支持拉伸件与轴类；钣金为部分支持（展开图不建），焊接件不支持——这两类优先用 SolidWorks 目标。
 - 发布：`cad_change_commit(revision, description, by)`。改版时 description 写清楚改了什么（如"立柱间距 160→180"），
   平台把版本号写进标题栏、把更改记录写进每张图纸，并在发布目录保存 revisions.json。
 - 修改公司现有模型（不是平台建的）：
