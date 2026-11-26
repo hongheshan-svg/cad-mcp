@@ -43,6 +43,10 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   孔写在板的 `holes` 里，安装基准板设 `machined: true`。杆件端面要贴在别的件上，不要穿入（W001）；
   焊缝、焊脚、切割清单由平台自动算。敞口管端会报 W003：加封板或设 `end_caps: true`。
   简单焊接机架直接用 `cad_build_frame(construction="welded")`。
+- 铸件（轴承座、底座、箱体类，批量大或形状复杂时）：spec 写**加工后的零件**，`category: "casting"`，材料用
+  HT200/HT250/QT450-10/ZG270-500/ZL102/ZL104，加 `casting: {process: sand|investment|die, machined_faces: [...]}`。
+  平台自动生成毛坯件（图号加 -M：加工面加余量、大孔铸小、小孔铸后钻）并在出零件图时一起出毛坯图。
+  有基准/形位公差/粗糙度要求的面必须列入 machined_faces（C004）；壁厚不得小于材料最小铸造壁厚（C001）。
 - 铝型材机架用 `cad_build_frame`（外形 + 型材 + 横梁层高），不要逐根手写组件；返回 cut_list（下料清单）。
   机架以 `asm:<name>` 装进总装；附件、紧固件只进 BOM 时用装配的 `bom_extras`。
 - 选型先于建模：气缸、伺服+丝杠、同步带模组、受力螺栓先 `cad_calc` 计算（计算书随版本归档），

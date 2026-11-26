@@ -139,6 +139,7 @@ class ResolvedPart:
     cut_list: list[dict[str, Any]] = field(default_factory=list)
     weld_findings: list[dict[str, Any]] = field(default_factory=list)
     weld_options: dict[str, Any] = field(default_factory=dict)
+    casting: dict[str, Any] = field(default_factory=dict)  # 铸件：工艺参数、技术要求、是否毛坯
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -477,6 +478,13 @@ def _sheet_hole(rh: ResolvedHole, bends: list[dict[str, Any]], t: float, box: Bo
     rh.flat_uv = flat
 
 
+def _casting_info(spec: PartSpec) -> dict[str, Any]:
+    from .. import casting
+    blank = spec.casting.blank_of is not None
+    return {**casting.params(spec), "blank": blank, "blank_of": spec.casting.blank_of,
+            "notes": casting.notes(spec, blank)}
+
+
 def _hole_volume(h: ResolvedHole) -> float:
     n = len(h.instances)
     if h.slot:
@@ -745,6 +753,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
         shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats,
+        **({"casting": _casting_info(spec)} if spec.casting else {}),
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,
             "weld_options": {"end_caps": base.end_caps, "open_ends": wr.open_ends,

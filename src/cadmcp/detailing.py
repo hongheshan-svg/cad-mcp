@@ -315,10 +315,12 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
 
 def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: float, today: date | None):
     notes = ["技术要求："]
-    notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
-    notes.append("2. 锐边倒钝，去毛刺。")
-    n = 3
-    if p.surface_treatment:
+    n = 1
+    if not p.casting.get("blank"):  # 铸件毛坯：尺寸公差按 GB/T 6414（见铸造要求），不倒钝去毛刺
+        notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
+        notes.append("2. 锐边倒钝，去毛刺。")
+        n = 3
+    if p.surface_treatment and p.surface_treatment != "无":
         notes.append(f"{n}. 表面处理：{p.surface_treatment}。")
         n += 1
     if p.base_type == "shaft" and p.shaft_chamfer:
@@ -339,6 +341,9 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
         if p.weld_options.get("end_caps") and p.weld_options.get("open_ends"):
             notes.append(f"{n}. 敞口管端（{len(p.weld_options['open_ends'])} 处）装塑料堵头。")
             n += 1
+    for line in p.casting.get("notes", []):
+        notes.append(f"{n}. {line}")
+        n += 1
     if p.base_type == "sheet_metal" and p.bends:
         bd = p.bends[0]
         notes.append(f"{n}. 板厚 t{p.thickness:g}；未注折弯内半径 R{bd['radius']:g}；"
@@ -351,7 +356,8 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     tb = {
         "name": p.title, "part_no": p.part_no, "material": p.material, "scale": scale_label(scale),
         "mass": f"{p.mass_kg:.3f} kg", "sheet": sheet, "projection": "第一角" if spec.projection == "first_angle" else "第三角",
-        "surface_finish": spec.surface_finish or "", "designer": "", "checker": "", "approver": "",
+        "surface_finish": ("" if p.casting.get("blank") else "cast") if p.casting else (spec.surface_finish or ""),
+        "designer": "", "checker": "", "approver": "",
         "date": (today or date.today()).isoformat(),
     }
     tb.update(spec.title_block)

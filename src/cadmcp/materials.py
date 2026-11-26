@@ -13,6 +13,13 @@ MATERIALS: dict[str, dict] = {
     "POM": {"density": 1410, "desc": "聚甲醛"},
     "SPCC": {"density": 7850, "desc": "冷轧钣金"},
     "40Cr": {"density": 7850, "desc": "合金结构钢"},
+    # 铸造材料：cast_min_wall = 砂型铸造最小壁厚（mm，中小件经验值）
+    "HT200": {"density": 7200, "desc": "灰铸铁 HT200", "cast_min_wall": 6},
+    "HT250": {"density": 7250, "desc": "灰铸铁 HT250", "cast_min_wall": 8},
+    "QT450-10": {"density": 7100, "desc": "球墨铸铁 QT450-10", "cast_min_wall": 6},
+    "ZG270-500": {"density": 7850, "desc": "铸钢 ZG270-500", "cast_min_wall": 10},
+    "ZL102": {"density": 2650, "desc": "铸造铝合金 ZAlSi12", "cast_min_wall": 4},
+    "ZL104": {"density": 2630, "desc": "铸造铝合金 ZAlSi9Mg", "cast_min_wall": 4},
 }
 
 

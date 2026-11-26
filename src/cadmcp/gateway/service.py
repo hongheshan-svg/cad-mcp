@@ -192,6 +192,20 @@ class CadService:
     def build(self, spec: PartSpec | AssemblySpec | DrawingSpec) -> dict[str, Any]:
         s = self._session()
         result = self._build(spec, cascade=True)
+        # 铸件：零件建好后自动生成/更新毛坯件；零件图建好后自动出毛坯图
+        if spec.kind == "part" and spec.casting is not None and spec.casting.blank_of is None:
+            from .. import casting
+            bdict, info = casting.blank_spec(spec, self._models()[spec.name].resolved)
+            b = self._build(PartSpec.model_validate(bdict), cascade=True)
+            result["blank"] = {"name": b["name"], "part_no": bdict["part_no"], "summary": b["summary"],
+                               "rules": b["rules"], **info}
+        elif spec.kind == "drawing":
+            m = self._models().get(spec.model)
+            cast = getattr(m.resolved, "casting", None) if m else None
+            if cast and not cast.get("blank"):
+                bd = spec.model_copy(update={"model": f"{spec.model}_BLANK", "name": None})
+                b = self._build(bd, cascade=True)
+                result["blank_drawing"] = {"name": b["name"], "sheet": b["sheet"], "rules": b["rules"]}
         s.log(f"build_{spec.kind}", {"name": self._name_of(spec)}, {k: result[k] for k in ("regen", "rules") if k in result})
         return result
 
@@ -211,6 +225,9 @@ class CadService:
             if spec.kind == "part":
                 res = resolve_part(spec)
                 findings = rules.check_part(res)
+                if spec.casting is not None and spec.casting.blank_of is None:
+                    from .. import casting
+                    findings += casting.check(spec, res)
                 br = t.adapter.build_part(spec, res, s.work)
                 deps: set[str] = set()
                 mass_check = self._mass_check(res.mass_kg, br.measured)

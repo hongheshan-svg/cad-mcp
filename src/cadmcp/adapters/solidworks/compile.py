@@ -381,7 +381,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
             ops.append(NativeOp("leader_note", {"view": d.view, "text": text, "at_model": d.at, "ref": d.ref}))
     if plan.title_block.get("surface_finish") and plan.model_kind == "part":
-        ops.append(NativeOp("note", {"text": f"其余 √{plan.title_block['surface_finish']} (√)", "anchor": "above_notes"}))
+        sf = plan.title_block["surface_finish"]
+        ops.append(NativeOp("note", {"text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)",
+                                     "anchor": "above_notes"}))
     ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block"}))
     if plan.revisions:  # P1：改用 SW 修订表（InsertRevisionTable2）；先以注释输出
         ops.append(NativeOp("note", {"text": "更改记录：\n" + "\n".join(

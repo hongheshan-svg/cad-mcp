@@ -280,13 +280,29 @@ class Roughness(Strict):
     ra: Num = Field(description="Ra 值 μm，优先 0.4/0.8/1.6/3.2/6.3/12.5")
 
 
+class CastingSpec(Strict):
+    """铸件：spec 描述加工后的零件；平台据此生成毛坯（加工面加余量、小孔不铸出、铸孔留加工量）。"""
+    process: Literal["sand", "investment", "die"] = Field("sand", description="砂型 / 熔模精铸 / 压铸")
+    machined_faces: list[Face] = Field([], description="机加工面（加余量）")
+    allowance: Num | None = Field(None, description="单边加工余量 mm；默认 砂型 3 / 精铸 1 / 压铸 0.5")
+    draft_deg: Num | None = Field(None, description="拔模斜度；默认 砂型 1.5° / 精铸 0.5° / 压铸 1°")
+    min_cast_hole: Num | None = Field(None, description="小于此直径的孔不铸出、铸后钻；默认 砂型 25 / 精铸 8 / 压铸 4")
+    fillet: Num = Field(3.0, description="未注铸造圆角 R")
+    blank_of: str | None = Field(None, description="（平台内部）本件是该零件的毛坯")
+
+
+CAST_DEFAULTS = {"sand": {"allowance": 3.0, "draft": 1.5, "min_hole": 25.0, "tol": "DCTG 10"},
+                 "investment": {"allowance": 1.0, "draft": 0.5, "min_hole": 8.0, "tol": "DCTG 6"},
+                 "die": {"allowance": 0.5, "draft": 1.0, "min_hole": 4.0, "tol": "DCTG 5"}}
+
+
 class PartSpec(Strict):
     kind: Literal["part"] = "part"
     name: str = Field(description="file base name, e.g. 'J2611-020-003_MountPlate'")
     part_no: str = Field(description="drawing / ERP number")
     title: str = Field(description="part name shown on drawing/BOM, e.g. '气缸安装板'")
     material: str
-    category: Literal["machined", "sheet_metal", "weldment", "purchased", "standard"] = "machined"
+    category: Literal["machined", "sheet_metal", "weldment", "casting", "purchased", "standard"] = "machined"
     surface_treatment: str | None = Field(None, description="e.g. '阳极氧化黑', '镀锌'")
     parameters: dict[str, Num] = Field({}, description="driving parameters → SW global variables / Creo parameters")
     base: Base
@@ -296,9 +312,14 @@ class PartSpec(Strict):
     datums: list[Datum] = Field([], description="基准；几何公差引用其字母")
     tolerances: list[GeoTol] = Field([], description="几何公差（形位公差）")
     roughness: list[Roughness] = Field([], description="个别表面粗糙度；其余表面按出图 surface_finish")
+    casting: CastingSpec | None = Field(None, description="铸件（category=casting）：加工面、余量、拔模、最小铸孔")
 
     @model_validator(mode="after")
     def _unique_names(self):
+        if self.casting is not None and self.base.type != "extrude":
+            raise ValueError("casting: only extrude-based parts are supported in v1")
+        if (self.category == "casting") != (self.casting is not None):
+            raise ValueError("category 'casting' needs a casting block (machined_faces, process …) and vice versa")
         names = [f.name for f in self.features] + [r.name for r in self.references]
         dup = {n for n in names if names.count(n) > 1}
         if dup:
