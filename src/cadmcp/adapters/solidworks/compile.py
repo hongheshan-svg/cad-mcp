@@ -170,6 +170,17 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
         ops.append(NativeOp("sketch_shaft_half_profile", {"sketch": "SK_Shaft", "steps": p.shaft_steps,
                                                            "axis": "Z", "chamfer": p.shaft_chamfer}))
         ops.append(NativeOp("revolve", {"feature": "Base", "sketch": "SK_Shaft", "angle": 360}))
+        for h in p.end_holes:  # 轴端螺孔：攻丝底孔切除 + 孔口圆边上的内螺纹装饰线
+            sk = f"SK_{h['name']}"
+            ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))
+            ops.append(NativeOp("sketch_circle", {"sketch": sk, "center": [0, 0], "diameter": h["tap"]}))
+            ops.append(NativeOp("keyway_cut", {"feature": h["name"], "sketch": sk, "start_offset": h["z0"],
+                                               "depth": h["drill"], "flip": False}, "底孔（平底；实际钻尖 118°）"))
+            zm = 0.0 if h["side"] == "start" else h["z1"]
+            ops.append(NativeOp("cosmetic_thread", {"feature": h["name"] + "_THR", "size": h["size"], "depth": h["depth"],
+                                                    "edge_pts": [[h["tap"] / 2, 0, zm]], "diameter": h["d"],
+                                                    "external": False, "tol": h["callout"].split("-")[1].split("↓")[0]},
+                                "孔口圆边 → 内螺纹装饰线（失败不影响几何）"))
         for b in p.shaft_bores:  # 内孔：Front Plane(XY) 画圆，从 z0 起切到 z1
             sk = f"SK_{b['name']}"
             ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))

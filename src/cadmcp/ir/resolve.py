@@ -129,6 +129,7 @@ class ResolvedPart:
     properties: dict[str, str] = field(default_factory=dict)
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
+    end_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端螺孔 {name, side, size, d, d1, tap, depth, drill, z0, z1, callout}
     shaft_bores: list[dict[str, Any]] = field(default_factory=list)  # 内孔 {name, z0, z1, d, tol, side, through}
     center_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端中心孔 {end: start|end, type, d, D, l1, code, keep}
     shaft_features: list[dict[str, Any]] = field(default_factory=list)  # keyway / groove
@@ -544,6 +545,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     shaft_chamfer = 0.0
     center_holes: list[dict[str, Any]] = []
     shaft_bores: list[dict[str, Any]] = []
+    end_holes: list[dict[str, Any]] = []
     flat_box = None
 
     gear = None
@@ -588,6 +590,28 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         for a, b in [(a, b) for i, a in enumerate(shaft_bores) for b in shaft_bores[i + 1:]]:
             if a["z0"] < b["z1"] - 1e-9 and b["z0"] < a["z1"] - 1e-9 and not (a["through"] or b["through"]):
                 raise CadError(SPEC_INVALID, f"内孔 {a['name']} 与 {b['name']} 沿轴向重叠", hint="两端的孔深之和不超过轴长，或改为通孔")
+        for k, eh in enumerate(base.end_holes):
+            from ..standards import ext_thread
+            d, pitch, d1, fine = ext_thread(eh.size)
+            depth = ev(eh.depth)
+            drill = ev(eh.drill_depth) if eh.drill_depth is not None else depth + math.ceil(0.5 * d)
+            de = steps[0][1] if eh.side == "start" else steps[-1][1]
+            if drill < depth or depth <= 0:
+                raise CadError(SPEC_INVALID, f"轴端螺孔 {eh.size}：底孔深 {drill:g} 须 ≥ 螺纹深 {depth:g} > 0")
+            if d > de - 2 * shaft_chamfer - 2:
+                raise CadError(SPEC_INVALID, f"轴端螺孔 {eh.size} 超出轴端 Φ{de:g}（倒角 C{shaft_chamfer:g}）", hint="换小螺纹")
+            if drill > Lt / 2:
+                raise CadError(SPEC_INVALID, f"轴端螺孔 {eh.size} 底孔深 {drill:g} 超过轴长一半")
+            if base.center_holes and base.center_holes.ends in ("both", eh.side):
+                raise CadError(SPEC_INVALID, f"轴 {eh.side} 端同时有中心孔与螺孔", hint="该端去掉中心孔（ends 改为另一端）")
+            tap = round(d - pitch, 2)  # 攻丝底孔（GB/T 20330 常用值 ≈ d − P）
+            z0, z1 = (0.0, drill) if eh.side == "start" else (Lt - drill, Lt)
+            end_holes.append({"name": f"EH{k + 1}", "side": eh.side, "size": eh.size, "d": d, "pitch": pitch, "d1": d1,
+                              "tap": tap, "depth": depth, "drill": drill, "z0": z0, "z1": z1,
+                              "callout": f"{eh.size.replace('x', '×')}-{eh.tolerance}↓{depth:g} 孔↓{drill:g}"})
+            volume -= math.pi * tap * tap / 4 * drill
+        if end_holes and shaft_bores:
+            raise CadError(CAPABILITY_UNSUPPORTED, "空心轴/套类不支持轴端螺孔", hint="去掉 end_holes")
         if base.center_holes and shaft_bores:
             raise CadError(SPEC_INVALID, "空心轴/套类不能再加中心孔", hint="去掉 center_holes")
         if base.center_holes:
@@ -871,7 +895,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,

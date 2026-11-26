@@ -464,3 +464,9 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 - 出图：主视图原位全剖。SW = 视图外框矩形 + `CreateBreakOutSection(深度 = 外圆半径)`；核对深度是否正好剖到轴线、剖面线是否只在材料上。
   Creo = `drw.section kind=local`，边界 = 视图外框，`cut_points` 取轴线两点；核对剖截面是否过轴线且垂直于视线。
 - 尺寸：剖视中端面/轴肩选边点取在孔壁与外圆之间，盲孔孔底取孔径内的点；核对能否选中。
+
+## 轴端螺孔（end_holes，TODO(实机核对)）
+
+样例：`tests/test_end_holes.py`。SW：底孔 FeatureCut4（Φ = d − P，平底）+ 孔口圆边 `InsertCosmeticThread3`（Internal、Metric Tap）；
+核对孔口边选点 (tap/2, 0, z端) 能否选中、主视图隐藏线（swHIDDEN_GREYED）是否显示螺孔虚线。
+Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺纹能否加在拉伸切除的孔面上（原用于孔特征）。

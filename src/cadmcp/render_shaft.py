@@ -8,6 +8,7 @@ from .ir.resolve import ResolvedPart
 
 THIN, THICK = 0.25, 0.5
 CENTER = "6,1.5,1,1.5"
+HIDDEN = "3,1"  # 细虚线（与 render_svg.HIDDEN 一致）
 
 
 def _arrow(s, x, y, dx, dy, size=2.2):
@@ -175,6 +176,19 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
     if c and not part.shaft_bores:
         for z, r in ((c, segs[0][2]), (Ltot - c, segs[-1][2])):
             s.line(*P(z, -r), *P(z, r), THICK)
+    # 轴端螺孔（不可见螺纹，GB/T 4459.1：全部细虚线）：小径（底孔）到底孔深 + 118° 钻尖，大径与终止线到螺纹深
+    for h in part.end_holes:
+        sg = 1 if h["side"] == "start" else -1
+        z_end = 0.0 if sg > 0 else Ltot
+        rt, rd = h["tap"] / 2, h["d"] / 2
+        zt, zd = z_end + sg * h["depth"], z_end + sg * h["drill"]
+        cone = rt * math.tan(math.radians(31))  # 118° 钻尖：轴向长 = r·tan(31°)
+        for y in (rt, -rt):
+            s.line(*P(z_end, y), *P(zd, y), THIN, dash=HIDDEN)
+            s.line(*P(zd, y), *P(zd + sg * cone, 0), THIN, dash=HIDDEN)
+        for y in (rd, -rd):
+            s.line(*P(z_end, y), *P(zt, y), THIN, dash=HIDDEN)
+        s.line(*P(zt, -rd), *P(zt, rd), THIN, dash=HIDDEN)
     # 断开画法：盖住间隙内的轮廓，两侧画波浪线（细实线，GB/T 4457.4）
     for a, b in main.breaks:
         r = radius_at_seg(segs, (a + b) / 2)
@@ -259,7 +273,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 render_gdt.roughness(s, px - 3.5 + 2.5, y_top + 22 + render_gdt.CELL_H, (0, 1), d.text)
             else:
                 render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
-        elif d.kind == "callout" and d.ref.startswith("ch:") and (d.extra or {}).get("label"):
+        elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")) and (d.extra or {}).get("label"):
             lb = d.extra["label"]  # 中心孔 GB/T 4459.5
             s.line(*lb["anchor"], *lb["elbow"], THIN)
             s.line(*lb["elbow"], *lb["end"], THIN)
@@ -305,6 +319,17 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             k += 2.5
         s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(hatch)}</g>")
         s.poly(outline, THICK)
+        zc_ = (f["z0"] + f["z1"]) / 2
+        for h in part.end_holes:  # 断面切到轴端螺孔：孔（小径/底孔）粗实线、大径 3/4 圈细实线（GB/T 4459.1）
+            if h["z0"] - 1e-6 <= zc_ <= h["z1"] + 1e-6:
+                rt = h["tap"] / 2 * sc
+                s.circle(vx, vy, rt, THICK)
+                s.parts.append(f"<circle cx='{vx:.2f}' cy='{s.y(vy):.2f}' r='{rt - 0.3:.2f}' fill='white' stroke='none'/>")
+                inside_thread = (zc_ <= h["depth"]) if h["side"] == "start" else (zc_ >= h["z1"] - h["depth"])
+                if inside_thread:
+                    rd = h["d"] / 2 * sc
+                    pts = [(vx + rd * math.cos(math.radians(a)), vy + rd * math.sin(math.radians(a))) for a in range(0, 271, 10)]
+                    s.poly(pts, THIN, close=False)
         s.line(vx - r - 3, vy, vx + r + 3, vy, THIN, CENTER)
         s.line(vx, vy - r - 3, vx, vy + r + 3, THIN, CENTER)
         s.text(vx, vy + r + 12, v.label, 4, "middle")

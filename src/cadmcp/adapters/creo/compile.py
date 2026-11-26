@@ -215,6 +215,11 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
         axis = {"p1": [0, 0], "p2": [0, total]}
         feat("feat.revolve", "Base", "半截面含两端倒角", plane={"ref": "FRONT", "offset": 0}, entities=ents,
              axis=axis, angle=360, op="add")
+        for h in p.end_holes:  # 轴端螺孔：底孔拉伸切除 + 装饰螺纹（TODO(实机核对) 拉伸切除面上能否加装饰螺纹）
+            feat("feat.extrude", h["name"], "轴端螺孔底孔", plane={"ref": "TOP", "offset": h["z0"]},
+                 entities=[_circle((0, 0), h["tap"] / 2)], depth=h["drill"], direction="normal", op="cut", through_all=False)
+            feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],
+                 major_diameter=h["d"], length=h["depth"])
         for b in p.shaft_bores:  # 内孔：IR XY 面（TOP）偏移 z0 处画圆，切深 = 孔深（平底）
             feat("feat.extrude", b["name"], "内孔", plane={"ref": "TOP", "offset": b["z0"]},
                  entities=[_circle((0, 0), b["d"] / 2)], depth=b["z1"] - b["z0"], direction="normal", op="cut",

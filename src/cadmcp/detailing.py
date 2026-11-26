@@ -1064,7 +1064,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     brk = shaft_breaks(p) if spec.broken_view else []
     Lv = Ltot - sum(b_ - a_ for a_, b_ in brk) + len(brk) * BREAK_GAP  # 断开后的视图长（模型 mm，间隙按 1:1 估）
     # 右端中心孔标注向右伸出（文字约 40 mm，图纸尺寸，按 1:1 预留）；左端用左侧留白
-    ch_r = max((text_width(f"GB/T 4459.5-{h['code']}", 3.0) + 12 for h in p.center_holes if h["end"] == "end"), default=0.0)
+    ch_r = max([text_width(f"GB/T 4459.5-{h['code']}", 3.0) + 12 for h in p.center_holes if h["end"] == "end"]
+               + [text_width(h["callout"], 3.0) + 12 for h in p.end_holes if h["side"] == "end"], default=0.0)
     col_w = [Lv + max(92 if p.gear else 0, ch_r)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
     # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
@@ -1116,6 +1117,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if p.shaft_chamfer:
             dims.append(Dim("front", "callout", None, p.shaft_chamfer, f"2×C{p.shaft_chamfer:g}", "chamfer",
                             (0.0, p.shaft_steps[0][1] / 2)))
+        for h in p.end_holes:  # 轴端螺孔：GB/T 4459.1 简化标注（螺纹代号↓螺纹深 孔↓底孔深），从端面轴线处引出
+            dims.append(Dim("front", "callout", None, h["d"], h["callout"], f"eh:{h['side']}",
+                            (0.0 if h["side"] == "start" else Ltot, 0.0)))
         for h in p.center_holes:  # 中心孔：GB/T 4459.5 简化标注，从端面轴线处引出
             dims.append(Dim("front", "callout", None, h["d"], f"GB/T 4459.5-{h['code']}", f"ch:{h['end']}",
                             (0.0 if h["end"] == "start" else Ltot, 0.0), {"keep": h["keep"]}))
@@ -1962,8 +1966,9 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
     z0, z1 = p.step_z(i)
     busy = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] != "gear"]
     lines = [z0, z1] + ([c] if c and z0 == 0 else []) + ([Ltot - c] if c and abs(z1 - Ltot) < 1e-6 else [])
-    # 文字的障碍：键槽/环槽轮廓、各竖线；螺纹只有终止线（小径细线是水平的）
+    # 文字的障碍：键槽/环槽轮廓、各竖线、轴端螺孔虚线；螺纹只有终止线（小径细线是水平的）
     obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
+    obst += [(h["z0"], h["z1"] + 0.3 * h["tap"]) for h in p.end_holes]
     for f in p.shaft_features:
         if f["step"] == i and f["kind"] == "thread":
             zt = f["z0"] if f["side"] == "end" else f["z1"]
@@ -2055,11 +2060,11 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
                        "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
-        elif d.kind == "callout" and d.ref.startswith("ch:"):
+        elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")):
             # 中心孔：从端面轴线处向外下方引出，文字沿水平线向外（左端向左、右端向右）；保留/不允许保留符号在文字前
             z, _ = d.at
             ax, ay = X(z), cy
-            sgn = -1 if d.ref == "ch:start" else 1
+            sgn = -1 if d.ref.endswith(":start") else 1
             sym = 4.0 if (d.extra or {}).get("keep") in ("required", "forbidden") else 0.0
             w = text_width(d.text, 3.0) + sym + 1
             ex_, ey_ = ax + sgn * 5, cy - R * sc - 5

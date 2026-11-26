@@ -33,6 +33,15 @@ class ShaftBase(Strict):
     chamfer: Num = Field(0.0, description="两端倒角 C 值（mm），0 为不倒角")
     center_holes: "CenterHoles | None" = Field(None, description="轴端中心孔（GB/T 145，图上按 GB/T 4459.5 简化标注）")
     bores: list["ShaftBore"] = Field([], description="内孔（套类/空心轴）：从轴端起的同轴圆孔；有内孔时主视图全剖")
+    end_holes: list["EndHole"] = Field([], description="轴端螺孔（装挡圈/压板），主视图细虚线 + 端面引线标注")
+
+
+class EndHole(Strict):
+    side: Literal["start", "end"] = "start"
+    size: str = Field(description="M8 或 M8x1")
+    depth: Num = Field(description="螺纹深度")
+    drill_depth: Num | None = Field(None, description="底孔深度；缺省 = 螺纹深度 + 0.5d（取整）")
+    tolerance: str = "6H"
 
 
 class ShaftBore(Strict):

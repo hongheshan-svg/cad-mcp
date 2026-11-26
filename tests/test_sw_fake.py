@@ -426,3 +426,14 @@ def test_sw_sleeve_bore_datum(sw_svc):
     assert r["rules"]["passed"], r["rules"]
     calls = [c[0] for c in ad.sw.calls]
     assert "InsertDatumTag2" in calls or any("Datum" in c for c in calls)
+
+
+def test_sw_shaft_end_holes(sw_svc):
+    """轴端螺孔：底孔切除 + 内螺纹装饰线 + 引线标注，规则检查通过。"""
+    from test_end_holes import SP
+    svc, ad = sw_svc
+    svc.change_begin("EH")
+    svc.build(PartSpec.model_validate(SP))
+    r = svc.build(DrawingSpec.model_validate({"model": "EH1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    assert "InsertCosmeticThread3" in [c[0] for c in ad.sw.calls]
