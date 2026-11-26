@@ -233,3 +233,15 @@ def test_hole_roughness_moves_to_section_wall():
     assert abs(ra.at[0] - (-30)) < 1e-6 and 0 < ra.at[1] < 20
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_cut_line_extension_is_sheet_based():
+    """剖切线伸出外形按图纸 6 mm 计（模型 6/比例），放大比例下不至于远离视图。"""
+    from cadmcp.section import SectionPlan, cut_line
+    p = resolve_part(PartSpec.model_validate({
+        "name": "T", "part_no": "T", "title": "块", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 20, "height": 12}, "thickness": 8}}))
+    sec = SectionPlan(label="A", kind="full", view="front", parent="top", path=[(-10.0, 10.0, 0.0)])
+    for scale in (5.0, 1.0, 0.5):
+        pts = cut_line(p, sec, scale)
+        assert abs(pts[0][0] - (-10 - 6 / scale)) < 1e-9 and abs(pts[-1][0] - (10 + 6 / scale)) < 1e-9
