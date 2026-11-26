@@ -1330,6 +1330,17 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
+    # 上下留白均匀：上方已按最紧排（留 GAP/2），下方空余一半让给上方。
+    # 下沿外扩：主视图/端视图 32 mm（分段尺寸 + 总长 + 基准符号），断面/放大图 10 mm；与右侧标题栏/技术要求栏横向重叠的
+    # 视图不得低于该栏顶部。
+    n_notes = len(_notes_and_title(spec, p, sheet, scale, today)[0])
+    col_x, col_top = W - 5 - 180, 5 + 56 + 14 + 5 * n_notes + 6 + 16
+    free = min(v.origin_on_sheet[1] - v.size_mm[1] / 2 - (32 if v.type in ("front", "left") else 10)
+               - ((col_top + 4) if v.origin_on_sheet[0] + v.size_mm[0] / 2 + 16 > col_x else MARGIN + 2) for v in views)
+    m = round((free - GAP / 2) / 2, 1)
+    if m > 2:
+        for v in views:
+            v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - m)
     for lh in p.heat.get("local", []):  # 局部淬火：主视图轮廓下方 1.2 mm 的粗点画线（GB/T 4457.4），两端让开 0.5 mm
         r_ = p.shaft_steps[lh["step"]][1] / 2
         y_ = front.origin_on_sheet[1] - r_ * scale - 1.2

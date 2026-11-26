@@ -136,3 +136,13 @@ def test_vertical_cross_hole_sleeve():
     assert not plan.views[0].local_sections and plan.views[0].full_section  # 已全剖：孔在上下壁断开
     svg, out = render(plan, p)
     assert not out["crossings"] and not out["collisions"]
+
+
+def test_shaft_views_balanced():
+    """轴类：下方有空余时视图整体下移，上下留白接近。"""
+    p = resolve_part(PartSpec.model_validate(XV))
+    plan = plan_part_drawing(DrawingSpec(model="XV"), p)
+    W, H = plan.sheet_size
+    f = plan.views[0]
+    top = H - 10 - (f.origin_on_sheet[1] + f.size_mm[1] / 2)
+    assert top > 30  # 原来紧贴上边（≈ GAP/2 + 8）
