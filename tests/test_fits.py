@@ -46,3 +46,19 @@ def test_switch_off():
     off = plan_part_drawing(DrawingSpec(model="F", fit_deviations=False), p)
     assert next(d.text for d in on.dims if d.ref == "P") == "Φ20H7(+0.021/0) 通"
     assert next(d.text for d in off.dims if d.ref == "P") == "Φ20H7 通"
+
+
+def test_creo_dim_native_tolerance():
+    """Creo TOOLKIT：带偏差的尺寸文字只留代号，偏差走 tol 参数（原生叠写）。"""
+    import sys
+    sys.path.insert(0, "tests")
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from test_shaft_thread import SH2
+    p = resolve_part(PartSpec.model_validate(SH2))
+    ops = [o for o in tk_detail_ops(plan_part_drawing(DrawingSpec(model="SH2"), p)) if o.op == "tk.drw.dim"]
+    k6 = next(o for o in ops if o.args.get("text") == "Φ25k6")
+    assert k6.args["tol"] == [0.015, 0.002]
+    assert not any("(" in (o.args.get("text") or "") for o in ops)

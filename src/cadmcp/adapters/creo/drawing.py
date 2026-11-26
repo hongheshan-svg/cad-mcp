@@ -267,6 +267,11 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                     "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
             if d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
                 args["text"] = d.text
+                from ...detailing import split_deviation
+                sp = split_deviation(d.text)
+                if sp:  # 极限偏差交给 Creo 原生公差显示（叠写），文字只留代号
+                    args["text"] = sp[0] + sp[3]
+                    args["tol"] = [float(sp[1]), float(sp[2])]
             ops.append(NativeOp("tk.drw.dim", args, "坐标尺寸：基准边 + 要素边" if d.kind == "ordinate"
                                 else "两条轮廓边上的点 → 线性尺寸"))
         elif d.kind in ("callout", "radius", "diameter"):

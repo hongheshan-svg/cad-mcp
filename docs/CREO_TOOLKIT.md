@@ -81,7 +81,7 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | cmd | 关键 args |
 |---|---|
 | `drw.note` | `text`（可多行）, `at`（文字左下角）, `height`（mm，默认 3.5）, `leader_to`（图纸点或 null：有则引线指向该点处的模型边） , `view`（leader 用） |
-| `drw.dim` | `view`, `kind`（`linear|diameter|radius|ordinate`）, `p1`, `p2`（被标注边上的点；diameter/radius 只用 p1；ordinate 的 p1 为基准轮廓边、p2 为要素边，孔量到圆心）, `at`（尺寸文字位置）, `orient`（`h|v|aligned`；ordinate 须 h/v）, `text`（覆盖文字，可空；如 `Φ20k6`） → ordinate：同视图同方向同基准边共用一条基线（首个转 `ProDrawingOrdbaselineCreate`，其余 `ProDrawingDimToOrdinate`）；p2 与基准同一条边时只返回基线 |
+| `drw.dim` | `view`, `kind`（`linear|diameter|radius|ordinate`）, `p1`, `p2`（被标注边上的点；diameter/radius 只用 p1；ordinate 的 p1 为基准轮廓边、p2 为要素边，孔量到圆心）, `at`（尺寸文字位置）, `orient`（`h|v|aligned`；ordinate 须 h/v）, `text`（覆盖文字，可空；如 `Φ20k6`）, `tol`（可选 `[上偏差, 下偏差]` mm，原生正负公差叠写显示；应答带 tol_set 布尔） → ordinate：同视图同方向同基准边共用一条基线（首个转 `ProDrawingOrdbaselineCreate`，其余 `ProDrawingDimToOrdinate`）；p2 与基准同一条边时只返回基线 |
 | `drw.datum` | `view`, `at`（贴边点）, `pos`（方框位置）, `label` |
 | `drw.gtol` | `view`, `at`（被测要素点，null 表示不带引线）, `pos`, `type`（flatness/position/... 与 IR 同名）, `value`, `diameter`（bool）, `datums`（≤3） |
 | `drw.surface_finish` | `view`, `at`, `pos`, `ra`, `removal`（`required|prohibited`） |

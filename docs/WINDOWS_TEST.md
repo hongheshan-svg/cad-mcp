@@ -417,4 +417,5 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
   `ProAnnotationShow`（PRO_AXIS 模型项）在 Creo 7/9/10 的可用性；应答 `failed > 0` 时把 oplog 发回。
 - SW 配合公差：轴段直径 / 键槽宽应显示代号 + 叠写偏差（SW 自带 ISO 286 表）。核对 `swTolFITWITHTOL`
   取值（缺省 9）与 `IDimensionTolerance.SetFitValues(孔, 轴)`；数值应与预览一致（如 Φ20k6 +0.015/+0.002）。
-  失败时 readback 有 `dim_fit_failed`，图上退回文字后缀。Creo 端目前把偏差写进尺寸文字（单行括号）。
+  失败时 readback 有 `dim_fit_failed`，图上退回文字后缀。Creo 端 `drw.dim` 的 `tol` 参数走原生正负公差（ProDimensionToltypeSet + ProDimensionToleranceSet，
+  会话里打开 tol_display）；应答 `tol_set: false` 时核对下偏差符号约定与签名。

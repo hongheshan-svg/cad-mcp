@@ -375,6 +375,20 @@ void set_dim_text(ProDimension* dim, const std::string& text) {
     check(e, "ProDimensionTextWstringsSet");
 }
 
+// 极限偏差：Creo 原生"正负"公差显示（上下叠写）。失败只记数，不中断。
+// TODO(实机核对): ProDimensionToltypeSet(dim, PRO_TOL_PLUS_MINUS) 与 ProDimensionToleranceSet(dim, upper, lower)
+//   在 Creo 7/9/10 的签名；ProDimensionToleranceSet 的下偏差是否传绝对值（Creo 界面输入下偏差时自带负号）。
+//   公差显示需 config 选项 tol_display=yes：首次调用时在会话里打开（ProConfigoptSet，ProUtil.h）。
+bool set_dim_tol(ProDimension* dim, double upper, double lower) {
+    static bool cfg_done = false;
+    if (!cfg_done) {
+        ProConfigoptSet(const_cast<wchar_t*>(L"tol_display"), const_cast<wchar_t*>(L"yes"));
+        cfg_done = true;
+    }
+    if (ProDimensionToltypeSet(dim, PRO_TOL_PLUS_MINUS) != PRO_TK_NO_ERROR) return false;
+    return ProDimensionToleranceSet(dim, upper, -lower) == PRO_TK_NO_ERROR;
+}
+
 // drw.dim
 //  linear：p1/p2 两条被标注边上的点；diameter/radius：p1 为圆/圆弧边上的点
 //  ordinate：p1 = 基准轮廓边上的点，p2 = 被标注要素边上的点（孔取圆周点 → 量到圆心）。
@@ -390,6 +404,14 @@ json cmd_drw_dim(const json& a) {
     Pt at = arg_pt2(a, "at");
     std::string orient = has(a, "orient") ? arg_str(a, "orient") : "aligned";
     std::string text = has(a, "text") ? arg_str(a, "text") : "";
+    bool has_tol = has(a, "tol");
+    double tol_up = 0, tol_lo = 0;
+    if (has_tol) {
+        if (!a["tol"].is_array() || a["tol"].size() != 2) throw CmdError("BAD_ARGS", "tol 须为 [上偏差, 下偏差]（mm）");
+        tol_up = a["tol"][0].get<double>();
+        tol_lo = a["tol"][1].get<double>();
+    }
+    int tol_failed = 0;
 
     if (kind != "linear" && kind != "diameter" && kind != "radius" && kind != "ordinate")
         throw CmdError("BAD_ARGS", "kind 须为 linear|diameter|radius|ordinate");
@@ -425,12 +447,14 @@ json cmd_drw_dim(const json& a) {
                 g_ord_bases.push_back({key, base});
             }
             if (!text.empty()) set_dim_text(&dim, text);
+            if (has_tol && !set_dim_tol(&dim, tol_up, tol_lo)) ++tol_failed;
             out = json{{"id", dim.id}, {"baseline_id", base.id}};
         } else {
             // diameter/radius：Creo 按圆边自动加 Φ/R；TODO(实机核对): 圆边上直接建出的是直径还是半径——
             //   若与 kind 不符，改用 ProDimSense.type=PRO_DIM_SNS_TYP_PNT + orient_hint 指定，或建后 ProDimensionTypeSet
             ProDimension dim = create_dim(d, sels, kind == "linear", ori, at);
             if (!text.empty()) set_dim_text(&dim, text);
+            if (has_tol && !set_dim_tol(&dim, tol_up, tol_lo)) ++tol_failed;
             out = json{{"id", dim.id}};
         }
     } catch (...) {
@@ -438,6 +462,7 @@ json cmd_drw_dim(const json& a) {
         throw;
     }
     free_sels();
+    if (has_tol) out["tol_set"] = tol_failed == 0;
     return out;
 }
 
