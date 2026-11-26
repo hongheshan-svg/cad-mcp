@@ -1052,10 +1052,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     kws = [f for f in p.shaft_features if f["kind"] == "keyway"]
     sec_d = max((f["d"] for f in kws), default=0.0)
     col_w = [Ltot + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
-    # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm），同段还有粗糙度时可能标在框格上方（再高 ~12 mm）
+    # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
+    # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
-    extra_top = 0.0 if not g_steps else (16.0 if g_steps & {r["target"] for r in p.roughness} else 6.0)
-    row_h = [D + extra_top] + ([sec_d] if kws else [])
+    extra_top = 3.0 if g_steps else 0.0
+    row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + ([sec_d] if kws else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
     W, H = SHEETS[sheet]
@@ -1125,6 +1126,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                                     (sz0, f["z0"])))
     if spec.dimensions != "none":
         dims += _precision_dims(p, views, {"front"}, True)
+        if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
+            for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
+                v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
