@@ -61,7 +61,7 @@ class ChangeSession:
             policy.check_read(p)
             items = [p] if p.is_file() else [q for q in p.rglob("*") if q.is_file()]
             for q in items:
-                rel = q.name if p.is_file() else q.relative_to(p)
+                rel = q.name if p.is_file() else q.relative_to(p).as_posix()  # 统一用 / 分隔（Windows 一致）
                 for dest_root in (s.src, s.work):
                     dest = dest_root / rel
                     dest.parent.mkdir(parents=True, exist_ok=True)

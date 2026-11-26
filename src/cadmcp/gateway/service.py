@@ -525,7 +525,7 @@ class CadService:
         if s.work.resolve() not in p.parents or not p.is_file():
             raise CadError(DOC_NOT_FOUND, f"{file} is not in this change session's workspace",
                            hint="先用 cad_change_begin(project, sources=[原文件或目录]) 把文件复制进工作区；可用文件："
-                                + str(sorted(str(q.relative_to(s.work)) for q in s.work.rglob('*') if q.is_file())[:20]))
+                                + str(sorted(q.relative_to(s.work).as_posix() for q in s.work.rglob('*') if q.is_file())[:20]))
         return p
 
     # ----- 引用查找（工作区外：policy.read_allow 下的共享盘/PDM 检出目录）-----
@@ -605,10 +605,10 @@ class CadService:
         for q in users:
             q = q.resolve()
             if src_root in q.parents:
-                rel = str(q.relative_to(src_root))
+                rel = q.relative_to(src_root).as_posix()
             else:
                 root = next(r for r in self.policy.read_allow if r in q.parents)
-                rel = str(Path("_ext") / root.name / q.relative_to(root))
+                rel = (Path("_ext") / root.name / q.relative_to(root)).as_posix()
             s.add_source(q, rel)
             out.append(rel)
         if out:
@@ -619,13 +619,13 @@ class CadService:
         s = self._session()
         p = self._work_file(file)
         t = self._target(s.target_id)
-        rel = str(p.relative_to(s.work))
+        rel = p.relative_to(s.work).as_posix()
         with t.lock:
             info = t.adapter.inspect(p)
             used = t.adapter.where_used(p, s.work)
             orig = s.source_paths.get(rel)
             outside, notes = self._external_users(t, [Path(orig)]) if orig else ([], [])
-        return {"ok": True, "file": rel, **info, "used_by": [str(q.relative_to(s.work)) for q in used],
+        return {"ok": True, "file": rel, **info, "used_by": [q.relative_to(s.work).as_posix() for q in used],
                 "used_by_outside": [str(q) for q in outside],
                 **({"notes": notes} if notes else {}),
                 **({"hint": "修改时这些文件会自动复制进工作区一起更新和检查"} if outside else {})}
@@ -635,7 +635,7 @@ class CadService:
         from ..edit import check_edits, describe, diff, parse_edits
         s = self._session()
         p = self._work_file(file)
-        rel = str(p.relative_to(s.work))
+        rel = p.relative_to(s.work).as_posix()
         t = self._target(s.target_id)
         parsed = parse_edits(edits)
         with t.lock:
@@ -685,7 +685,7 @@ class CadService:
                 r = t.adapter.refresh(q, preload=list(loaded))
                 if q.suffix.lower() == t.adapter.ext["assembly"].lower():
                     loaded.append(q)
-                qr = str(q.relative_to(s.work))
+                qr = q.relative_to(s.work).as_posix()
                 refreshed.append({"file": qr, **r})
                 if r.get("status") == "errors":
                     findings.append({"rule": "E011", "severity": "error", "target": qr,
@@ -743,7 +743,7 @@ class CadService:
         for q in sorted(rel_dir.rglob("*")):
             if not q.is_file() or q.name == "change_report.json" or "_writeback_backup" in q.parts:
                 continue
-            rel = str(q.relative_to(rel_dir))
+            rel = q.relative_to(rel_dir).as_posix()
             if rel not in s.source_paths:
                 if q.suffix.lower() in model_exts:
                     new_files.append(rel)
