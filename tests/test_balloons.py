@@ -112,3 +112,24 @@ def test_screw_simplified_drawing(svc):
     assert len(pairs) >= 4  # 主视图 2 个螺钉 × 两条小径线（拧入板内的一段被挡、省略）
     assert any(abs(abs(p[0] - q[0]) - 0.85 * 6 * plan.scale) < 0.02 for p in pairs for q in pairs)
     assert "stroke-dasharray='3,1'" in svg  # 螺杆在板内的一段画细虚线
+
+
+def test_bom_standard_part_marking(svc):
+    """明细栏标准件（GB/T 10609.2）：代号栏 = 标准号，名称栏 = 名称规格，材料栏 = 性能等级；预览/SW/Creo 一致。"""
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    from cadmcp.detailing import bom_display
+    from cadmcp.render_svg import render
+    _station(svc)
+    a = svc._get(ASSEMBLY["name"]).resolved
+    plan = svc._get(ASSEMBLY["name"] + "_DRW").resolved
+    r = next(r for r in plan.bom if r["part_no"].startswith("SHCS-M6x20"))
+    assert bom_display(r)[1:] == ["GB/T 70.1", "内六角圆柱头螺钉 M6×20", r["qty"], "12.9级"]
+    part = next(r for r in plan.bom if r["kind"] == "part")
+    assert bom_display(part)[1] == part["part_no"]
+    svg, _ = render(plan, a)
+    assert "GB/T 70.1" in svg and "12.9级" in svg
+    sw = next(o for o in compile_drawing(plan, "x.SLDASM") if o.op == "bom_table")
+    row = next(x for x in sw.args["rows"] if x["item"] == r["item"])
+    assert row["part_no"] == "GB/T 70.1" and row["override"] and "shcs-m6x20" in row["keys"]
+    tk = next(o for o in tk_detail_ops(plan) if o.op == "tk.drw.table" and o.args["columns"][1]["title"] == "代号")
+    assert any("GB/T 70.1" in str(row_) for row_ in tk.args["rows"])

@@ -754,8 +754,12 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             "rows": rrows, "fallback_text": "更改记录：\n" + "\n".join("  ".join(r) for r in rrows)},
             "InsertRevisionTable2（标题栏左侧）→ AddRevision 逐行 → 写单元格 → 回读行数（D020）"))
     if plan.bom:
-        rows = [{"item": r["item"], "part_no": r["part_no"], "qty": r["qty"], "title": r["title"],
-                 "material": r["material"] or r["spec"], "keys": _match_keys(r)} for r in plan.bom]
+        from ...detailing import bom_display
+        rows = []
+        for r in plan.bom:  # 标准件代号栏 = 标准号（SW 表格按行写入显示值），keys 仍按图号/文件名匹配组件
+            d = bom_display(r)
+            rows.append({"item": r["item"], "part_no": d[1], "qty": r["qty"], "title": d[2], "material": d[4],
+                         "keys": _match_keys(r), **({"override": True} if r.get("standard") else {})})
         ops.append(NativeOp("bom_table", {"view": plan.views[0].type, "anchor": "above_title_block",
                                           "columns": BOM_COLUMNS, "rows": rows, "header_bottom": True},
                             "InsertBomTable4 → 按方案序号重排行（MoveRow）→ 回读核对（D011）"))

@@ -100,6 +100,7 @@ class SourceInfo:
     references: dict[str, ResolvedRef]
     model: str | None = None
     properties: dict[str, str] = field(default_factory=dict)
+    standard: str = ""  # 标准件：标准号（如 GB/T 70.1），明细表"代号"栏
     mounts: dict[str, dict[str, Any]] = field(default_factory=dict)  # 零件：CS_<mount> → 接口信息
     interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
     install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
@@ -244,7 +245,7 @@ class ResolvedAssembly:
             if key not in rows:
                 rows[key] = {"part_no": s.part_no, "title": s.title, "spec": s.model or "", "material": s.material or "",
                              "kind": s.kind, "qty": 0, "unit_mass_kg": round(s.mass_kg, 4), "instances": [],
-                             "source": s.source}
+                             "source": s.source, "standard": s.standard, "properties": dict(s.properties)}
             return rows[key]
 
         for inst in self.instances:

@@ -332,7 +332,9 @@ class CadService:
             return SourceInfo(source, lp.category, lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items()), lp.title, None,
                               lp.mass_kg, lp.bbox, lp.references, model=lp.model, properties=lp.properties,
                               interface_frame=(self.library.items[lp.code].get("mount") or {}).get("frame"),
-                              fits=lp.fits, revolve=lp.revolve, threads=lp.threads)
+                              fits=lp.fits, revolve=lp.revolve, threads=lp.threads,
+                              standard=lp.vendor if lp.category == "standard" and lp.vendor.upper().startswith(("GB", "JB", "ISO", "DIN"))
+                              else "")
         raise CadError(CAPABILITY_UNSUPPORTED, "file: components need open_existing support (P1)",
                        hint="先把现有零件转成 spec，或等待真实 CAD 目标支持")
 

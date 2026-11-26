@@ -1705,6 +1705,21 @@ class SwExecutor:
                 tbl.MoveRow(cur, self._k("swTableItemInsertPosition_Before", 3), rs[pos])
         # 回读：序号 / 代号 / 数量（列号按 columns 顺序）
         ci = {t: i for i, (t, _) in enumerate(columns)}
+        for r in data_rows():  # 标准件：代号/名称/材料栏写规划显示值（标准号、名称规格、性能等级）
+            it = item_of(r)
+            w = want.get(it) if it is not None else None
+            if not w or not w.get("override"):
+                continue
+            for col, key in (("代号", "part_no"), ("名称", "title"), ("材料", "material")):
+                if col not in ci:
+                    continue
+                try:  # TODO(实机核对)：ITableAnnotation.Text 为带参属性，pywin32 动态绑定下的写法
+                    tbl.SetText(r, ci[col], str(w[key]))
+                except Exception:  # noqa: BLE001
+                    try:
+                        tbl.Text[r, ci[col]] = str(w[key])
+                    except Exception as e:  # noqa: BLE001
+                        notes.append(f"override row {r} {col}: {e}")
         got = []
         for r in data_rows():
             it = item_of(r)

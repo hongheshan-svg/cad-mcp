@@ -19,6 +19,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from ...detailing import BOM_COLS, bom_display
 from ..native import NativeOp
 
 # 规划视图类型 → Creo 模型命名视图（可由配置 view_map 覆盖）
@@ -170,7 +171,7 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     tables = []
     if plan.bom:
         tables.append(("bom", ["序号", "代号", "数量", "名称", "材料"], [
-            [r["item"], r["part_no"], r["qty"], r["title"], r.get("material") or r.get("spec", "")] for r in plan.bom]))
+            [(d := bom_display(r))[0], d[1], d[3], d[2], d[4]] for r in plan.bom]))
     if plan.hole_table:
         tables.append(("hole_table", ["孔号", "X", "Y", "规格"],
                        [[r["tag"], f"{r['x']:g}", f"{r['y']:g}", r["size"]] for r in plan.hole_table]))
@@ -192,7 +193,6 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
 
 
 TITLE_W, TITLE_H = 180, 56  # 标题栏（与 render_svg 一致）
-BOM_COLS = [("序号", 12), ("图号/编码", 44), ("名称", 54), ("数量", 14), ("材料/规格", 56)]
 CUT_COLS = [("序号", 12), ("规格", 52), ("长度/尺寸", 36), ("数量", 14), ("备注", 66)]
 HOLE_COLS = [("孔号", 14), ("X", 22), ("Y", 22), ("规格", 122)]
 
@@ -422,8 +422,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                                              "rows": _rows(rows), "row_height": 7, "header_bottom": True},
                             "切割清单（GB/T 10609.2 表头在下）"))
     if plan.bom:
-        rows = [[r["item"], r["part_no"], r["title"], r["qty"], r.get("material") or r.get("spec", "")]
-                for r in sorted(plan.bom, key=lambda r: r["item"])]
+        rows = [bom_display(r) for r in sorted(plan.bom, key=lambda r: r["item"])]
         ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": [x0, above], "columns": _cols(BOM_COLS),
                                              "rows": _rows(rows), "row_height": 7, "header_bottom": True},
                             "明细表（GB/T 10609.2 表头在下，序号自下而上）"))

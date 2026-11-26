@@ -1413,7 +1413,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     # 明细表（标题栏上方）
     if plan.bom:  # GB/T 10609.2：表头在下，序号自下而上
         by = y0 + tbh + 12 + 5 * len(plan.notes)
-        cols = [("序号", 12), ("图号/编码", 44), ("名称", 54), ("数量", 14), ("材料/规格", 56)]
+        from .detailing import BOM_COLS, bom_display
+        cols = BOM_COLS
         xx = x0
         for name, w in cols:
             s.rect(xx, by, w, 7, THIN)
@@ -1422,7 +1423,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         for r in sorted(plan.bom, key=lambda r: r["item"]):
             by += 7
             xx = x0
-            for (name, w), val in zip(cols, [r["item"], r["part_no"], r["title"], r["qty"], r["material"] or r["spec"]]):
+            for (name, w), val in zip(cols, bom_display(r)):
                 s.rect(xx, by, w, 7, THIN)
                 s.text(xx + 1.5, by + 2.2, str(val), 3)
                 xx += w

@@ -1491,6 +1491,18 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     return plan
 
 
+BOM_COLS = [("序号", 12), ("代号", 44), ("名称", 54), ("数量", 14), ("材料", 56)]  # GB/T 10609.2 明细栏（简化）
+
+
+def bom_display(r: dict[str, Any]) -> list[Any]:
+    """明细栏一行（序号、代号、名称、数量、材料）。标准件按 GB/T 10609.2：代号栏填标准号，名称栏填名称+规格，
+    材料栏填性能等级（螺钉 8.8 级等）；其余零件代号 = 图号，材料栏无材料时填规格。"""
+    if r.get("standard"):
+        grade = (r.get("properties") or {}).get("等级", "")
+        return [r["item"], r["standard"], r["title"], r["qty"], f"{grade}级" if grade else ""]
+    return [r["item"], r["part_no"], r["title"], r["qty"], r.get("material") or r.get("spec", "")]
+
+
 def plan_asm_section(a: ResolvedAssembly, views: list[ViewPlan]) -> dict[str, Any]:
     """装配图主视图沿主轴线全剖（GB/T 4458.6）：有回转件（轴、轴承）且其轴线平行于主视图时，剖切面取过该轴线、
     平行于主视图的平面。实心轴与标准件（螺钉、销）纵向剖切按不剖绘制（exclude）；被剖零件剖面线方向/间隔相邻错开。
