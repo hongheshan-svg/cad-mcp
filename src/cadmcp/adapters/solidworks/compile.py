@@ -679,7 +679,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             pos = (d.extra or {}).get("sheet_pos")  # 无引线的说明文字（如展开图折弯说明）：文字左下角
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref,
                                                 **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else
-                                                   {"text_pos": pos} if pos else {})}))
+                                                   {"text_pos": pos} if pos else {}),
+                                                **({"angle": 90} if (d.extra or {}).get("rot") == 90 else {})}))
     for d in plan.dims:  # 局部热处理部位：视图中画线，改为粗点画线
         if d.kind == "chain":
             ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["sheet_pts"]],

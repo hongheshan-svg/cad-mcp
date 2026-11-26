@@ -1399,7 +1399,7 @@ class SwExecutor:
         self.model.ClearSelection2(True)
         return {"ref": ref, "styled": styled}
 
-    def op_leader_note(self, view: str, text: str, at_model, ref: str, text_pos=None, anchor=None):
+    def op_leader_note(self, view: str, text: str, at_model, ref: str, text_pos=None, anchor=None, angle=0):
         v = self.views.get(view)
         if v is None:
             raise OpFailed(f"view {view} not on sheet")
@@ -1422,6 +1422,11 @@ class SwExecutor:
         else:
             pos = v.Position  # 视图中心（图纸坐标，m）
             ann.SetPosition2(pos[0] + 0.03, pos[1] + 0.02, 0)
+        if angle:  # 竖写（展开图竖直折弯线旁的折弯说明）：INote.Angle 为弧度
+            try:
+                note.Angle = math.radians(angle)
+            except Exception:  # noqa: BLE001
+                self.readback.setdefault("note_angle_failed", []).append(ref)
         if attached:
             self.readback["leaders_attached"] = self.readback.get("leaders_attached", 0) + 1
         self.readback.setdefault("notes", []).append(ref)

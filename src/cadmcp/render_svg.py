@@ -241,25 +241,15 @@ def _draw_flat(s, cx, cy, sc, part, plan, refs):
 
 
 def _bend_note(s, d, F, x0, y0, x1, y1, part):
-    """折弯说明（上折/下折 角度 R）：写在折弯线旁；展开图内放不下时移到轮廓外（右侧/上方，避开展开尺寸），
-    用细线把折弯线延长过去。水平折弯线文字横写在线上方，竖直折弯线文字竖写在线左侧。"""
-    bd = part.bends[int(d.ref[4:])]
-    tw = _text_w(d.text, 3)
-    px, py = F(*d.at)
-    if bd["flat_axis"] == "v":  # 水平折弯线 y = py
-        if tw <= (x1 - x0) - 4:
-            tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
-            s.text(tx, py + 1, d.text, 3, "middle")
-        else:  # 右侧展开高度尺寸（x1+10，文字到 x1+15）之外
-            s.line(x1 + 1, py, x1 + 18, py, THIN)
-            s.text(x1 + 18.5, py - 1, d.text, 3)
-    else:  # 竖直折弯线 x = px
-        if tw <= (y1 - y0) - 4:
-            ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
-            s.text(px - 1, ty, d.text, 3, "middle", -90)
-        else:  # 上方（展开宽度尺寸在下方）
-            s.line(px, y1 + 1, px, y1 + 4, THIN)
-            s.text(px, y1 + 5, d.text, 3, "middle")
+    """折弯说明：位置由规划层 detailing._bend_note 给出（与 CAD 一致）。"""
+    ex = d.extra or {}
+    if "text_at" not in ex:
+        px, py = F(*d.at)
+        s.text(px, py + 1, d.text, 3, "middle")
+        return
+    for seg in ex.get("leader", []):
+        s.line(*seg[0], *seg[1], THIN)
+    s.text(*ex["text_at"], d.text, 3, ex["anchor"], -90 if ex["rot"] == 90 else 0)
 
 
 def _draw_sheet_side(s, part, vtype, ha, P):

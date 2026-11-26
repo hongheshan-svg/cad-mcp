@@ -181,14 +181,15 @@ def _grid(b: Box, spec: DrawingSpec, flat):
 GAP = 36  # 视图间距：容纳尺寸线与坐标尺寸
 
 
-RIGHT_COL_W = 185.0  # 右侧栏（标题栏 180 + 间隙）：技术要求、明细表、孔表都在这一栏
+RIGHT_COL_W = 185.0
+NOTES_H = 30.0  # 带展开图时：视图伸进右侧栏时，标题栏之上还要让出技术要求（约 4 条 + "其余"粗糙度）  # 右侧栏（标题栏 180 + 间隙）：技术要求、明细表、孔表都在这一栏
 
 
-def _fits(sh: str, s: float, col_w, row_h) -> bool:
+def _fits(sh: str, s: float, col_w, row_h, notes_h: float = 0.0) -> bool:
     """视图区放得下：① 全宽、标题栏以上；或 ② 右侧栏以左、全高（标题栏/明细表只占右侧栏）。"""
     W, H = SHEETS[sh]
     vw, vh = sum(col_w) * s + GAP * len(col_w), sum(row_h) * s + GAP * len(row_h)
-    return (vw <= W - 2 * MARGIN and vh <= H - 2 * MARGIN - TITLE_BLOCK_H) or \
+    return (vw <= W - 2 * MARGIN and vh <= H - 2 * MARGIN - TITLE_BLOCK_H - notes_h) or \
         (vw <= W - 2 * MARGIN - RIGHT_COL_W and vh <= H - 2 * MARGIN)
 
 
@@ -199,7 +200,8 @@ def _fill(sh: str, s: float, col_w, row_h) -> float:
     return (sum(col_w) * s * sum(row_h) * s) / (avail_w * avail_h)
 
 
-def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str) -> tuple[str, float]:
+def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str,
+            notes_h: float = 0.0) -> tuple[str, float]:
     sheets = [sheet] if sheet and sheet != "auto" else list(SHEETS)
     if kind == "part":
         # 工程师习惯：能 1:1 就 1:1；小件或孔太小才放大；图幅优先 A4/A3
@@ -210,7 +212,7 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
                 if s > 1 and min_feature * s < MIN_FEATURE_ON_PAPER and max(b.size) > 30:
                     continue
                 for sh in group:
-                    if _fits(sh, s, col_w, row_h) and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER
+                    if _fits(sh, s, col_w, row_h, notes_h) and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER
                                                         or s <= 1 and min_feature * s >= 1.0):
                         return sh, s
     # 装配：最小的图幅，要求比例不小于 1:5 且填充率达标（给明细表留位）
@@ -231,7 +233,8 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
 
 def _layout(b: Box, spec: DrawingSpec, flat, sheet: str | None, min_feature: float = 0.0, kind: str = "part"):
     types, sizes, cells, col_w, row_h = _grid(b, spec, flat)
-    sh, s = _choose(b, col_w, row_h, sheet, min_feature, kind)
+    # 展开图占右下格，正压在技术要求栏上：选图幅/比例时让出技术要求高度
+    sh, s = _choose(b, col_w, row_h, sheet, min_feature, kind, NOTES_H if "flat_pattern" in types else 0.0)
     W, H = SHEETS[sh]
     views = []
     for i, t in enumerate(types):
@@ -777,6 +780,11 @@ def _balance_moves(plan: "DrawingPlan") -> list:
     proj = [v for v in plan.views if v.type != "iso"]  # 轴测图不标尺寸、不与投影对齐：原位不动
     if not proj:
         return []
+    def box(v, dy, pad):
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        return (cx - vw / 2 - pad, cy - dy - vh / 2 - pad, cx + vw / 2 + pad, cy - dy + vh / 2 + pad)
+    isos = [v for v in plan.views if v.type == "iso"]
     top_gap, bot_gap = float("inf"), float("inf")
     for v in proj:
         cx, cy = v.origin_on_sheet
@@ -785,15 +793,13 @@ def _balance_moves(plan: "DrawingPlan") -> list:
         top_gap = min(top_gap, H - MARGIN - 2 - y1)
         bot_gap = min(bot_gap, y0 - ((col_top + 4) if x1 > col_x else MARGIN + 2))
     m = (bot_gap - top_gap) / 2
+    if bot_gap < 0 < top_gap:  # 压到右侧技术要求栏：视图组整体上移（轴测图同移，上方须有余量）
+        up = min(-bot_gap, top_gap, min((H - MARGIN - 2 - box(v, 0, 0)[3] for v in isos), default=1e9))
+        return [(v, -round(up, 1)) for v in proj + isos] if up > 0.5 else []
     if m <= 2:
         return []
     m = min(m, bot_gap)
 
-    def box(v, dy, pad):
-        cx, cy = v.origin_on_sheet
-        vw, vh = v.size_mm
-        return (cx - vw / 2 - pad, cy - dy - vh / 2 - pad, cx + vw / 2 + pad, cy - dy + vh / 2 + pad)
-    isos = [v for v in plan.views if v.type == "iso"]
 
     def iso_room(v):  # 轴测图自身下方可让出的距离（无尺寸，留 4 mm）
         x0_, y0_, x1_, _ = box(v, 0, 0)
@@ -3378,9 +3384,48 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 yy = y1 + 10 + 8 * k
                 d.extra = {**d.extra, "sheet_pts": [(round(x0, 2), round(y1, 2)), (round(xb, 2), round(y, 2))],
                            "sheet_pos": (round((x0 + xb) / 2, 2), round(yy, 2)), "orient": "h"}
+        elif d.kind == "callout" and d.at is not None and d.ref.startswith("bend"):
+            d.extra = {**(d.extra or {}), **_bend_note(p, int(d.ref[4:]), d.text, F(*d.at), (x0, y0, x1, y1))}
         elif d.kind == "callout" and d.at is not None:
             px, py = F(*d.at)
             d.extra = {**(d.extra or {}), "sheet_pos": (round(px - _tw(d.text) / 2, 2), round(py + 1, 2))}
+
+
+def _bend_note(p: ResolvedPart, i: int, text: str, at, box) -> dict:
+    """展开图折弯说明（上折/下折 角度 R）的图纸位置：写在折弯线中部旁；离外轮廓太近换到线的另一侧；
+    展开图内放不下时移到轮廓外——水平折弯线移到右侧（越过展开高度尺寸），竖直折弯线沿线引到上方
+    （越过折弯定位尺寸行 y1+10+8k），左半边文字向左写、右半边向右写，配细线引出。
+    返回 text_at（文字锚点）、anchor（start/middle/end）、rot（0 / 90 竖写）、leader（细线折线）、
+    sheet_pos（文字左下角，供 CAD 注释）。"""
+    x0, y0, x1, y1 = box
+    bd = p.bends[i]
+    tw = text_width(text, 3)
+    px, py = at
+    lead: list = []
+    if bd["flat_axis"] == "v":  # 水平折弯线 y = py
+        if tw <= (x1 - x0) - 4:
+            tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
+            ty = py + 1 if y1 - py > 4.6 else py - 3.2
+            out = {"text_at": (tx, ty), "anchor": "middle", "rot": 0, "sheet_pos": (tx - tw / 2, ty)}
+        else:
+            lead = [[(x1 + 1, py), (x1 + 18, py)]]
+            out = {"text_at": (x1 + 18.5, py - 1), "anchor": "start", "rot": 0, "sheet_pos": (x1 + 18.5, py - 1)}
+    else:  # 竖直折弯线 x = px
+        if tw <= (y1 - y0) - 4:
+            ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
+            tx = px - 1 if px - x0 > 4.6 else px + 3.2
+            out = {"text_at": (tx, ty), "anchor": "middle", "rot": 90, "sheet_pos": (tx, ty - tw / 2)}
+        else:
+            n_u = sum(1 for b in p.bends if b["flat_axis"] != "v")
+            yn = y1 + 10 + 8 * (n_u - 1) + 7 if n_u else y1 + 5
+            left = px < (x0 + x1) / 2
+            lead = [[(px, y1 + 1), (px, yn)], [(px - 1 - tw, yn), (px, yn)] if left else [(px, yn), (px + 1 + tw, yn)]]
+            tx = px - 1 if left else px + 1
+            out = {"text_at": (tx, yn + 1.2), "anchor": "end" if left else "start", "rot": 0,
+                   "sheet_pos": (tx - tw if left else tx, yn + 1.2)}
+    r2 = lambda q: (round(q[0], 2), round(q[1], 2))  # noqa: E731
+    return {**out, "text_at": r2(out["text_at"]), "sheet_pos": r2(out["sheet_pos"]),
+            "leader": [[r2(q) for q in seg] for seg in lead]}
 
 
 def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
