@@ -173,11 +173,15 @@ def _grid(b: Box, spec: DrawingSpec, flat):
 GAP = 36  # 视图间距：容纳尺寸线与坐标尺寸
 
 
+RIGHT_COL_W = 185.0  # 右侧栏（标题栏 180 + 间隙）：技术要求、明细表、孔表都在这一栏
+
+
 def _fits(sh: str, s: float, col_w, row_h) -> bool:
+    """视图区放得下：① 全宽、标题栏以上；或 ② 右侧栏以左、全高（标题栏/明细表只占右侧栏）。"""
     W, H = SHEETS[sh]
-    avail_w = W - 2 * MARGIN - GAP * len(col_w)
-    avail_h = H - 2 * MARGIN - TITLE_BLOCK_H - GAP * len(row_h)
-    return sum(col_w) * s <= avail_w and sum(row_h) * s <= avail_h
+    vw, vh = sum(col_w) * s + GAP * len(col_w), sum(row_h) * s + GAP * len(row_h)
+    return (vw <= W - 2 * MARGIN and vh <= H - 2 * MARGIN - TITLE_BLOCK_H) or \
+        (vw <= W - 2 * MARGIN - RIGHT_COL_W and vh <= H - 2 * MARGIN)
 
 
 def _fill(sh: str, s: float, col_w, row_h) -> float:
@@ -207,6 +211,8 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
         s = next((s for s in SCALES if s <= 1 and _fits(sh, s, col_w, row_h)), None)
         if s is None:
             continue
+        if any(s <= s0 for _, s0 in candidates):
+            continue  # 大图幅没换来更大比例：只会更空
         candidates.append((sh, s))
         if s >= 0.2 and _fill(sh, s, col_w, row_h) >= MIN_FILL[kind]:
             return sh, s

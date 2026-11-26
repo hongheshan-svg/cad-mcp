@@ -60,3 +60,9 @@ def test_sw_ops_carry_rows_and_balloons(svc):
     assert len(bb.args["balloons"]) == len(plan.balloons)
     assert all(0 < b["pos"][0] < 1.2 for b in bb.args["balloons"])  # 米
     assert not any(o.op == "auto_balloon" for o in ops)
+
+
+def test_assembly_sheet_not_oversized(svc):
+    """审图：视图只需避开右侧栏（标题栏/明细表），不该因此换大图幅而大片留白。"""
+    d, plan = _station(svc)
+    assert plan.sheet == "A3"
