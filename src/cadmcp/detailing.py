@@ -356,8 +356,9 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
         if k == "bore":
             return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
-        if k == "keyway":  # 键槽中心平面：断面图槽宽尺寸线上（图纸坐标在 _shaft_section_dim_sheet 中算）
-            return "section", None, (-1, 0), {"keyway": ref}
+        if k == "keyway":  # 键槽中心平面：槽宽尺寸线上（轴键槽在断面图，见 _shaft_section_dim_sheet；轮毂键槽在左视图）
+            hub = any(b.get("kw") and b["kw"]["name"] == ref for b in p.shaft_bores)
+            return ("left" if hub else "section"), None, ((1, 0) if hub else (-1, 0)), {"keyway": ref}
         if k == "shoulder":  # 轴肩端面：锚点 = 端面上半段中点；框格位置见 shoulder_gtol_geom
             g = shoulder_gtol_geom(p, int(ref), views[0].scale if views else 1.0)
             return "front", (g["z"], g["r_at"]), (-g["from"], 0), {"shoulder": int(ref)}
@@ -1253,8 +1254,15 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         ex_, ey_ = lv.origin_on_sheet
         for b in hub_kws:
             k = b["kw"]
-            dims += hub_keyway_dims("left", ex_, ey_, scale, b["d"] / 2, k["width"],
-                                    k["top"], k["name"], lambda t: t if spec.fit_deviations else t.split("(")[0])
+            hk = hub_keyway_dims("left", ex_, ey_, scale, b["d"] / 2, k["width"],
+                                 k["top"], k["name"], lambda t: t if spec.fit_deviations else t.split("(")[0])
+            dims += hk
+            for g in dims:  # 轮毂键槽对称度：箭头从右侧与槽宽尺寸线对齐，框格在端视图外圆右侧
+                if g.kind == "gtol" and (g.extra or {}).get("keyway") == k["name"]:
+                    (_, yw), (xr, _) = hk[0].extra["sheet_pos"], hk[0].extra["sheet_pts"][1]
+                    g.extra = {**g.extra, "sheet_at": (xr, yw), "normal": (1, 0),
+                               "reach": round(ex_ + D / 2 * scale + 3 - xr, 2),
+                               "sheet_pos": (round(ex_ + D / 2 * scale + 3, 2), yw)}
             # 孔径：左下 45° 引线，箭头在孔壁上（同齿轮轴孔）
             kb = p.shaft_bores.index(b)
             rb, kk = b["d"] / 2, 0.7071

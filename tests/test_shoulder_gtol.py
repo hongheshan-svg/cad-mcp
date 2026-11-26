@@ -126,3 +126,18 @@ def test_keyway_symmetry():
     assert any(o.op == "tk.drw.gtol" and o.args["type"] == "symmetry" for o in tk_detail_ops(plan))
     with pytest.raises(CadError, match="invalid target"):
         resolve_part(PartSpec.model_validate({**GS, "datums": [{"name": "A", "target": "keyway:KW"}]}))
+
+
+def test_hub_keyway_symmetry():
+    from test_shaft_bores import SL
+    sp = {**SL, "auto_precision": True, "base": {**SL["base"], "bores": [
+        {"diameter": 30, "tolerance": "H7", "keyway": True}, {"diameter": 36, "length": 8, "side": "start"}]}}
+    p = resolve_part(PartSpec.model_validate(sp))
+    assert ("symmetry", "keyway:BORE1_KW", ["A"]) in [(g["type"], g["target"], g["datums"]) for g in p.geotols]
+    plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
+    d = next(d for d in plan.dims if d.kind == "gtol" and d.view == "left")
+    w = next(x for x in plan.dims if x.ref == "BORE1_KW_w")
+    assert d.extra["sheet_at"] == (w.extra["sheet_pts"][1][0], w.extra["sheet_pos"][1])
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    assert any(o.op == "gtol" and o.args["view"] == "left" for o in compile_drawing(plan, "SL1.SLDPRT"))

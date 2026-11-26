@@ -923,7 +923,8 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
              (kind == "shoulder" and what.startswith("tolerance") and isinstance(base, ShaftBase) and ref.isdigit()
               and int(ref) < len(steps) - 1 and abs(steps[int(ref)][1] - steps[int(ref) + 1][1]) > 1e-9) or \
              (kind == "keyway" and what.startswith("tolerance") and isinstance(base, ShaftBase)
-              and any(f["kind"] == "keyway" and f["name"] == ref for f in shaft_feats))
+              and (any(f["kind"] == "keyway" and f["name"] == ref for f in shaft_feats)
+                   or any(b.get("kw") and b["kw"]["name"] == ref for b in shaft_bores)))
         if not ok:
             raise CadError(SPEC_INVALID, f"{what}: invalid target {tgt!r}",
                            hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>、bore:<内孔序号>、"

@@ -105,6 +105,16 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
         for i in sorted(set(fits) | gears):
             tols.append(GeoTol(type="circular_runout", value=runout(steps[i][1], 6 if fits.get(i, ("", 7))[1] <= 6 else 7),
                                target=f"step:{i}", datums=["A"]))
+        from .standards import hub_keyway
+        for k, b in enumerate(spec.base.bores):  # 轮毂键槽对称度：对该内孔轴线（GB/T 1184 8 级，按键宽）
+            if not b.keyway:
+                continue
+            dn = next((d.name for d in datums if d.target == f"bore:{k}"), None)
+            if dn is None:
+                dn = "ABCDEFGH"[len(datums)]
+                datums.append(Datum(name=dn, target=f"bore:{k}"))
+            bw, _ = hub_keyway(float(ev(b.diameter)), float(ev(b.keyway_width)) if b.keyway_width is not None else None)
+            tols.append(GeoTol(type="symmetry", value=keyway_symmetry(bw), target=f"keyway:BORE{k + 1}_KW", datums=[dn]))
     if not datums and not tols and (bearings or fits):
         base = [bearings[0], bearings[-1]] if len(bearings) >= 2 else bearings[:1]
         if not base and len(fits) + len(gears) >= 2:  # 无轴承位：取最外两处配合段
