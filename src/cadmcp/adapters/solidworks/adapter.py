@@ -150,6 +150,9 @@ class SolidWorksAdapter(CadAdapter):
                 ops.append(NativeOp("suppress", {"feature": e.feature, "suppressed": e.suppressed}))
             elif e.op == "set_material":
                 ops.append(NativeOp("set_material", {"database": "", "name": e.material}))
+            elif e.op == "replace_component":
+                ops.append(NativeOp("replace_component", {"instance": e.instance, "file": e.file,
+                                                          "all_instances": e.all_instances}))
         ops += [NativeOp("rebuild", {}), NativeOp("collect_feature_errors", {}), NativeOp("inspect", {})]
         ex, res = self._edit_run(path, ops, "edit")
         regen = {"status": res["status"], "oplog": str(path.parent / f"{path.stem}.edit.oplog.json"),
@@ -158,6 +161,10 @@ class SolidWorksAdapter(CadAdapter):
             ex.op_save_document()
         ex.op_close_document()  # 出错时不保存直接关闭：工作副本保持原样
         return {"regen": regen, "after": (ex.readback.get("inspect") or [None])[-1]}
+
+    def library_path(self, code: str) -> Path | None:
+        f = Path(self.library_root) / f"{code}.SLDPRT" if self.library_root else None
+        return f if f is not None and f.exists() else None
 
     def where_used(self, path: Path, search_dir: Path) -> list[Path]:
         out = []

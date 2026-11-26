@@ -44,7 +44,18 @@ class SetMaterial(Strict):
     material: str
 
 
-Edit = Annotated[SetDimension | SetVariable | SetProperty | Suppress | SetMaterial, Field(discriminator="op")]
+class ReplaceComponent(Strict):
+    op: Literal["replace_component"] = "replace_component"
+    instance: str = Field(description="装配中的实例名（来自 cad_inspect_existing 的 components）")
+    source: str = Field(description='"lib:<编码>" 或工作区内文件相对路径')
+    all_instances: bool = Field(False, description="同一零件的所有实例一起替换")
+    file: str | None = Field(None, description="（平台内部）解析后的新件文件路径")
+    code: str | None = Field(None, description="（平台内部）新件库编码")
+    mass_kg: float | None = Field(None, description="（平台内部）新件库登记质量（占位件按此计）")
+
+
+Edit = Annotated[SetDimension | SetVariable | SetProperty | Suppress | SetMaterial | ReplaceComponent,
+                 Field(discriminator="op")]
 
 RATIO_WARN = 3.0
 
@@ -104,6 +115,12 @@ def check_edits(info: dict[str, Any], edits: list[Any]) -> list[dict[str, Any]]:
             kids = [x["name"] for x in info.get("features", []) if e.feature in x.get("parents", [])]
             if e.suppressed and kids:
                 f("E004", "warning", e.feature, f"压缩 {e.feature} 会连带压缩子特征 {kids}")
+        elif isinstance(e, ReplaceComponent):
+            comps = {c["instance"]: c for c in info.get("components", [])}
+            if info.get("kind") != "assembly":
+                f("E001", "error", e.instance, "replace_component 只能用于装配")
+            elif e.instance not in comps:
+                f("E001", "error", e.instance, f"装配中没有实例 {e.instance}", _near(e.instance, list(comps)))
         elif isinstance(e, SetMaterial):
             from . import materials
             if e.material not in materials.MATERIALS:
@@ -126,6 +143,42 @@ def _value_checks(f, name: str, d: dict[str, Any], value: float, angle: bool | N
             f("E002", "warning", name, f"{name} 从 {old:g} 改为 {value:g}（×{r:.2f}），变化很大，确认不是单位错误")
 
 
+MOUNT_KEYS = {"screw": "安装螺钉", "holes": "安装孔位", "pilot": "定位止口", "frame": "安装基准"}
+
+
+def interface_check(instance: str, old: dict[str, Any] | None, new: dict[str, Any] | None,
+                    mates: list[dict[str, Any]], new_refs: list[str]) -> list[dict[str, Any]]:
+    """替换前比对：安装接口（库 mount）是否一致、配合引用的基准在新件上是否存在。"""
+    out = []
+    partners = sorted({m["b"] if m["a"] == instance else m["a"] for m in mates if instance in (m["a"], m["b"])})
+    om, nm = (old or {}).get("mount"), (new or {}).get("mount")
+    if om and nm:
+        d = [f"{MOUNT_KEYS[k]} {om.get(k)} → {nm.get(k)}" for k in MOUNT_KEYS if om.get(k) != nm.get(k)]
+        if d:
+            out.append({"rule": "E012", "severity": "warning", "target": instance,
+                        "message": "安装接口不同：" + "；".join(d),
+                        "hint": f"同步修改安装件 {partners or '（未知）'} 的安装孔（平台建的零件把 mount.item 改为新编码后重建）"})
+    elif old is not None and new is not None and bool(om) != bool(nm):
+        out.append({"rule": "E012", "severity": "warning", "target": instance,
+                    "message": "新旧件只有一方登记了安装接口，无法自动比对", "hint": "人工核对安装尺寸"})
+    for m in mates:
+        if instance in (m["a"], m["b"]):
+            ref = m.get("a_ref") if m["a"] == instance else m.get("b_ref")
+            if ref and ref not in new_refs:
+                out.append({"rule": "E013", "severity": "error", "target": f"{instance}.{ref}",
+                            "message": f"配合 {m['name']} 引用的 {ref} 在新件上不存在，替换后配合会断开",
+                            "hint": f"新件基准：{sorted(new_refs)}"})
+    if old and new:
+        bo, bn = old.get("bbox"), new.get("bbox")
+        if bo and bn:
+            grow = [round((bn[2 * i + 1] - bn[2 * i]) - (bo[2 * i + 1] - bo[2 * i]), 1) for i in range(3)]
+            if any(g > 0 for g in grow):
+                out.append({"rule": "E014", "severity": "warning", "target": instance,
+                            "message": f"新件外形变大 {grow} mm（X/Y/Z），检查与周边干涉",
+                            "hint": "替换后运行 cad_check_interference 或在 CAD 中做干涉检查"})
+    return out
+
+
 def diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     def table(info, key, field="value"):
         return {x["name"]: x.get(field) for x in info.get(key, [])}
@@ -140,6 +193,11 @@ def diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     ch = [{"feature": k, "suppressed": b.get(k)} for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
     if ch:
         out["features"] = ch
+    cb = {c["instance"]: c.get("code") or c.get("file") for c in before.get("components", [])}
+    ca = {c["instance"]: c.get("code") or c.get("file") for c in after.get("components", [])}
+    ch = [{"instance": k, "before": cb.get(k), "after": ca.get(k)} for k in sorted(set(cb) | set(ca)) if cb.get(k) != ca.get(k)]
+    if ch:
+        out["components"] = ch
     if before.get("material") != after.get("material"):
         out["material"] = {"before": before.get("material"), "after": after.get("material")}
     mb, ma = before.get("mass_kg"), after.get("mass_kg")
@@ -156,6 +214,8 @@ def describe(file: str, d: dict[str, Any]) -> str:
     for c in d.get("dimensions", []) + d.get("variables", []):
         parts.append(f"{c['name']} {c['before']:g}→{c['after']:g}" if isinstance(c["before"], (int, float))
                      and isinstance(c["after"], (int, float)) else f"{c['name']}")
+    for c in d.get("components", []):
+        parts.append(f"{c['instance']} 换为 {c['after']}")
     for c in d.get("features", []):
         parts.append(f"{'压缩' if c['suppressed'] else '恢复'} {c['feature']}")
     if "material" in d:

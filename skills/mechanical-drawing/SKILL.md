@@ -82,3 +82,6 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
      不确定时先 `dry_run=true`；结果里看 diff（质量/包围盒变化）和 refreshed（图纸是否更新、悬空标注）；
   4. 有 E010 悬空标注先处理（回滚或改图）再发布；`cad_change_commit` 的更改说明会自动生成；
   5. 需要放回原处时 `cad_change_writeback()` 先看计划，再 `confirm=true`；只读文件提示用户在 PDM 检出。
+- 替换装配中的零部件（换气缸缸径/行程、换电机）：`cad_edit_existing(装配文件, [{"op":"replace_component",
+  "instance":"<实例名>","source":"lib:<编码>"}])`。先 `dry_run=true` 看 E012（安装接口变了：要同步改安装板孔位）、
+  E013（配合基准不存在，会断开）、E014（外形变大，查干涉）；替换前先用 `cad_calc` 确认新规格够用。

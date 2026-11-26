@@ -318,24 +318,28 @@ class CadService:
             code = ref.partition("?")[0]
             if t.adapter.has_library_item(code):
                 continue
-            lp = self.library.get(ref)
-            pn = lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items())
-            if pn not in made:
-                b = lp.bbox
-                dz = -b.zmin  # 占位件坐标系 = 库坐标系沿 Z 平移，使块从 z=0 起
-                ps = PartSpec.model_validate({
-                    "name": f"PH_{pn}", "part_no": pn, "title": f"{lp.title}（占位）", "material": "AL6061-T6",
-                    "category": "purchased",
-                    "base": {"type": "extrude", "thickness": b.zmax - b.zmin,
-                             "profile": {"shape": "rect", "width": b.xmax - b.xmin, "height": b.ymax - b.ymin,
-                                         "center": [(b.xmin + b.xmax) / 2, (b.ymin + b.ymax) / 2]}},
-                    "references": [{"name": n, "origin": [r.origin[0], r.origin[1], r.origin[2] + dz],
-                                    "rotate": list(r.rotate)}
-                                   for n, r in lp.references.items() if n.startswith("CS_") and n != "CS_Origin"],
-                })
-                made[pn] = t.adapter.build_part(ps, resolve_part(ps), work).path
-            files[c.id] = made[pn]
+            pn, path = self._placeholder(t, ref, work, made)
+            files[c.id] = path
         return sorted(made)
+
+    def _placeholder(self, t: Target, ref: str, work: Path, made: dict[str, Path]) -> tuple[str, Path]:
+        lp = self.library.get(ref)
+        pn = lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items())
+        if pn not in made:
+            b = lp.bbox
+            dz = -b.zmin  # 占位件坐标系 = 库坐标系沿 Z 平移，使块从 z=0 起
+            ps = PartSpec.model_validate({
+                "name": f"PH_{pn}", "part_no": pn, "title": f"{lp.title}（占位）", "material": "AL6061-T6",
+                "category": "purchased",
+                "base": {"type": "extrude", "thickness": b.zmax - b.zmin,
+                         "profile": {"shape": "rect", "width": b.xmax - b.xmin, "height": b.ymax - b.ymin,
+                                     "center": [(b.xmin + b.xmax) / 2, (b.ymin + b.ymax) / 2]}},
+                "references": [{"name": n, "origin": [r.origin[0], r.origin[1], r.origin[2] + dz],
+                                "rotate": list(r.rotate)}
+                               for n, r in lp.references.items() if n.startswith("CS_") and n != "CS_Origin"],
+            })
+            made[pn] = t.adapter.build_part(ps, resolve_part(ps), work).path
+        return pn, made[pn]
 
     # ---------------- edit ----------------
     def get_model(self, name: str) -> dict[str, Any]:
@@ -527,7 +531,12 @@ class CadService:
         parsed = parse_edits(edits)
         with t.lock:
             before = t.adapter.inspect(p)
-        findings = check_edits(before, parsed)
+        extra: list[dict[str, Any]] = []
+        for i, e in enumerate(parsed):
+            if e.op == "replace_component":
+                parsed[i], fs = self._resolve_replacement(t, e, before)
+                extra += fs
+        findings = check_edits(before, parsed) + extra
         summ = rules.summarize(findings)
         if not summ["passed"] or dry_run:
             return {"ok": summ["passed"], "applied": False, "file": rel, "findings": findings,
@@ -561,6 +570,33 @@ class CadService:
         return {"ok": True, "applied": True, **{k: v for k, v in rec.items() if k != "checkpoint"},
                 "rollback_to": n, "rules": rules.summarize(findings)}
 
+    def _resolve_replacement(self, t: Target, e, before: dict[str, Any]):
+        """替换件来源 → 文件；库件没有原生模型时生成包络占位件；比对安装接口与配合基准。"""
+        from ..edit import interface_check
+        s = self._session()
+        comp = next((c for c in before.get("components", []) if c["instance"] == e.instance), None)
+        if comp is None:
+            return e, []
+        if e.source.startswith("lib:"):
+            ref = e.source[4:]
+            code = ref.partition("?")[0]
+            if code not in self.library.items:
+                raise CadError(DOC_NOT_FOUND, f"library item {code!r} not found", hint="用 cad_search_library 查询可用编码")
+            path = t.adapter.library_path(code)
+            if path is None:
+                _, path = self._placeholder(t, ref, s.work, {})
+            new_item = self.library.items[code]
+            lp = self.library.get(ref)
+            new_refs, mass = list(lp.references), lp.mass_kg
+        else:
+            path = self._work_file(e.source)
+            code, mass = None, None
+            new_item = self.library.items.get(path.stem)
+            new_refs = t.adapter.inspect(path).get("references", [])
+        old_code = comp.get("code") or Path(comp.get("file", "")).stem
+        fs = interface_check(e.instance, self.library.items.get(old_code), new_item, before.get("mates", []), new_refs)
+        return e.model_copy(update={"file": str(path), "code": code, "mass_kg": mass}), fs
+
     def writeback(self, confirm: bool = False) -> dict[str, Any]:
         """把已发布版本中改过的源文件回写到原位置（先备份原文件；原文件在此期间被别人改过则不覆盖）。"""
         import os
@@ -572,12 +608,13 @@ class CadService:
             raise CadError(POLICY_DENIED, "commit the change first (cad_change_commit)", hint="回写只针对已发布的版本")
         rel_dir = Path(s.committed)
         plan, new_files = [], []
+        model_exts = {e.lower() for e in self._target(s.target_id).adapter.ext.values()}
         for q in sorted(rel_dir.rglob("*")):
             if not q.is_file() or q.name == "change_report.json" or "_writeback_backup" in q.parts:
                 continue
             rel = str(q.relative_to(rel_dir))
             if rel not in s.source_paths:
-                if q.suffix.lower() not in (".json", ".md", ".svg", ".png", ".csv", ".jsonl") and "calcs" not in q.parts:
+                if q.suffix.lower() in model_exts:
                     new_files.append(rel)
                 continue
             if _sha(q) == s.source_hashes[rel]:
@@ -600,6 +637,22 @@ class CadService:
             else:
                 item["status"] = "ready"
             plan.append(item)
+        # 新模型文件（替换进来的件、占位件）：被回写的装配会引用它们，一起复制到原目录（不覆盖同名文件）
+        if plan and new_files and s.source_paths:
+            k, v = next(iter(s.source_paths.items()))
+            root = Path(v).parents[len(Path(k).parts) - 1]
+            for rel in new_files:
+                dest = root / rel
+                item = {"file": rel, "to": str(dest), "new": True}
+                try:
+                    self.policy.check_writeback(dest)
+                    item["status"] = "conflict" if dest.exists() else "ready"
+                    if dest.exists():
+                        item["reason"] = "原目录已有同名文件，不覆盖"
+                except CadError as e:
+                    item.update(status="denied", reason=e.message, hint=e.hint)
+                plan.append(item)
+            new_files = []
         blocked = [i["file"] for i in plan if i["status"] != "ready"]
         if confirm and blocked:  # 全部可写才执行，避免原位置出现"新图配旧零件"
             s.log("writeback", {"files": [i["file"] for i in plan]}, {"blocked": blocked})
@@ -611,12 +664,15 @@ class CadService:
                 if item["status"] != "ready":
                     continue
                 orig = Path(item["to"])
-                bak = rel_dir / "_writeback_backup" / item["file"]
-                bak.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(orig, bak)
+                if not item.get("new"):
+                    bak = rel_dir / "_writeback_backup" / item["file"]
+                    bak.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(orig, bak)
+                    item["backup"] = str(bak)
+                orig.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(rel_dir / item["file"], orig)
                 ok = _sha(orig) == _sha(rel_dir / item["file"])
-                item.update(status="written" if ok else "failed", backup=str(bak))
+                item["status"] = "written" if ok else "failed"
             s.log("writeback", {"files": [i["file"] for i in plan]}, {"result": plan})
         return {"ok": all(i["status"] in ("ready", "written") for i in plan), "confirmed": confirm, "files": plan,
                 "new_files_not_written": new_files,

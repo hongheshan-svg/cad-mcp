@@ -18,7 +18,7 @@ def test_inspect(legacy):
     svc, _ = legacy
     r = svc.inspect_existing("Bracket.mprt")
     assert {d["name"] for d in r["dimensions"]} >= {"D1@Boss-Extrude1", "D3@Sketch2"}
-    assert r["used_by"] == ["Bracket.mdrw"] and r["mass_kg"] == 0.75
+    assert r["used_by"] == ["Bracket.mdrw", "Station.masm"] and r["mass_kg"] == 0.75
 
 
 def test_edit_validation(legacy):
@@ -48,15 +48,16 @@ def test_edit_commit_writeback(legacy, tmp_path):
     assert r["applied"] and r["rules"]["passed"]
     assert r["diff"]["mass_kg"]["after"] == pytest.approx(0.9)
     assert {"name": "D3@Sketch2", "before": 80, "after": 90.0} in r["diff"]["dimensions"]  # 方程式联动
-    assert r["refreshed"][0]["file"] == "Bracket.mdrw" and r["refreshed"][0]["dangling"] == 0
+    assert [x["file"] for x in r["refreshed"]] == ["Bracket.mdrw", "Station.masm"]
+    assert r["refreshed"][0]["dangling"] == 0
     c = svc.commit("B")
     assert "D1@Boss-Extrude1 10→12" in c["revision_entry"]["description"]
     # 回写：默认不允许
     w = svc.writeback()
-    assert {f["file"]: f["status"] for f in w["files"]} == {"Bracket.mdrw": "denied", "Bracket.mprt": "denied"}
+    assert set(f["status"] for f in w["files"]) == {"denied"} and len(w["files"]) == 3
     svc.policy.writeback_allow.append(src.resolve())
     w = svc.writeback()
-    assert [f["status"] for f in w["files"]] == ["ready", "ready"] and not w["confirmed"]  # 零件 + 已更新的工程图
+    assert [f["status"] for f in w["files"]] == ["ready"] * 3 and not w["confirmed"]  # 零件 + 更新过的图纸、装配
     original = json.loads((src / "Bracket.mprt").read_text(encoding="utf-8"))
     assert original["native"]["mass_kg"] == 0.75  # 未确认前原文件不变
     w = svc.writeback(confirm=True)
@@ -75,7 +76,7 @@ def test_writeback_conflict(legacy):
     (src / "Bracket.mprt").write_text((src / "Bracket.mprt").read_text(encoding="utf-8") + " ", encoding="utf-8")  # 别人改了
     w = svc.writeback(confirm=True)
     f = {x["file"]: x["status"] for x in w["files"]}
-    assert f == {"Bracket.mprt": "conflict", "Bracket.mdrw": "ready"} and not w["ok"]
+    assert f == {"Bracket.mprt": "conflict", "Bracket.mdrw": "ready", "Station.masm": "ready"} and not w["ok"]
     assert w["blocked_by"] == ["Bracket.mprt"] and not w["written"]  # 一致性：工程图也不写
 
 
@@ -86,3 +87,45 @@ def test_suppress_dangling_blocks_commit(legacy):
     with pytest.raises(CadError):
         svc.commit("B")
     svc.rollback(r["rollback_to"])
+
+
+def test_replace_component_same_interface(legacy):
+    svc, _ = legacy
+    info = svc.inspect_existing("Station.masm")
+    assert [c["instance"] for c in info["components"]] == ["CYL-SC32x50-1", "Bracket-1"]
+    r = svc.edit_existing("Station.masm", [{"op": "replace_component", "instance": "CYL-SC32x50-1",
+                                            "source": "lib:CYL-SC32x100"}])
+    assert r["applied"] and r["rules"]["passed"], r
+    assert not [f for f in r["findings"] if f["rule"] == "E012"]  # 安装接口相同
+    assert any(f["rule"] == "E014" for f in r["findings"])          # 行程长了，外形变大 → 提醒干涉
+    assert r["diff"]["components"] == [{"instance": "CYL-SC32x50-1", "before": "CYL-SC32x50", "after": "CYL-SC32x100"}]
+    assert r["diff"]["mass_kg"]["delta"] == pytest.approx(0.16)
+    assert "换为 CYL-SC32x100" in r["description"]
+
+
+def test_replace_component_interface_change(legacy):
+    svc, _ = legacy
+    r = svc.edit_existing("Station.masm", [{"op": "replace_component", "instance": "CYL-SC32x50-1",
+                                            "source": "lib:CYL-SC40x50"}], dry_run=True)
+    e12 = next(f for f in r["findings"] if f["rule"] == "E012")
+    assert "安装孔位" in e12["message"] and "定位止口 26 → 32" in e12["message"] and "Bracket-1" in e12["hint"]
+    # 新件没有配合用的基准 → 配合会断开（error，拒绝执行）
+    r = svc.edit_existing("Station.masm", [{"op": "replace_component", "instance": "CYL-SC32x50-1",
+                                            "source": "lib:BRK-4040"}])
+    assert not r["applied"] and any(f["rule"] == "E013" for f in r["findings"])
+    r = svc.edit_existing("Station.masm", [{"op": "replace_component", "instance": "NoSuch", "source": "lib:CYL-SC40x50"}])
+    assert r["findings"][0]["rule"] == "E001"
+
+
+def test_replace_then_writeback_copies_new_part(legacy):
+    svc, src = legacy
+    svc.edit_existing("Station.masm", [{"op": "replace_component", "instance": "CYL-SC32x50-1",
+                                        "source": "lib:CYL-SC32x100"}])
+    svc.commit("B")
+    svc.policy.writeback_allow.append(src.resolve())
+    w = svc.writeback(confirm=True)
+    assert w["ok"], w
+    new = [f for f in w["files"] if f.get("new")]
+    assert [f["file"] for f in new] == ["PH_CYL-SC32x100.mprt"] and (src / "PH_CYL-SC32x100.mprt").exists()
+    asm = json.loads((src / "Station.masm").read_text(encoding="utf-8"))["native"]
+    assert asm["components"][0]["file"] == "PH_CYL-SC32x100.mprt"

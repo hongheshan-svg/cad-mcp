@@ -782,6 +782,15 @@ class SwExecutor:
                          self.c.swDocDRAWING: "drawing"}.get(m.GetType(), "?"),
                 "features": feats, "dimensions": dims, "equations": equations, "variables": variables,
                 "properties": [{"name": k, "value": v} for k, v in props.items()]}
+        info["references"] = [x["name"] for x in feats if x["type"] in ("CoordSys", "RefPlane", "RefAxis", "RefPoint")]
+        if info["kind"] == "assembly":
+            comps = []
+            for c in (m.GetComponents(True) or []):
+                path = str(c.GetPathName())
+                comps.append({"instance": c.Name2, "file": path, "code": Path(path).stem,
+                              "suppressed": bool(c.IsSuppressed())})
+            info["components"] = comps
+            info["mass_kg"] = round(float(m.Extension.CreateMassProperty().Mass), 4)
         if info["kind"] == "part":
             got = m.GetMaterialPropertyName2("", "")
             info["material"] = got[0] if got else ""
@@ -817,6 +826,16 @@ class SwExecutor:
         ok = self.model.EditSuppress2() if suppressed else self.model.EditUnsuppress2()
         if not ok:
             raise OpFailed(f"{'EditSuppress2' if suppressed else 'EditUnsuppress2'} failed")
+        return {}
+
+    def op_replace_component(self, instance: str, file: str, all_instances: bool = False):
+        """选中实例 → IAssemblyDoc.ReplaceComponents2（重新附加配合）；配合断开由随后的重建错误检查发现。"""
+        self.model.ClearSelection2(True)
+        title = self.model.GetTitle().rsplit(".", 1)[0]
+        if not self.model.Extension.SelectByID2(f"{instance}@{title}", "COMPONENT", 0, 0, 0, False, 0, None, 0):
+            raise OpFailed(f"cannot select component {instance}")
+        if not self.model.ReplaceComponents2(file, "", all_instances, 0, True):
+            raise OpFailed(f"ReplaceComponents2 failed for {instance} → {file}")
         return {}
 
     def op_count_dangling(self):

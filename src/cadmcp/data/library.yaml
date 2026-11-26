@@ -18,6 +18,38 @@ items:
       screw: M6
       holes: {kind: circular, radius: 17, count: 4, start_angle: 45}
       pilot: 26
+  - code: CYL-SC32x100
+    title: 标准气缸 缸径32 行程100
+    category: purchased
+    vendor: generic
+    model: SC32x100
+    mass_kg: 0.78
+    bbox: [-24, 24, -24, 24, 0, 246]
+    references:
+      CS_Mount: {origin: [0, 0, 0]}
+      CS_RodEnd: {origin: [0, 0, 246]}
+    properties: {规格: "Φ32×100", 气源: "0.15-0.9MPa"}
+    mount:
+      frame: CS_Mount
+      screw: M6
+      holes: {kind: circular, radius: 17, count: 4, start_angle: 45}
+      pilot: 26
+  - code: CYL-SC40x50
+    title: 标准气缸 缸径40 行程50
+    category: purchased
+    vendor: generic
+    model: SC40x50
+    mass_kg: 0.95
+    bbox: [-29, 29, -29, 29, 0, 213]
+    references:
+      CS_Mount: {origin: [0, 0, 0]}
+      CS_RodEnd: {origin: [0, 0, 213]}
+    properties: {规格: "Φ40×50", 气源: "0.15-0.9MPa"}
+    mount:
+      frame: CS_Mount
+      screw: M6
+      holes: {kind: circular, radius: 22, count: 4, start_angle: 45}
+      pilot: 32
   - code: PRF-4040
     title: 铝型材 40×40
     category: purchased

@@ -16,7 +16,7 @@ ARITY = {
     "CreateSketchSlot": 14, "AddComponent5": 8, "AutoDimension": 5, "CreateDrawViewFromModelView3": 5,
     "SetUserPreferenceInteger": 3, "Add3": 4, "InsertSketch": 1, "CreateLine": 6,
     "SketchManager.CreatePoint": 3, "GetMathUtility().CreatePoint": 1,
-    "CreateFillet": 2, "SetSystemValue3": 3, "Save3": 3, "GetDocumentDependencies2": 4, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
+    "CreateFillet": 2, "ReplaceComponents2": 5, "SetSystemValue3": 3, "Save3": 3, "GetDocumentDependencies2": 4, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
 }
 
 

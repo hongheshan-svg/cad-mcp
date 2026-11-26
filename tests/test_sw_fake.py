@@ -124,3 +124,14 @@ def test_sw_edit_existing(sw_svc, tmp_path):
     assert sets and sets[0][0] == pytest.approx(0.012)
     names = [c[0] for c in ad.sw.calls]
     assert "EditSuppress2" in names and "Save3" in names and "ForceRebuild3" in names
+
+
+def test_sw_replace_component_op():
+    from cadmcp.adapters.solidworks.executor import SwExecutor
+    install_fake_win32()
+    sw = FakeSw()
+    ex = SwExecutor(sw, FakeConstants())
+    ex.model = sw.OpenDoc6("Station.SLDASM", 1, 1, "", 0, 0)
+    ex.op_replace_component("CYL-1", r"D:\lib\CYL-SC40x50.SLDPRT", False)
+    call = next(c for c in sw.calls if c[0] == "ReplaceComponents2")
+    assert call[1] == (r"D:\lib\CYL-SC40x50.SLDPRT", "", False, 0, True)  # 重新附加配合

@@ -69,6 +69,10 @@ class CadAdapter(ABC):
         """执行修改并重建；返回 {regen, after}。重建出错时不保存。"""
         raise CadError(CAPABILITY_UNSUPPORTED, f"{self.cad}: editing existing models not supported")
 
+    def library_path(self, code: str) -> Path | None:
+        """标准件/外购件原生模型文件；None 时平台生成包络占位件。"""
+        return None
+
     def where_used(self, path: Path, search_dir: Path) -> list[Path]:
         """search_dir 中引用 path 的装配/工程图。"""
         return []

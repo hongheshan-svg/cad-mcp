@@ -30,6 +30,17 @@ def write_legacy(d: Path) -> Path:
     drw = {**HDR, "kind": "drawing", "name": "Bracket_DRW", "native": {
         "references": ["Bracket.mprt"],
         "annotations": ["D1@Sketch1", "D2@Sketch1", "D1@Boss-Extrude1", "D3@Sketch2", "D1@Fillet1"]}}
+    cyl = {**HDR, "kind": "part", "name": "CYL-SC32x50", "native": {
+        "features": [], "dimensions": [], "cs": ["CS_Mount", "CS_RodEnd"], "material": "AL6061-T6",
+        "mass_kg": 0.62, "bbox_mm": [48, 48, 196], "properties": {"PartNo": "CYL-SC32x50"}}}
+    asm = {**HDR, "kind": "assembly", "name": "Station", "native": {
+        "references": ["CYL-SC32x50.mprt", "Bracket.mprt"],
+        "components": [{"instance": "CYL-SC32x50-1", "file": "CYL-SC32x50.mprt", "code": "CYL-SC32x50", "mass_kg": 0.62},
+                       {"instance": "Bracket-1", "file": "Bracket.mprt", "code": "Bracket", "mass_kg": 0.75}],
+        "mates": [{"name": "Coincident1", "a": "CYL-SC32x50-1", "a_ref": "CS_Mount", "b": "Bracket-1", "b_ref": "CS_Cyl"}],
+        "mass_kg": 1.37}}
+    (d / "CYL-SC32x50.mprt").write_text(json.dumps(cyl, ensure_ascii=False), encoding="utf-8")
+    (d / "Station.masm").write_text(json.dumps(asm, ensure_ascii=False), encoding="utf-8")
     (d / "Bracket.mprt").write_text(json.dumps(part, ensure_ascii=False), encoding="utf-8")
     (d / "Bracket.mdrw").write_text(json.dumps(drw, ensure_ascii=False), encoding="utf-8")
     return d

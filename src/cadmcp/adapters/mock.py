@@ -98,11 +98,16 @@ class MockAdapter(CadAdapter):
     def inspect(self, path: Path) -> dict[str, Any]:
         d = self._read(path)
         n = self._native(d)
-        return {"kind": d["kind"], "features": n.get("features", []), "dimensions": n.get("dimensions", []),
+        info = {"kind": d["kind"], "features": n.get("features", []), "dimensions": n.get("dimensions", []),
                 "equations": n.get("equations", []), "variables": n.get("variables", []),
                 "properties": [{"name": k, "value": v} for k, v in n.get("properties", {}).items()],
-                **({"material": n.get("material"), "mass_kg": n.get("mass_kg"), "bbox_mm": n.get("bbox_mm")}
-                   if d["kind"] == "part" else {"references": n.get("references", [])})}
+                "references": n.get("cs") or (d.get("summary") or {}).get("references", [])}
+        if d["kind"] == "part":
+            info.update(material=n.get("material"), mass_kg=n.get("mass_kg"), bbox_mm=n.get("bbox_mm"))
+        else:
+            info.update(files=n.get("references", []), components=n.get("components", []), mates=n.get("mates", []),
+                        mass_kg=n.get("mass_kg"))
+        return info
 
     def apply_edits(self, path: Path, edits: list[Any]) -> dict[str, Any]:
         import copy
@@ -130,6 +135,25 @@ class MockAdapter(CadAdapter):
                             f["suppressed"] = e.suppressed
             elif e.op == "set_material":
                 n["material"] = e.material
+            elif e.op == "replace_component":
+                new = self._read(Path(e.file))
+                nn = self._native(new)
+                new_refs = nn.get("cs") or (new.get("summary") or {}).get("references", [])
+                new_mass = e.mass_kg if e.mass_kg is not None else (nn.get("mass_kg") or 0.0)
+                old_file = next(c["file"] for c in n["components"] if c["instance"] == e.instance)
+                sel = [c for c in n["components"] if c["instance"] == e.instance or (e.all_instances and c["file"] == old_file)]
+                for c in sel:
+                    n["mass_kg"] = round((n.get("mass_kg") or 0) - c.get("mass_kg", 0) + new_mass, 4)
+                    c.update(file=Path(e.file).name, code=e.code or Path(e.file).stem, mass_kg=new_mass)
+                    for m in n.get("mates", []):
+                        ref = m.get("a_ref") if m["a"] == c["instance"] else m.get("b_ref") if m["b"] == c["instance"] else None
+                        if ref and ref not in new_refs:
+                            errors.append(f"{m['name']}: 配合断开（新件没有 {ref}）")
+                refs = n.setdefault("references", [])
+                if Path(e.file).name not in refs:
+                    refs.append(Path(e.file).name)
+                if not any(c["file"] == old_file for c in n["components"]) and old_file in refs:
+                    refs.remove(old_file)
         params = {k: float(v["value"]) for k, v in vars_.items()}
         for eq in n.get("equations", []):  # 方程式驱动尺寸
             if eq["lhs"] in dims:
