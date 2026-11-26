@@ -93,16 +93,26 @@ def test_shaft_plan_revolve_and_keyways():
     assert any(o.op == "tk.feat.revolve" and o.args["op"] == "cut" for o in ops)  # 环槽
 
 
-def test_tapped_hole_thread_is_non_critical(creo, tk, tmp_path):
+def test_tapped_hole_cosmetic_thread(creo, tk, tmp_path):
     s, r = _resolve(GRID)
     br = _adapter(tk).build_part(s, r, tmp_path)
-    assert br.regen["status"] == "warnings"
-    assert any("cosmetic_thread" in w for w in br.regen["warnings"])
+    assert br.regen["status"] == "ok"
+    thr = next(a for c, a in tk.calls if c == "feat.cosmetic_thread")
+    assert thr["hole_feature"] == "M6" and thr["major_diameter"] == 6 and thr["length"] == 10
     holes = [a for c, a in tk.calls if c == "feat.hole"]
     m6 = next(a for a in holes if a["feature"] == "M6")
     assert len(m6["points"]) == 15 and m6["face"] == "top"
     fix = next(a for a in holes if a["feature"] == "Fix")
     assert fix["cbore"] and fix["cbore"][0] > fix["diameter"]
+
+
+def test_thread_failure_is_non_critical(creo, tk, tmp_path):
+    tk.fail.add("feat.cosmetic_thread")
+    s, r = _resolve(GRID)
+    br = _adapter(tk).build_part(s, r, tmp_path)
+    assert br.regen["status"] == "warnings"
+    assert any("cosmetic_thread" in w for w in br.regen["warnings"])
+    assert "model.save" in tk.cmds()
 
 
 def test_feature_failure_is_error(creo, tk, tmp_path):

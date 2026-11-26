@@ -44,6 +44,10 @@ extern "C" {
 #include <ProReference.h>
 #include <ProArray.h>
 #include <ProUtil.h>
+#include <ProThread.h>
+#include <ProSurfacedata.h>
+#include <ProGeomitemdata.h>
+#include <ProElempath.h>
 }
 
 namespace cadmcp {
@@ -667,12 +671,141 @@ json cmd_hole(const json& a) {
     return result;
 }
 
+// ---------------- 装饰螺纹（ProThread.h 元素树）----------------
+// PRO_E_FEATURE_TREE
+//   PRO_E_FEATURE_TYPE = PRO_FEAT_THREAD
+//   PRO_E_STD_FEATURE_NAME
+//   PRO_E_THRD_TYPE_OPT_NEW = FALSE（简单螺纹）
+//   PRO_E_THRD_SURF_NEW（螺纹圆柱面）/ PRO_E_THRD_DIAM_NEW（大径）/ PRO_E_THRD_START_REF_NEW（起始面）
+//   PRO_E_THRD_DEP_COMP_NEW { PRO_E_THRD_DEP_OPT_NEW = FALSE（盲）, PRO_E_THRD_FLIP_OPT_NEW, PRO_E_THRD_DEP_VAL_NEW }
+// 我们的孔是"拉伸切除"（cmd_hole），同一特征含多个孔：每个孔（按圆柱轴线去重，Creo 把圆柱面分成两半）建一个螺纹特征。
+// 起始面 = 该拉伸特征的草绘平面（默认基准面或 <孔>_PLN 偏移基准面，均在孔口处）。
+
+ProElement add_bool(ProElement parent, ProElemId id, bool v) {
+    ProElement e = elem(id);
+    // TODO(实机核对): ProElementBooleanSet（Creo 4.0+）；老版本用 ProElementIntegerSet(0/1)
+    check(ProElementBooleanSet(e, v ? PRO_B_TRUE : PRO_B_FALSE), "ProElementBooleanSet");
+    return add(parent, e);
+}
+
+struct HoleCyl {
+    ProGeomitem surf;
+    V3 axis_pt;  // 轴线上的点（模型单位），用于去重
+    V3 dir;
+};
+
+// 拉伸切除特征中的圆柱面，按轴线去重（每个孔一个）
+std::vector<HoleCyl> hole_cylinders(ProFeature* f) {
+    struct Ctx { std::vector<HoleCyl> out; } ctx;
+    auto cb = [](ProGeomitem* gi, ProError, ProAppData d) -> ProError {
+        auto* c = static_cast<Ctx*>(d);
+        ProSurface srf;
+        if (ProGeomitemToSurface(gi, &srf) != PRO_TK_NO_ERROR) return PRO_TK_NO_ERROR;
+        ProSrftype st;
+        if (ProSurfaceTypeGet(srf, &st) != PRO_TK_NO_ERROR || st != PRO_SRF_CYL) return PRO_TK_NO_ERROR;
+        ProGeomitemdata* gd = NULL;
+        // TODO(实机核对): ProSurfaceDataGet(ProSurface, ProGeomitemdata**) + ProCylinderdataGet(ProSurfacedata*, e1, e2, e3, origin, &r)
+        if (ProSurfaceDataGet(srf, &gd) != PRO_TK_NO_ERROR) return PRO_TK_NO_ERROR;
+        ProVector e1, e2, e3;
+        Pro3dPnt org;
+        double r = 0;
+        ProError e = ProCylinderdataGet(gd->data.p_surface_data, e1, e2, e3, org, &r);
+        ProGeomitemdataFree(&gd);
+        if (e != PRO_TK_NO_ERROR) return PRO_TK_NO_ERROR;
+        V3 dir{e3[0], e3[1], e3[2]}, o{org[0], org[1], org[2]};
+        double L = std::sqrt(dot(dir, dir));
+        if (L <= 0) return PRO_TK_NO_ERROR;
+        for (auto& x : dir) x /= L;
+        // 投影到垂直轴线的平面：去掉沿轴分量，同一孔的两半圆柱面得到同一点
+        double s = dot(o, dir);
+        V3 q{o[0] - dir[0] * s, o[1] - dir[1] * s, o[2] - dir[2] * s};
+        for (const auto& h : c->out) {
+            V3 dq{h.axis_pt[0] - q[0], h.axis_pt[1] - q[1], h.axis_pt[2] - q[2]};
+            if (std::fabs(std::fabs(dot(h.dir, dir)) - 1) < 1e-6 && dot(dq, dq) < 1e-8) return PRO_TK_NO_ERROR;
+        }
+        c->out.push_back({*gi, q, dir});
+        return PRO_TK_NO_ERROR;
+    };
+    check(ProFeatureGeomitemVisit(f, PRO_SURFACE, static_cast<ProGeomitemAction>(+cb), NULL, &ctx),
+          "ProFeatureGeomitemVisit(surface)");
+    return ctx.out;
+}
+
+// 拉伸特征的草绘平面参照（PRO_E_STD_SECTION/PRO_E_STD_SEC_SETUP_PLANE/PRO_E_STD_SEC_PLANE）
+ProSelection sketch_plane_selection(ProFeature* f) {
+    ProElement tree;
+    check(ProFeatureElemtreeExtract(f, NULL, PRO_FEAT_EXTRACT_NO_OPTS, &tree), "ProFeatureElemtreeExtract");
+    TreeGuard g{tree};
+    ProElempath path;
+    check(ProElempathAlloc(&path), "ProElempathAlloc");
+    ProElempathItem items[3];
+    items[0].type = items[1].type = items[2].type = PRO_ELEM_PATH_ITEM_TYPE_ID;
+    items[0].path_item.elem_id = PRO_E_STD_SECTION;
+    items[1].path_item.elem_id = PRO_E_STD_SEC_SETUP_PLANE;
+    items[2].path_item.elem_id = PRO_E_STD_SEC_PLANE;
+    check(ProElempathDataSet(path, items, 3), "ProElempathDataSet");
+    ProElement pe;
+    ProError e = ProElemtreeElementGet(tree, path, &pe);
+    ProElempathFree(&path);
+    check(e, "ProElemtreeElementGet(STD_SEC_PLANE)");
+    ProReference ref;
+    check(ProElementReferenceGet(pe, NULL, &ref), "ProElementReferenceGet");  // TODO(实机核对): 第二参数 options 传 NULL
+    ProSelection sel;
+    check(ProReferenceToSelection(ref, &sel), "ProReferenceToSelection");
+    ProReferenceFree(ref);
+    return sel;
+}
+
+ProFeature make_thread(ProSolid s, ProGeomitem* cyl, ProSelection start, double dia_mm, double len_mm,
+                       const std::string& name, int flip) {
+    double k = model_mm_factor(reinterpret_cast<ProMdl>(s));
+    ProSelection ssel = item_selection(cyl);
+    TreeGuard g{elem(PRO_E_FEATURE_TREE)};
+    add_int(g.t, PRO_E_FEATURE_TYPE, PRO_FEAT_THREAD);
+    add_wstr(g.t, PRO_E_STD_FEATURE_NAME, name);
+    add_bool(g.t, PRO_E_THRD_TYPE_OPT_NEW, false);
+    add_ref(g.t, PRO_E_THRD_SURF_NEW, ssel);
+    ProSelectionFree(&ssel);
+    add_double(g.t, PRO_E_THRD_DIAM_NEW, dia_mm * k);
+    add_ref(g.t, PRO_E_THRD_START_REF_NEW, start);
+    ProElement dep = add(g.t, elem(PRO_E_THRD_DEP_COMP_NEW));
+    add_bool(dep, PRO_E_THRD_DEP_OPT_NEW, false);  // 盲螺纹
+    add_int(dep, PRO_E_THRD_FLIP_OPT_NEW, flip);
+    add_double(dep, PRO_E_THRD_DEP_VAL_NEW, len_mm * k);
+    return create_feature(s, g.t, false);
+}
+
 json cmd_cosmetic_thread(const json& a) {
-    (void)a;
-    // 装饰螺纹元素树（PRO_FEAT_COSMETIC 螺纹）在 Creo 10 中的元素 id 与参照要求本机无法核对，
-    // 为避免建出错误特征，首期不实现；孔标注中已写明螺纹规格。
-    throw CmdError("PRO_TK_NOT_IMPLEMENTED",
-                   "feat.cosmetic_thread 首期未实现：需在实机按 TOOLKIT 用户指南 Cosmetic Thread 元素树补齐");
+    ProSolid s = reinterpret_cast<ProSolid>(find_part(arg_str(a, "model")));
+    std::string name = arg_str(a, "feature"), hole = arg_str(a, "hole_feature");
+    double dia = arg_num(a, "major_diameter"), len = arg_num(a, "length");
+    if (dia <= 0 || len <= 0) throw CmdError("BAD_ARGS", "major_diameter / length 必须为正");
+    ProFeature hf;
+    if (!find_feature(s, hole, &hf)) throw CmdError("PRO_TK_E_NOT_FOUND", "找不到孔特征 " + hole);
+    std::vector<HoleCyl> cyls = hole_cylinders(&hf);
+    if (cyls.empty()) throw CmdError("PRO_TK_E_NOT_FOUND", "孔特征 " + hole + " 中没有圆柱面");
+    ProSelection start = sketch_plane_selection(&hf);
+    json ids = json::array();
+    try {
+        for (size_t i = 0; i < cyls.size(); ++i) {
+            std::string nm = i == 0 ? name : name + "_" + std::to_string(i + 1);
+            ProFeature f;
+            // 螺纹深度方向：先按起始面正法向，失败再反向（起始面是孔口处的草绘平面，深度应指向材料内部）
+            // TODO(实机核对): 哪个方向先成功；若总是 FLIP 成功，可直接按孔切除方向决定
+            try {
+                f = make_thread(s, &cyls[i].surf, start, dia, len, nm, PRO_COSTHREAD_THD_FLIP_OPT_NORM);
+            } catch (const CmdError&) {
+                f = make_thread(s, &cyls[i].surf, start, dia, len, nm, PRO_COSTHREAD_THD_FLIP_OPT_FLIP);
+            }
+            set_feature_name(&f, nm);
+            ids.push_back(f.id);
+        }
+    } catch (...) {
+        ProSelectionFree(&start);
+        throw;
+    }
+    ProSelectionFree(&start);
+    return json{{"id", ids[0]}, {"features", ids}};
 }
 
 json cmd_round(const json& a) {

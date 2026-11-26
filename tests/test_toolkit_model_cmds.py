@@ -10,7 +10,7 @@ SRC = ROOT / "creo_toolkit" / "src" / "cmd_model.cpp"
 
 COMMON_KEYS = {"model", "feature"}
 RESERVED = {"feat.pattern_points"}       # 文档标为预留
-NOT_IMPLEMENTED = {"feat.cosmetic_thread"}  # 首期返回 PRO_TK_NOT_IMPLEMENTED
+NOT_IMPLEMENTED: set[str] = set()  # 首期返回 PRO_TK_NOT_IMPLEMENTED 的命令（当前无）
 
 
 def _doc_cmds() -> dict[str, set[str]]:
