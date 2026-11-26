@@ -20,7 +20,7 @@ CAD-MCP：用"设计规格 (spec)"驱动 SolidWorks / Creo 建模与出图。你
 2. 零件：cad_build_part(spec)。用 parameters 定义驱动参数，尺寸写表达式（如 "L-2*e"）。
    孔用 type=tapped/counterbore/clearance/simple + 公制规格（M6），不要自己算底孔/沉孔尺寸。
    为装配定位建 CS_ 坐标系基准（references），装配只认命名坐标系，不选面不选边。
-3. 装配：cad_search_library 查标准件/外购件 → cad_build_assembly(spec)，组件 source 用 part:/lib:/asm:。
+3. 装配：涉及气缸、电机、丝杠、螺栓受力时先 cad_calc 选型（生成计算书），再 cad_search_library 查标准件/外购件 → cad_build_assembly(spec)，组件 source 用 part:/lib:/asm:。
 4. 每个零件/装配都要出图：cad_build_drawing(spec)。看返回的 rules/findings，有 error 必须修。
 5. 修改：cad_set_parameters 改参数，依赖它的装配和工程图会自动重建。
 6. cad_validate → cad_check_interference → cad_export_bom → cad_change_commit(revision)。
@@ -156,6 +156,18 @@ def cad_set_parameters(name: str, updates: dict[str, float | str]) -> dict[str, 
 def cad_get_model(name: str) -> dict[str, Any]:
     """读取模型：spec、解析结果摘要、规则发现、（装配）BOM、（图纸）尺寸清单。"""
     return svc().get_model(name)
+
+
+@mcp.tool(annotations=WR)
+@safe
+def cad_calc(kind: Literal["cylinder", "screw_drive", "belt_drive", "bolt"], params: dict[str, Any]) -> dict[str, Any]:
+    """选型计算，返回带公式过程的计算书与推荐型号（有变更会话时计算书存入工作区并随版本发布）。
+    cylinder: load_kg 或 force_N, orientation horizontal|vertical, stroke_mm, pressure_MPa=0.5, direction push|pull
+    screw_drive: load_kg, stroke_mm, speed_mm_s, accel_time_s=0.2, orientation, lead_mm(可选), screw_diameter_mm=16
+    belt_drive: load_kg, stroke_mm, speed_mm_s, accel_time_s=0.2, pulley_pd_mm=30
+    bolt: size(M6), count, grade 8.8|10.9|12.9, tension_N, shear_N
+    先算再建模：用 selection 结果选标准件（cad_search_library）和定尺寸。"""
+    return svc().calc(kind, params)
 
 
 @mcp.tool(annotations=RO)

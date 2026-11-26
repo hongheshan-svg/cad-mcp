@@ -32,6 +32,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
     方向/位置/跳动公差必须带 `datums`，形状公差不带。销孔位置度示例：`{"type": "position", "value": 0.05, "target": "hole:Pin", "datums": ["A", "B"]}`。
   - `roughness`：个别表面 Ra，其余表面按出图的 `surface_finish`。IT6/IT7 配合轴段要标 Ra0.8/1.6（规则 G004 会提醒）。
   - 典型做法：安装底面作基准 A（平面度），侧面基准 B；轴以两轴承位为基准 A、B，其他配合段标圆跳动。
+- 选型先于建模：气缸、伺服+丝杠、同步带模组、受力螺栓先 `cad_calc` 计算（计算书随版本归档），
+  按 `selection` 选库里的型号（`library_matches`），按缸径/法兰定安装板孔位；`warnings` 必须向用户说明。
 - 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。
 - 每个将被装配的零件都要建 `CS_` 坐标系：放在安装面上、Z 轴朝外。
 - 必填：`part_no`、`title`、`material`、`surface_treatment`（铝件常用"阳极氧化"，钢件"发黑/镀锌"）。

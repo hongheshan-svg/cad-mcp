@@ -424,6 +424,26 @@ class CadService:
         dest = s.commit(revision, gates, report)
         return {"ok": True, "release": str(dest), "gates": gates}
 
+    def calc(self, kind: str, params: dict[str, Any]) -> dict[str, Any]:
+        """选型计算；有变更会话时把计算书写入工作区（随发布一起归档）。"""
+        from .. import calc as calc_mod
+        rep = calc_mod.run(kind, params)
+        hint = rep["selection"].get("model_hint")
+        if hint:
+            rep["library_matches"] = [i["code"] for i in self.library.search(
+                "CYL-" + hint if kind == "cylinder" else hint)][:5]
+        sess = self.sessions.get(self.current) if self.current else None
+        if sess is not None:
+            d = sess.work / "calcs"
+            d.mkdir(exist_ok=True)
+            n = len(list(d.glob("*.json"))) + 1
+            base = d / f"{n:02d}_{kind}"
+            base.with_suffix(".json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+            base.with_suffix(".md").write_text(calc_mod.to_markdown(rep), encoding="utf-8")
+            rep["report"] = str(base.with_suffix(".md"))
+            sess.log("calc", {"kind": kind, "report": rep["report"]})
+        return rep
+
     def search_library(self, query: str = "", category: str | None = None) -> dict[str, Any]:
         return {"ok": True, "items": self.library.search(query, category)}
 
