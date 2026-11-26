@@ -23,8 +23,8 @@ for n in range(N):
     feats = []
     for i, st in enumerate(steps):
         r = rng.random()
-        if r < .25 and st["length"] >= 20 and st["diameter"] >= 17:
-            L = max(x for x in [10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63] if x <= st["length"] - 4)
+        if r < .25 and st["length"] >= 25 and st["diameter"] >= 17:
+            L = max(x for x in [10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63] if x <= 0.8 * st["length"] - 2)
             feats.append({"feature": "keyway", "name": f"K{i}", "step": i, "length": L})
         elif r < .35:
             feats.append({"feature": "groove", "name": f"G{i}", "type": rng.choice(["circlip", "undercut", "grinding"]), "step": i})

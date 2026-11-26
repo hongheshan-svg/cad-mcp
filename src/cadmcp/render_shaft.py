@@ -20,21 +20,41 @@ def _arrow(s, x, y, dx, dy, size=2.2):
     s.parts.append("<polygon points='" + " ".join(f"{a:.2f},{s.y(b):.2f}" for a, b in pts) + "' fill='#111'/>")
 
 
-def _hdim(s, xa, xb, y_from_a, y_from_b, y, text):
-    """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。文字比两界线间距宽时移到右界线之外，尺寸线延长到文字下。"""
+def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None):
+    """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。文字比两界线间距宽时移到界线之外（默认右侧；
+    右侧落在同一行别的尺寸 busy=[(x0, x1)] 上时改到左侧），尺寸线延长到文字下。"""
     from .render_svg import _text_w
     for x, yf in ((xa, y_from_a), (xb, y_from_b)):
         s.line(x, yf + (1 if y > yf else -1), x, y + (1.5 if y > yf else -1.5), THIN)
     tw = _text_w(text, 3.5)
     if tw > abs(xb - xa) - 1:
-        x1 = max(xa, xb)
-        s.line(min(xa, xb), y, x1 + 1.5 + tw, y, THIN)
-        s.text(x1 + 1.5, y + 0.8, text, 3.5)
+        x0, x1 = min(xa, xb), max(xa, xb)
+        hit_r = any(a < x1 + 1.5 + tw + 1 and b > x1 + 0.5 for a, b in busy or [])
+        hit_l = any(a < x0 - 0.5 and b > x0 - 1.5 - tw - 1 for a, b in busy or [])
+        if hit_r and not hit_l:
+            s.line(x0 - 1.5 - tw, y, x1, y, THIN)
+            s.text(x0 - 1.5 - tw, y + 0.8, text, 3.5)
+        else:
+            s.line(x0, y, x1 + 1.5 + tw, y, THIN)
+            s.text(x1 + 1.5, y + 0.8, text, 3.5)
     else:
         s.line(xa, y, xb, y, THIN)
         s.text((xa + xb) / 2, y + 0.8, text, 3.5, "middle")
     _arrow(s, xa, y, -1, 0)
     _arrow(s, xb, y, 1, 0)
+
+
+def _row_text_spans(plan, d, P, same_row) -> list[tuple[float, float]]:
+    """同一行其它水平尺寸的文字占位（x 区间）：放得下的居中，放不下的按区间整体计（保守）。"""
+    from .render_svg import _text_w
+    out = []
+    for d2 in plan.dims:
+        if d2 is d or d2.kind != "linear" or d2.at is None or not same_row(d2):
+            continue
+        a, b = sorted((P(d2.at[0], 0)[0], P(d2.at[1], 0)[0]))
+        tw = _text_w(d2.text, 3.5)
+        out.append(((a + b) / 2 - tw / 2, (a + b) / 2 + tw / 2) if tw <= b - a - 1 else (a, b))
+    return out
 
 
 def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None):
@@ -378,10 +398,14 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 _hdim(s, xa, xb, cy - radius_at(za) * sc, cy - radius_at(zb) * sc, y, d.text)
             elif d.ref.startswith("step"):
                 y = y_bot - 15
-                _hdim(s, xa, xb, cy - radius_at(za + 1e-6) * sc, cy - radius_at(zb - 1e-6) * sc, y, d.text)
+                _hdim(s, xa, xb, cy - radius_at(za + 1e-6) * sc, cy - radius_at(zb - 1e-6) * sc, y, d.text,
+                      busy=_row_text_spans(plan, d, P, lambda d2: d2.ref.startswith("step")))
             else:  # 键槽、环槽定位：画在主视图上方
-                y = y_top + 14 - 7 * (d.extra or {}).get("track", 0)
-                _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text)
+                tr_ = (d.extra or {}).get("track", 0)
+                y = y_top + 14 - 7 * tr_
+                row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
+                                       and (d2.extra or {}).get("track", 0) == tr_)
+                _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_)
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
             from .detailing import bore_dia_overflow, bore_dia_place
             k = int(d.ref[4:].split("_")[0])
