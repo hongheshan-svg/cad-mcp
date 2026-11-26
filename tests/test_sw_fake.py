@@ -481,3 +481,13 @@ def test_sw_hollow_shaft_keyway(sw_svc):
     svc.build(PartSpec.model_validate(spec))
     r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
+
+
+def test_sw_flange_holes(sw_svc):
+    """端盖均布孔：分布圆切孔 + 左视图引线标注，规则检查通过。"""
+    from test_flange_holes import EC
+    svc, ad = sw_svc
+    svc.change_begin("EC")
+    svc.build(PartSpec.model_validate(EC))
+    r = svc.build(DrawingSpec.model_validate({"model": "EC1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]

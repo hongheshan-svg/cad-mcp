@@ -167,6 +167,18 @@ def _hollow_section(s, part, P, segs, c, Ltot):
         if abs(rb - rb2) > 1e-9:
             m = max(rb, rb2)
             s.line(*P(zb, -m), *P(zb, m), THICK)
+    # 法兰均布孔（GB/T 4458.1 规定画法：旋转到剖切平面上，上下各画一个）：孔处无剖面线、端面线断开，孔壁粗实线，孔轴线细点画线
+    for fh in part.flange_holes:
+        lo, hi = fh["pcd"] / 2 - fh["d"] / 2, fh["pcd"] / 2 + fh["d"] / 2
+        for sign in (1, -1):
+            (xa, ya), (xb, yb) = P(fh["z0"], sign * lo), P(fh["z1"], sign * hi)
+            y_lo, y_hi = min(ya, yb), max(ya, yb)
+            s.parts.append(f"<rect x='{xa - 0.4:.2f}' y='{s.y(y_hi) + 0.3:.2f}' width='{xb - xa + 0.8:.2f}' "
+                           f"height='{y_hi - y_lo - 0.6:.2f}' fill='white' stroke='none'/>")
+            for r_ in (lo, hi):
+                s.line(*P(fh["z0"], sign * r_), *P(fh["z1"], sign * r_), THICK)
+            (xc0, yc), (xc1, _) = P(fh["z0"], sign * fh["pcd"] / 2), P(fh["z1"], sign * fh["pcd"] / 2)
+            s.line(xc0 - 2, yc, xc1 + 2, yc, THIN, CENTER)
 
 
 def radius_at_seg(segs, z):
@@ -339,12 +351,26 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         from .render_gear import draw_sheet_linear
         ex, ey = lv.origin_on_sheet
         Dm = max(d for _, d in part.shaft_steps)
-        s.circle(ex, ey, Dm / 2 * sc, THICK)
+        seen = 0.0
+        for _, dj in part.shaft_steps:  # 从左端看得见的轴段外圆：比左边各段都大的
+            if dj > seen + 1e-9:
+                s.circle(ex, ey, dj / 2 * sc, THICK)
+                seen = dj
         d0 = part.shaft_steps[0][1]
-        if abs(d0 - Dm) > 1e-9:
-            s.circle(ex, ey, d0 / 2 * sc, THICK)
         if c:
             s.circle(ex, ey, (d0 / 2 - c) * sc, THICK)
+        from .detailing import flange_hole_sheet
+        for fh in part.flange_holes:  # 均布孔：分布圆细点画线 + 孔（被左侧更大轴段挡住时细虚线）+ 孔的中心线
+            s.circle(ex, ey, fh["pcd"] / 2 * sc, THIN, CENTER)
+            hidden = any(dj / 2 > fh["pcd"] / 2 - fh["d"] / 2 for _, dj in part.shaft_steps[:fh["step"]])
+            rh = fh["d"] / 2 * sc
+            for q in fh["pts"]:
+                hx, hy = flange_hole_sheet(lv, *q)
+                s.circle(hx, hy, rh, THIN if hidden else THICK, HIDDEN if hidden else None)
+                ux, uy = (hx - ex), (hy - ey)
+                n_ = math.hypot(ux, uy) or 1
+                ux, uy = ux / n_, uy / n_
+                s.line(hx - ux * (rh + 2), hy - uy * (rh + 2), hx + ux * (rh + 2), hy + uy * (rh + 2), THIN, CENTER)
         for b in sorted((b for b in part.shaft_bores if b["z0"] < 1e-9), key=lambda b: -b["d"]):
             rb = b["d"] / 2 * sc
             if b.get("kw"):  # 键槽朝上（与主视图一致）

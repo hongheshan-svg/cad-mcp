@@ -1081,8 +1081,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                + [text_width(h["callout"], 3.0) + 12 for h in p.end_holes if h["side"] == "end"], default=0.0)
     col_w = [Lv + max(92 if p.gear else 0, ch_r)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
     hub_kws = [b for b in p.shaft_bores if b.get("kw")]
-    if hub_kws:  # 内键槽：主视图右侧加左视图（第一角：从左端看的视图放在右边），注槽宽与 d + t2
-        col_w.append(D + 30)
+    if hub_kws or p.flange_holes:  # 内键槽/法兰均布孔：主视图右侧加左视图（第一角：从左端看的视图放在右边）
+        col_w.append(D + 30 + (30 if p.flange_holes else 0))  # 均布孔/分布圆引线标注向右伸出
     # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
@@ -1100,7 +1100,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     front.size_mm = (wv, D * scale)
     front.origin_on_sheet = (x0 + wv / 2, cy_main)
     views = [front]
-    if hub_kws:
+    if hub_kws or p.flange_holes:
         views.append(ViewPlan("left", scale, (D * scale, D * scale), (x0 + wv + GAP + 4 + D * scale / 2, cy_main)))
     dgeo = [detail_geom(f, scale) for f in dets]
     row_half = max([sec_d * scale / 2] + [ds_ * rm_ for ds_, rm_ in dgeo])
@@ -1212,6 +1212,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     for v in views:  # 局部放大图：视图位置已定后算主视图圆圈/编号与放大图内尺寸的图纸坐标
         if v.type == "detail":
             dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none")
+    if p.flange_holes and spec.dimensions != "none":
+        dims += _flange_hole_dims(p, next(v for v in views if v.type == "left"), D)
     if hub_kws and spec.dimensions != "none":  # 视图位置已定（含上方让位下移）后再算端视图尺寸的图纸坐标
         lv = next(v for v in views if v.type == "left")
         ex_, ey_ = lv.origin_on_sheet
@@ -1822,6 +1824,55 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
         "detail": v.label, "sheet_pts": [(round(xf, 2), round(ya, 2)), (round(xf, 2), round(ys, 2))],
         "sheet_pos": (round(xl, 2), round(ys + 4 + text_width(f"{h:g}", 3.5) / 2, 2)), "orient": "v", "small": True,
         "pick_pts": [(round((xa + xb) / 2, 2), round(ya, 2)), (round(xf + sx * 3, 2), round(ys, 2))]}))
+    return out
+
+
+def flange_hole_sheet(v: "ViewPlan", x: float, y: float) -> tuple[float, float]:
+    """左视图（从 z=0 端看，模型 −Y 朝上、+X 朝右）：模型 (x, y) → 图纸。"""
+    ex, ey = v.origin_on_sheet
+    return ex + x * v.scale, ey - y * v.scale
+
+
+def _flange_hole_dims(p: ResolvedPart, lv: "ViewPlan", D: float) -> list[Dim]:
+    """左视图：均布孔 n×Φd EQS（引线从最靠右上的孔引出，向右上）与分布圆直径（引线从右下方分布圆上引出，向右下）。"""
+    out = []
+    ex, ey = lv.origin_on_sheet
+    sc = lv.scale
+    R = D / 2 * sc
+    for k, fh in enumerate(p.flange_holes):
+        sp = [flange_hole_sheet(lv, *q) for q in fh["pts"]]
+        hx, hy = max(sp, key=lambda q: (q[0] - ex) + (q[1] - ey))  # 最靠右上的孔
+        up = 1 if k % 2 == 0 else -1  # 多组孔：交替上/下引出
+        elbow = (ex + (R + 6) * 0.7071 + 4 * k, ey + up * ((R + 6) * 0.7071 + 4 * k))
+        dx, dy = elbow[0] - hx, elbow[1] - hy
+        n = math.hypot(dx, dy) or 1
+        rh = fh["d"] / 2 * sc
+        anchor = (hx + dx / n * rh, hy + dy / n * rh)
+        tw = text_width(fh["callout"], 3.5)
+        out.append(Dim("left", "callout", None, fh["d"], fh["callout"], fh["name"], None, {"label": {
+            "anchor": (round(anchor[0], 2), round(anchor[1], 2)), "elbow": (round(elbow[0], 2), round(elbow[1], 2)),
+            "end": (round(elbow[0] + tw + 1, 2), round(elbow[1], 2)),
+            "text_at": (round(elbow[0] + 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": 1}}))
+        # 分布圆引线落点：图纸方向最接近右下 45°，且不落在孔上、不贴着水平/竖直中心线
+        half_a = math.degrees(math.asin(min(1.0, (fh["d"] / 2 + 1.5) / (fh["pcd"] / 2))))
+        hole_sheet_angs = [math.degrees(math.atan2(ey - flange_hole_sheet(lv, *q)[1] - 0, flange_hole_sheet(lv, *q)[0] - ex))
+                           for q in fh["pts"]]
+        hole_sheet_angs = [-a for a in hole_sheet_angs]  # 图纸角（y 向上）
+
+        def bad(a):
+            return any(abs((a - h + 180) % 360 - 180) < half_a for h in hole_sheet_angs) or \
+                any(abs((a - ax + 180) % 360 - 180) < 6 for ax in (0, 90, 180, 270))
+        cand = [a for a in range(0, 360, 5) if not bad(a)] or [315]
+        a_best = min(cand, key=lambda a: abs((a - (-45 if up > 0 else 45) + 180) % 360 - 180))
+        rp = fh["pcd"] / 2 * sc
+        qa = (ex + rp * math.cos(math.radians(a_best)), ey + rp * math.sin(math.radians(a_best)))
+        el2 = (ex + (R + 6) * 0.7071 + 4 * k, ey - up * ((R + 6) * 0.7071 + 4 * k))
+        t2 = f"Φ{fh['pcd']:g}"
+        tw2 = text_width(t2, 3.5)
+        out.append(Dim("left", "callout", None, fh["pcd"], t2, f"{fh['name']}.pcd", None, {"label": {
+            "anchor": (round(qa[0], 2), round(qa[1], 2)), "elbow": (round(el2[0], 2), round(el2[1], 2)),
+            "end": (round(el2[0] + tw2 + 1, 2), round(el2[1], 2)),
+            "text_at": (round(el2[0] + 0.5, 2), round(el2[1] + 0.8, 2)), "on_edge": True, "dir": 1}}))
     return out
 
 

@@ -129,6 +129,7 @@ class ResolvedPart:
     properties: dict[str, str] = field(default_factory=dict)
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
+    flange_holes: list[dict[str, Any]] = field(default_factory=list)  # 法兰均布孔 {name, step, z0, z1, count, pcd, d, angles, pts, callout}
     end_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端螺孔 {name, side, size, d, d1, tap, depth, drill, z0, z1, callout}
     shaft_bores: list[dict[str, Any]] = field(default_factory=list)  # 内孔 {name, z0, z1, d, tol, side, through}
     center_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端中心孔 {end: start|end, type, d, D, l1, code, keep}
@@ -547,6 +548,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     center_holes: list[dict[str, Any]] = []
     shaft_bores: list[dict[str, Any]] = []
     end_holes: list[dict[str, Any]] = []
+    flange_holes: list[dict[str, Any]] = []
     flat_box = None
 
     gear = None
@@ -619,6 +621,30 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                               "tap": tap, "depth": depth, "drill": drill, "z0": z0, "z1": z1,
                               "callout": f"{eh.size.replace('x', '×')}-{eh.tolerance}↓{depth:g} 孔↓{drill:g}"})
             volume -= math.pi * tap * tap / 4 * drill
+        for k, fh in enumerate(base.flange_holes):
+            i = fh.step
+            if not 0 <= i < len(steps):
+                raise CadError(SPEC_INVALID, f"flange_holes[{k}]: step {i} 超出范围 0..{len(steps) - 1}")
+            if not shaft_bores:
+                raise CadError(CAPABILITY_UNSUPPORTED, "法兰均布孔目前只用于有内孔的盘/套类（主视图全剖）",
+                               hint="加一个内孔 bores，或改用 extrude 底座 + 圆周阵列孔")
+            pcd, hd = ev(fh.pcd), ev(fh.diameter)
+            z0 = sum(L for L, _ in steps[:i])
+            z1 = z0 + steps[i][0]
+            r_in = max((b["d"] / 2 for b in shaft_bores if b["z0"] < z1 - 1e-9 and b["z1"] > z0 + 1e-9), default=0.0)
+            lo, hi = pcd / 2 - hd / 2, pcd / 2 + hd / 2
+            if hi > steps[i][1] / 2 - 1 or lo < r_in + 1:
+                raise CadError(SPEC_INVALID, f"均布孔 Φ{hd:g}（分布圆 Φ{pcd:g}）超出轴段 {i}（Φ{steps[i][1]:g}）的实体，"
+                               f"孔边到外圆/内孔须 ≥ 1 mm")
+            for j in (i - 1, i + 1):
+                if 0 <= j < len(steps) and steps[j][1] / 2 > lo + 1e-9:
+                    raise CadError(SPEC_INVALID, f"均布孔被相邻轴段 {j}（Φ{steps[j][1]:g}）挡住，不是通孔",
+                                   hint="均布孔只能开在两侧都更小（或是端面）的法兰段上")
+            angs = [270.0 + ev(fh.offset_deg) + 360.0 * m / fh.count for m in range(fh.count)]  # 模型 −Y = 主视图上方
+            pts = [(round(pcd / 2 * math.cos(math.radians(a)), 4), round(pcd / 2 * math.sin(math.radians(a)), 4)) for a in angs]
+            flange_holes.append({"name": f"FH{k + 1}", "step": i, "z0": z0, "z1": z1, "count": fh.count, "pcd": pcd,
+                                 "d": hd, "angles": angs, "pts": pts, "callout": f"{fh.count}×Φ{hd:g} EQS"})
+            volume -= fh.count * math.pi * hd * hd / 4 * steps[i][0]
         if end_holes and shaft_bores:
             raise CadError(CAPABILITY_UNSUPPORTED, "空心轴/套类不支持轴端螺孔", hint="去掉 end_holes")
         if base.center_holes and shaft_bores:
@@ -933,7 +959,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes, flange_holes=flange_holes,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,

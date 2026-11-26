@@ -34,6 +34,7 @@ class ShaftBase(Strict):
     center_holes: "CenterHoles | None" = Field(None, description="轴端中心孔（GB/T 145，图上按 GB/T 4459.5 简化标注）")
     bores: list["ShaftBore"] = Field([], description="内孔（套类/空心轴）：从轴端起的同轴圆孔；有内孔时主视图全剖")
     end_holes: list["EndHole"] = Field([], description="轴端螺孔（装挡圈/压板），主视图细虚线 + 端面引线标注")
+    flange_holes: list["FlangeHoles"] = Field([], description="法兰/端盖轴向均布通孔（需有内孔，主视图全剖）")
 
 
 class EndHole(Strict):
@@ -51,6 +52,16 @@ class ShaftBore(Strict):
     tolerance: str | None = Field(None, description="孔公差带，如 H7")
     keyway: bool = Field(False, description="孔内轮毂键槽（GB/T 1095，按孔径查槽宽 b 与槽深 t2，贯通孔长，槽宽 JS9）")
     keyway_width: Num | None = Field(None, description="键槽宽，缺省按孔径查表")
+
+
+class FlangeHoles(Strict):
+    """法兰/端盖上的轴向均布通孔：贯穿某一轴段（该段两侧须是更小的轴段或端面），孔心在分布圆上均布。
+    图上按 GB/T 4458.1 规定画法旋转到剖切平面画出，左视图注 n×Φd EQS 与分布圆直径。"""
+    step: int
+    count: int = Field(ge=2, le=36)
+    pcd: Num = Field(description="分布圆直径")
+    diameter: Num = Field(description="孔径（通孔）")
+    offset_deg: Num = Field(0, description="第一个孔相对主视图正上方的转角（度）")
 
 
 class CenterHoles(Strict):

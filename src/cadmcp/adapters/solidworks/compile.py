@@ -181,6 +181,12 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                                                     "edge_pts": [[h["tap"] / 2, 0, zm]], "diameter": h["d"],
                                                     "external": False, "tol": h["callout"].split("-")[1].split("↓")[0]},
                                 "孔口圆边 → 内螺纹装饰线（失败不影响几何）"))
+        for fh in p.flange_holes:  # 法兰均布孔：Front Plane(XY) 分布圆上画圆，从法兰段 z0 切到 z1
+            sk = f"SK_{fh['name']}"
+            ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))
+            ops.append(NativeOp("sketch_circles", {"sketch": sk, "points": [list(q) for q in fh["pts"]], "diameter": fh["d"]}))
+            ops.append(NativeOp("keyway_cut", {"feature": fh["name"], "sketch": sk, "start_offset": fh["z0"],
+                                               "depth": fh["z1"] - fh["z0"], "flip": False}, f"{fh['callout']}：贯穿法兰段"))
         for b in p.shaft_bores:  # 内孔：Front Plane(XY) 画圆，从 z0 起切到 z1
             sk = f"SK_{b['name']}"
             ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))
