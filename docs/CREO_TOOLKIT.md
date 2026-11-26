@@ -49,6 +49,16 @@ CREOSON（J-Link）能打开模型、读写参数、建视图、导出，但不�
 草绘平面 `plane`：`{"ref": "TOP|FRONT|RIGHT|<基准面名>", "offset": mm}`（offset≠0 时先建偏移基准面，名为 `<feature>_PLN`）。
 平面 → 模型坐标约定：TOP：u=+X，v=+Y，法向 +Z；FRONT：u=+X，v=+Z，法向 −Y；RIGHT：u=+Y，v=+Z，法向 +X。
 
+**IR 坐标 → Creo 坐标**：协议中的模型坐标一律是平台 IR 坐标（Z 向上）。Creo 默认 Y 向上，C++ 端在边界做刚体旋转
+`IR (x, y, z) → Creo (x, z, −y)`。于是 IR 的 TOP/FRONT/RIGHT 正好是 Creo 默认基准面 TOP/FRONT/RIGHT，
+CREOSON 按命名视图 FRONT/TOP/RIGHT 建的工程图视图与规划层一致。偏移基准面沿参照面正法向偏移（IR TOP→+Z，FRONT→−Y，RIGHT→+X）。
+草绘 (u, v) → IR 三维点 → Creo 三维点 → 用 `ProSectionLocationGet` 的逆矩阵得截面二维坐标，不依赖草绘器 H/V 约定。
+
+**实现说明**：`feat.hole` 用拉伸切除实现——同一组孔的所有孔口圆放在一个草图里，沉孔一级、钻孔一级；沉头孔用 D×D 倒角
+（D = (csink − d)/2）；`drill_point` 首期不建钻尖（返回 `"drill_point": "omitted"`，剖视由规划层画出）。
+`feat.cosmetic_thread` 首期返回 `PRO_TK_NOT_IMPLEMENTED`（元素树需实机核对），孔标注中已写明螺纹规格。
+`feat.pattern_points` 预留，不注册。
+
 | cmd | 关键 args |
 |---|---|
 | `feat.extrude` | `plane`, `entities`, `depth`, `direction`（`normal`/`reverse`/`both`）, `op`（`add`/`cut`）, `through_all`（bool，cut 用） |
