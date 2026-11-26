@@ -532,7 +532,13 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                                 (ptc[ha] + c["pcd"] / 2 * 0.7071, ptc[va] - c["pcd"] / 2 * 0.7071)))
                 for inst in h.instances:
                     located.update({f"{h.name}[{inst.index}].{ha}", f"{h.name}[{inst.index}].{va}"})
-            for inst in ([] if h.circular else h.instances):
+            row = None if h.circular else _regular_row(h, ha, va)
+            if row is not None:  # 等距一排孔：只标首孔坐标 + 链式节距 n×p(=L)（GB/T 4458.4 等距尺寸简化注法）
+                ax_, n_, pitch, first = row
+                L_ = round(pitch * (n_ - 1), 3)
+                dims.append(Dim(view, "linear", ax_, L_, f"{n_ - 1}×{pitch:g}(={L_:g})", f"{h.name}.pitch",
+                                extra={"pitch": True, "prefix": f"{n_ - 1}×{pitch:g}(=", "suffix": ")"}))
+            for inst in ([] if h.circular else (h.instances[:1] if row else h.instances)):
                 pt = {ha: vc(inst.xyz, ha), va: vc(inst.xyz, va)}
                 for ax in (ha, va):
                     val = round(pt[ax] - origin[ax], 3)
@@ -541,6 +547,8 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                         ordinates[key] = Dim(view, "ordinate", ax, val, f"{val:g}", f"ord:{view}.{ax}={val:g}",
                                              (pt[ha], pt[va]))
                     located.add(f"{h.name}[{inst.index}].{ax}")
+            if row is not None:
+                located.update(f"{h.name}[{i.index}].{a}" for i in h.instances for a in (ha, va))
             if spec.hole_callouts:
                 first = h.instances[0]
                 dims.append(Dim(view, "callout", None, None, h.callout, f"{h.name}",
@@ -611,6 +619,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan.revisions = list(spec.revisions)
     _plan_sections(plan, spec, p)
     if spec.dimensions != "none":
+        pitch_dim_sheet(plan, p)
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
@@ -701,6 +710,44 @@ def _place_table(plan: "DrawingPlan", w: float, h: float) -> tuple[float, float,
     return cands[0]
 
 
+def _regular_row(h, ha: str, va: str):
+    """一组孔是否为等距一排（≥3 个、同一行/列、节距相等）：返回 (排列方向轴, 个数, 节距, 首孔) 或 None。"""
+    if len(h.instances) < 3 or h.slot:
+        return None
+    for along, across in ((ha, va), (va, ha)):
+        if len({round(vc(i.xyz, across), 3) for i in h.instances}) != 1:
+            continue
+        ins = sorted(h.instances, key=lambda i: vc(i.xyz, along))
+        gaps = [round(vc(b.xyz, along) - vc(a.xyz, along), 3) for a, b in zip(ins, ins[1:])]
+        if gaps[0] > 0 and all(abs(g - gaps[0]) < 1e-3 for g in gaps):
+            return along, len(ins), gaps[0], ins[0]
+    return None
+
+
+def pitch_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """等距孔节距尺寸的图纸坐标：尺寸界线引自首、末孔（孔圆周上远离尺寸线的点，CAD 选到圆按圆心标注），
+    横排标在视图上方，竖排标在视图左侧总体尺寸之外。"""
+    vmap = {v.type: v for v in plan.views}
+    for d in plan.dims:
+        if not (d.extra or {}).get("pitch") or d.view not in vmap:
+            continue
+        v = vmap[d.view]
+        h = next(h for h in p.holes if h.name == d.ref[:-len(".pitch")])
+        ha, va = VIEW_AXES[d.view]
+        ins = sorted(h.instances, key=lambda i: vc(i.xyz, d.axis))
+        a_, b_ = (_uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va))) for i in (ins[0], ins[-1]))
+        r = h.max_dia / 2 * v.scale
+        cx, cy = v.origin_on_sheet
+        w, hh = v.size_mm
+        if d.axis == ha:
+            pts = [(round(a_[0], 2), round(a_[1] + r, 2)), (round(b_[0], 2), round(b_[1] + r, 2))]
+            pos, orient = (round((a_[0] + b_[0]) / 2, 2), round(cy + hh / 2 + 8, 2)), "h"
+        else:
+            pts = [(round(a_[0] - r, 2), round(a_[1], 2)), (round(b_[0] - r, 2), round(b_[1], 2))]
+            pos, orient = (round(cx - w / 2 - 22, 2), round((a_[1] + b_[1]) / 2, 2)), "v"
+        d.extra = {**d.extra, "sheet_pts": pts, "sheet_pos": pos, "orient": orient}
+
+
 def _hole_table(dims: list[Dim], p: ResolvedPart, views: list[ViewPlan], spec: DrawingSpec):
     """孔表：每组孔一个字母、每孔一个编号（A1…），坐标相对视图左下角基准；该视图的坐标尺寸与孔标注由孔表代替。
     直接修改 dims；返回 (行, 视图)。"""
@@ -716,7 +763,9 @@ def _hole_table(dims: list[Dim], p: ResolvedPart, views: list[ViewPlan], spec: D
         return [], ""
     view = max(by_view, key=lambda v: sum(len(h.instances) for h in by_view[v]))
     holes = by_view[view]
-    n = sum(len(h.instances) for h in holes)
+    ha0, va0 = VIEW_AXES[view]
+    # 等距一排的孔组已用 n×p 节距尺寸表达，不计入孔表触发条件
+    n = sum(len(h.instances) for h in holes if h.circular or _regular_row(h, ha0, va0) is None)
     ords = [d for d in dims if d.view == view and d.kind == "ordinate"]
     many_ord = max((sum(1 for d in ords if d.axis == ax) for ax in VIEW_AXES[view]), default=0) > HOLE_TABLE_ORD
     if spec.hole_table == "auto" and n < HOLE_TABLE_MIN and not many_ord:
@@ -1217,6 +1266,14 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         hard.append((cx - w / 2 - 26, cy - h / 2 - 2, cx - w / 2 - 6, cy + h / 2 + 2))  # 总体尺寸（左）
         if v.label:
             hard.append((cx - 10, cy + h / 2 + 2, cx + 10, cy + h / 2 + 9))
+    for d in plan.dims:  # 规划层已定位的自由尺寸（等距节距、安装尺寸）：尺寸线与文字占位
+        ex = d.extra or {}
+        if ex.get("sheet_pos") and (ex.get("pitch") or ex.get("install")):
+            (x1_, y1_), (x2_, y2_) = ex["sheet_pts"]
+            px_, py_ = ex["sheet_pos"]
+            hard.append((min(x1_, x2_, px_ - 4), min(y1_, y2_, py_) - 1, max(x1_, x2_, px_ + 4), max(y1_, y2_, py_) + 5)
+                        if ex["orient"] == "h" else
+                        (min(x1_, x2_, px_) - 5, min(y1_, y2_, py_ - 4), max(x1_, x2_, px_) + 1, max(y1_, y2_, py_ + 4)))
     for d in plan.dims:  # 精度符号大致占位
         if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap \
                 and (d.extra or {}).get("attach") != "callout" \
@@ -1569,7 +1626,7 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
         norms = [tuple(d.extra["normal"]) for d in ords if d.kind in ("datum", "gtol", "roughness")
                  and d.extra and "normal" in d.extra and not d.extra.get("attach")]
         for d in ords:
-            if d.kind != "linear" or d.at is not None or (d.extra or {}).get("install"):
+            if d.kind != "linear" or d.at is not None or (d.extra or {}).get("install") or (d.extra or {}).get("pitch"):
                 continue
             if d.axis == ha:
                 y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)

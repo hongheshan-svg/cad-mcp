@@ -728,7 +728,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         for d in plan.dims:
             if d.view != v.type:
                 continue
-            if d.kind == "linear" and (d.extra or {}).get("install"):  # 安装尺寸：规划层给定图纸坐标
+            if d.kind == "linear" and ((d.extra or {}).get("install") or (d.extra or {}).get("pitch")) \
+                    and d.extra.get("sheet_pts"):  # 安装尺寸 / 等距节距：规划层给定图纸坐标
                 (ax_, ay_), (bx_, by_) = d.extra["sheet_pts"]
                 px_, py_ = d.extra["sheet_pos"]
                 if d.extra["orient"] == "h":  # 预览只画包络盒：补画安装孔（CAD 视图自带）

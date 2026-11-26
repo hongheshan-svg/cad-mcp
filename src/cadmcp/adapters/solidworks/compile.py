@@ -456,11 +456,14 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ops.append(NativeOp("auto_dimension", {"view": vt, "scheme": "ordinate", "origin": "lower_left"},
                             "IDrawingDoc.AutoDimension"))
     for d in plan.dims:
-        if d.kind == "linear" and d.view not in ordinate_views and d.at is None:
-            ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）：pts = 两条被标注边线上的点，pos = 尺寸线/文字位置
+        ex = d.extra or {}
+        if d.kind == "linear" and d.at is None and (d.view not in ordinate_views or ex.get("pitch") or ex.get("install")):  # 图纸坐标一律 mm（executor 内转 m）：pts = 两条被标注边线上的点，pos = 尺寸线/文字位置
             ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value, "ref": d.ref,
                                                       "pts": ex.get("sheet_pts"), "pos": ex.get("sheet_pos"),
-                                                      "orient": ex.get("orient")}, "选两条轮廓边线 AddDimension2"))
+                                                      "orient": ex.get("orient"),
+                                                      **({"prefix": ex["prefix"], "suffix": ex.get("suffix", "")}
+                                                         if ex.get("prefix") else {})},
+                                "选两条轮廓边线 AddDimension2；等距尺寸加前后缀 n×p(=<DIM>)"))
     if plan.layout == "shaft":
         for d in plan.dims:
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):

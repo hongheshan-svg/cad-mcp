@@ -121,3 +121,25 @@ def test_callout_with_attached_gtol_keeps_instance():
     co = next(d for d in plan.dims if d.kind == "callout" and d.ref == "Pin")
     g = next(d for d in plan.dims if d.kind == "gtol" and d.ref.endswith("hole:Pin"))
     assert co.at == g.at   # 位置度框格挂在孔标注下方，必须是同一个孔
+
+
+def test_regular_row_uses_pitch_dim_not_hole_table():
+    """等距一排孔：首孔坐标 + 19×50(=950) 节距尺寸，不用孔表；SW 加前后缀保持关联值。"""
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    rail = {"name": "RAIL", "part_no": "RL-01", "title": "导轨垫条", "material": "45#",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 1000, "height": 50}, "thickness": 20},
+            "features": [{"feature": "hole", "name": "Mnt", "type": "counterbore", "size": "M6",
+                          "pattern": {"kind": "grid", "origin": [-475, 0], "nx": 20, "ny": 1, "dx": 50, "dy": 0}}]}
+    p = resolve_part(PartSpec.model_validate(rail))
+    plan = plan_part_drawing(DrawingSpec(model="RAIL"), p)
+    assert not plan.hole_table
+    pd = next(d for d in plan.dims if d.ref == "Mnt.pitch")
+    assert pd.text == "19×50(=950)" and pd.value == 950 and pd.extra["orient"] == "h"
+    ords = sorted(d.value for d in plan.dims if d.kind == "ordinate" and d.view == "top" and d.axis == "x")
+    assert ords == [0, 25]                                          # 只标首孔
+    ops = compile_drawing(plan, "x.SLDDRW")
+    op = next(o for o in ops if o.op == "overall_dimension" and o.args["ref"] == "Mnt.pitch")
+    assert op.args["prefix"] == "19×50(=" and op.args["suffix"] == ")" and len(op.args["pts"]) == 2

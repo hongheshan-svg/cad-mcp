@@ -1135,8 +1135,14 @@ class SwExecutor:
         self.readback.setdefault("dim_refs", []).append(ref)
         return disp
 
-    def op_overall_dimension(self, view: str, axis: str, value: float, ref: str = "", pts=None, pos=None, orient=None):
-        self._dim_between_edges(view, ref or f"overall_{axis}", pts, pos, orient)
+    def op_overall_dimension(self, view: str, axis: str, value: float, ref: str = "", pts=None, pos=None, orient=None,
+                             prefix: str = "", suffix: str = ""):
+        disp = self._dim_between_edges(view, ref or f"overall_{axis}", pts, pos, orient)
+        if prefix or suffix:  # 等距尺寸 19×50(=950)：<DIM> 保持关联实测值
+            try:
+                disp.SetText(self._k("swDimensionTextAll", 0), prefix + "<DIM>" + suffix)
+            except Exception:  # noqa: BLE001  文字覆盖失败只影响外观
+                self.readback.setdefault("dim_text_failed", []).append(ref)
         return {"value": value}
 
     def op_section_cut(self, view: str, parent: str, label: str, kind: str, points, center):
