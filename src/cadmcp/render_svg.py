@@ -95,6 +95,71 @@ def _iso_xy(cx, cy, sc, box):
     return iso
 
 
+def _draw_flat(s, cx, cy, sc, part, plan, refs):
+    """展开图：外轮廓、折弯线（细双点画线）、底板上的孔、展开尺寸与折弯说明。"""
+    fu0, fu1, fv0, fv1 = part.flat_box
+
+    def F(u, v):
+        return cx + (u - (fu0 + fu1) / 2) * sc, cy + (v - (fv0 + fv1) / 2) * sc
+
+    x0, y0 = F(fu0, fv0)
+    x1, y1 = F(fu1, fv1)
+    s.rect(x0, y0, x1 - x0, y1 - y0)
+    for bd in part.bends:
+        if bd["flat_axis"] == "v":
+            s.line(*F(fu0, bd["flat_pos"]), *F(fu1, bd["flat_pos"]), THIN, "8,1.5,1,1.5,1,1.5")
+        else:
+            s.line(*F(bd["flat_pos"], fv0), *F(bd["flat_pos"], fv1), THIN, "8,1.5,1,1.5,1,1.5")
+    for h in part.holes:
+        if h.face not in ("top", "bottom"):
+            continue
+        for inst in h.instances:
+            c = F(inst.xyz[0], inst.xyz[1])
+            s.circle(*c, h.drill / 2 * sc)
+    for d in plan.dims:
+        if d.view != "flat_pattern":
+            continue
+        if d.ref == "flat_w":
+            yy = y0 - 10
+            s.line(x0, yy, x1, yy)
+            s.line(x0, y0 - 2, x0, yy - 1.5)
+            s.line(x1, y0 - 2, x1, yy - 1.5)
+            s.text((x0 + x1) / 2, yy + 1, d.text, 3.5, "middle")
+        elif d.ref == "flat_h":
+            xx = x1 + 10
+            s.line(xx, y0, xx, y1)
+            s.line(x1 + 2, y0, xx + 1.5, y0)
+            s.line(x1 + 2, y1, xx + 1.5, y1)
+            s.text(xx + 4.5, (y0 + y1) / 2, d.text, 3.5, "middle", -90)
+        elif d.kind == "callout" and d.at is not None:
+            px, py = F(*d.at)
+            s.text(px, py + 1, d.text, 3, "middle")
+        refs.append(d.ref)
+
+
+def _draw_sheet_side(s, part, vtype, ha, P):
+    """钣金侧视图：与视线平行的折弯边显示为截面（板厚条），正对视线的翻边显示为面。"""
+    t = part.thickness
+    b = part.bbox
+    hax = ha[-1]
+    sign = -1 if ha[0] == "-" else 1
+    lo, hi = (b.xmin, b.xmax) if hax == "x" else (b.ymin, b.ymax)
+    # 底板截面
+    a0, a1 = sorted((sign * lo, sign * hi))
+    s.poly([P(a0, 0), P(a1, 0), P(a1, t), P(a0, t)])
+    for bd in part.bends:
+        L = bd["length"]
+        z0, z1 = (0.0, L) if bd["direction"] == "up" else (-(L - t), t)
+        edge_axis = "y" if bd["edge"] in ("front", "back") else "x"
+        if edge_axis == hax:  # 截面：在视图横轴两端之一
+            at_hi = bd["edge"] in ("back", "right")
+            pos = sign * (hi if at_hi else lo)
+            inner = pos - t if (pos == max(a0, a1)) else pos + t
+            s.poly([P(min(pos, inner), z0), P(max(pos, inner), z0), P(max(pos, inner), z1), P(min(pos, inner), z1)])
+        else:  # 翻边正对或背对视线：显示为面
+            s.poly([P(a0, z0), P(a1, z0), P(a1, z1), P(a0, z1)], THIN)
+
+
 def _draw_iso(s, cx, cy, sc, box, part, asm):
     iso = _iso_xy(cx, cy, sc, box)
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
@@ -155,6 +220,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         if box is None or v.type in ("iso", "flat_pattern"):
             if v.type == "iso" and box is not None:
                 _draw_iso(s, cx, cy, sc, box, part, asm)
+            elif v.type == "flat_pattern" and part is not None and part.flat_box:
+                _draw_flat(s, cx, cy, sc, part, plan, rendered_refs)
             else:
                 w, h = v.size_mm
                 s.rect(cx - w / 2, cy - h / 2, w, h)
@@ -179,6 +246,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             for pk in part.pockets:
                 if pk["face"] in ("top", "bottom"):
                     s.poly([V((x, y, 0.0)) for x, y in pk["profile"].outline], THIN)
+        elif part is not None and part.base_type == "sheet_metal" and v.type in ("front", "back", "left", "right"):
+            _draw_sheet_side(s, part, v.type, ha, P)
         elif part is not None and part.base_type == "shaft" and v.type in ("front", "back", "left", "right"):
             z = 0.0
             for L, d in part.shaft_steps:

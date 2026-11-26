@@ -130,6 +130,7 @@ class ResolvedPart:
     geotols: list[dict[str, Any]] = field(default_factory=list)
     roughness: list[dict[str, Any]] = field(default_factory=list)
     mounts: list[dict[str, Any]] = field(default_factory=list)
+    flat_box: tuple[float, float, float, float] | None = None  # 展开图范围 (u0, u1, v0, v1)
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -468,6 +469,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     bends: list[dict[str, Any]] = []
     steps: list[tuple[float, float]] = []
     shaft_chamfer = 0.0
+    flat_box = None
 
     if isinstance(base, ExtrudeBase):
         profile = resolve_profile(base.profile, ev)
@@ -501,7 +503,9 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 raise CadError(SPEC_INVALID, f"flange on {f.edge}: length {L} must exceed thickness+bend radius {t + r}")
             edge_len = (u1 - u0) if f.edge in ("front", "back") else (v1 - v0)
             ba = math.pi / 180 * ang * (r + base.k_factor * t)
-            flat_add = (L - t - r) + ba - (t + r) * 0  # 平直段+展开弧长（外形尺寸法近似）
+            ossb = (r + t) * math.tan(math.radians(ang) / 2)  # 外退让量（外形尺寸到虚拟尖角）
+            # 外形尺寸法：展开 = 底边外形 + 翻边外形 − 2·OSSB + BA；底边外形已计入 profile，这里加翻边部分
+            flat_add = (L - ossb) + ba - ossb
             volume += edge_len * (L - t) * t
             if f.direction == "up":
                 box.zmax = max(box.zmax, L)
@@ -515,8 +519,14 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 fu0 -= flat_add
             else:
                 fu1 += flat_add
-            bends.append({"edge": f.edge, "angle": ang, "radius": r, "length": L, "bend_allowance": round(ba, 3)})
+            # 展开图上折弯中心线位置（展开坐标 = 底板坐标延伸）
+            line = {"front": ("v", v0 + ossb - ba / 2), "back": ("v", v1 - ossb + ba / 2),
+                    "left": ("u", u0 + ossb - ba / 2), "right": ("u", u1 - ossb + ba / 2)}[f.edge]
+            bends.append({"edge": f.edge, "angle": ang, "radius": r, "length": L, "bend_allowance": round(ba, 3),
+                          "direction": f.direction, "flat_axis": line[0], "flat_pos": round(line[1], 3),
+                          "k_factor": base.k_factor})
         flat = (fu1 - fu0, fv1 - fv0)
+        flat_box = (fu0, fu1, fv0, fv1)
     else:  # pragma: no cover
         raise CadError(SPEC_INVALID, "unknown base type")
 
@@ -660,7 +670,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
     return ResolvedPart(
-        datums=datums, geotols=geotols, roughness=rough, mounts=mounts,
+        datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
         category=spec.category, surface_treatment=spec.surface_treatment, base_type=base.type,
         parameters=params, bbox=box, volume_mm3=volume, mass_kg=volume * 1e-9 * dens, thickness=thickness,

@@ -321,7 +321,9 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
         notes.append(f"{n}. 未注倒角 C0.5。")
         n += 1
     if p.base_type == "sheet_metal" and p.bends:
-        notes.append(f"{n}. 未注折弯半径 R{p.bends[0]['radius']:g}，K 因子按工艺卡。")
+        bd = p.bends[0]
+        notes.append(f"{n}. 板厚 t{p.thickness:g}；未注折弯内半径 R{bd['radius']:g}；"
+                     f"展开按 K={bd['k_factor']:g} 计算，下料前按本厂折弯工艺核对。")
         n += 1
     for extra in _dedupe_notes(spec.notes, auto=notes, treatment=p.surface_treatment):
         notes.append(f"{n}. {extra}")
@@ -425,6 +427,16 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         missing_views = set()
     else:
         dims += _precision_dims(p, views, vtypes, False)
+        if "flat_pattern" in vtypes and p.flat_box:
+            fu0, fu1, fv0, fv1 = p.flat_box
+            dims.append(Dim("flat_pattern", "linear", "u", fu1 - fu0, f"{fu1 - fu0:.1f}", "flat_w"))
+            dims.append(Dim("flat_pattern", "linear", "v", fv1 - fv0, f"{fv1 - fv0:.1f}", "flat_h"))
+            for i, bd in enumerate(p.bends):
+                word = "上折" if bd["direction"] == "up" else "下折"
+                at = ((fu0 + fu1) / 2 * 0.4 + fu1 * 0.6, bd["flat_pos"]) if bd["flat_axis"] == "v" \
+                    else (bd["flat_pos"], fv0 * 0.6 + (fv0 + fv1) / 2 * 0.4)
+                dims.append(Dim("flat_pattern", "callout", None, bd["angle"],
+                                f"{word} {bd['angle']:g}° R{bd['radius']:g}", f"bend{i}", at))
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)

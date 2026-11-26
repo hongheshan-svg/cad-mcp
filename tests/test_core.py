@@ -63,7 +63,9 @@ def test_sheet_metal_flat_pattern():
         "base": {"type": "sheet_metal", "profile": {"shape": "rect", "width": 100, "height": 100}, "thickness": 1,
                  "flanges": [{"edge": "left", "length": 20}]}}))
     ba = math.pi / 2 * (1 + 0.44)
-    assert r.flat_pattern[0] == pytest.approx(100 + 20 - 1 - 1 + ba)
+    # 外形尺寸法：100 + 20 − 2·(r+t) + BA（r=t=1）
+    assert r.flat_pattern[0] == pytest.approx(100 + 20 - 2 * 2 + ba)
+    assert r.bends[0]["flat_pos"] == pytest.approx(-50 + 2 - ba / 2, abs=1e-3)
     assert r.bbox.zmax == 20
 
 
@@ -234,3 +236,22 @@ def test_shaft_section_letters_skip_datums():
     da = next(d for d in plan.dims if d.ref == "datum:A")
     kw1 = p.shaft_features[0]
     assert abs(da.at[0] - (kw1["z0"] + kw1["z1"]) / 2) > 5
+
+
+def test_sheet_metal_drawing(tmp_path):
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import DrawingSpec
+    sm = {"name": "SMB", "part_no": "SM-01", "title": "钣金支架", "material": "SPCC", "category": "sheet_metal",
+          "surface_treatment": "喷粉", "base": {"type": "sheet_metal", "profile": {"shape": "rect", "width": 120, "height": 80},
+                                               "thickness": 2, "flanges": [{"edge": "front", "length": 40},
+                                                                            {"edge": "back", "length": 40}]}}
+    svc = CadService.from_config(None, None, str(tmp_path)); svc.change_begin("S")
+    svc.build(PartSpec.model_validate(sm))
+    r = svc.build(DrawingSpec.model_validate({"model": "SMB", "title_block": {"designer": "AI"},
+                                              "views": [{"type": "front"}, {"type": "top"}, {"type": "left"},
+                                                        {"type": "flat_pattern"}]}))
+    assert r["rules"]["passed"]
+    texts = [d["text"] for d in svc.get_model("SMB_DRW")["dimensions"]]
+    assert texts.count("上折 90° R2") == 2 and "120.0" in texts
+    notes = svc.get_model("SMB_DRW")["plan"]["notes"]
+    assert any("板厚 t2" in n and "K=0.44" in n for n in notes)
