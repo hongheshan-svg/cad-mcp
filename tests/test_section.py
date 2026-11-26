@@ -16,8 +16,10 @@ def _part(**kw):
 def test_auto_step_section_covers_all_internal_features():
     p = _part()
     s = sx.auto_section(p)
-    assert s.kind == "step" and set(s.features) == {"Fix", "Motor", "Pilot", "Relief"}
-    assert len(s.path) == 3                                   # 每组只剖一个实例，转折最少
+    # 电机螺纹孔（PCD70）在 H 上落在 Φ50 止口孔内：转到它的转折点必在止口孔里（GB/T 4458.6 不允许），舍去
+    assert s.kind == "step" and set(s.features) == {"Fix", "Pilot", "Relief"}
+    assert len(s.path) == 2                                   # 每组只剖一个实例，转折最少
+    assert not -25 - 1 < s.path[0][1] < 25 + 1                # 转折点不在止口孔内
     assert s.path[0][0] == p.bbox.xmin and s.path[-1][1] == p.bbox.xmax
     assert all(a[1] == b[0] for a, b in zip(s.path, s.path[1:]))   # 连续
 
@@ -68,7 +70,7 @@ def test_drawing_section_auto_and_sw_ops(svc):
     ops = compile_drawing(plan, "x.SLDPRT")
     assert not any(o.op == "model_view" and o.args["view"] == "front" for o in ops)
     sc = next(o for o in ops if o.op == "section_cut")
-    assert sc.args["parent"] == "top" and len(sc.args["points"]) == 6 and sc.args["label"] == "A"
+    assert sc.args["parent"] == "top" and len(sc.args["points"]) == 4 and sc.args["label"] == "A"
     names = [o.op for o in ops]
     assert names.index("section_cut") > max(i for i, o in enumerate(ops) if o.op == "model_view")
 
@@ -131,3 +133,16 @@ def test_explicit_local_section_needs_through(svc):
     assert plan.sections[0].kind == "local" and plan.sections[0].path[0][0] < 40 < plan.sections[0].path[0][1]
     with pytest.raises(Exception):
         svc.build(DrawingSpec.model_validate({"model": BAR["name"], "sections": [{"kind": "local"}]}))
+
+
+def test_step_turn_inside_feature_falls_back_to_full():
+    """法兰：销孔与中心孔 H 相同，阶梯剖转折只能落在孔内 → 过中心全剖（中心孔 + 两螺栓孔）。"""
+    fl = {"name": "FL1", "part_no": "FL-01", "title": "法兰盘", "material": "45#",
+          "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 160}, "thickness": 20},
+          "features": [
+              {"feature": "hole", "name": "Bore", "type": "simple", "size": 60, "tolerance": "H7", "positions": [[0, 0]]},
+              {"feature": "hole", "name": "Bolt", "type": "counterbore", "size": "M10",
+               "pattern": {"kind": "circular", "radius": 60, "count": 6, "start_angle": 0}},
+              {"feature": "hole", "name": "Pin", "type": "simple", "size": 8, "tolerance": "H7", "positions": [[0, 45]]}]}
+    s = sx.auto_section(resolve_part(PartSpec.model_validate(fl)))
+    assert s.kind == "full" and s.path[0][2] == 0.0 and {"Bore", "Bolt"} <= set(s.features)

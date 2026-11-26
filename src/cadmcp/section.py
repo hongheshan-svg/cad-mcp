@@ -159,34 +159,50 @@ def auto_section(p, label: str = "A") -> SectionPlan | None:
     # 每个位置取其覆盖特征的 H 坐标，按 H 排序分段，转折点取相邻代表点中点
     # 每个特征只需剖到一个实例：先按各剖切位置候选实例的平均 H 排定次序，每个特征取离本位置均值最近的实例，
     # 使同一位置的特征在 H 上连成一段，转折最少
-    owner = {}
-    for n, _, _ in feats:
-        owner[n] = next(c for c in chosen if n in covers(c))
-    reps = []
-    for c in chosen:
-        mine = [(n, [pt for pt in pts if abs(pt[di_] - c) < TOL]) for n, pts, _ in feats if owner[n] == c]
-        mean = sum(pt[hi_] for _, ps in mine for pt in ps) / max(1, sum(len(ps) for _, ps in mine))
-        for n, ps in mine:
-            pt = min(ps, key=lambda q: abs(q[hi_] - mean))
-            reps.append((pt[hi_], c))
-    order = sorted(chosen, key=lambda c: sum(h for h, cc in reps if cc == c) / max(1, sum(1 for _, cc in reps if cc == c)))
-    reps.sort(key=lambda r: (order.index(r[1]), r[0]))
-    # 同一位置的代表点按 H 排序后，若不同位置区间交叠，退回按 H 全排序
-    reps_h = sorted(reps)
-    reps = reps if all(a[0] <= b[0] for a, b in zip(reps, reps[1:])) else reps_h
-    segs: list[list[float]] = []
-    for h, c in reps:
-        if segs and segs[-1][2] == c:
-            segs[-1][1] = h
-        else:
-            segs.append([h, h, c])
-    path = []
-    for i, (a, bb, c) in enumerate(segs):
-        h0 = lo_h if i == 0 else (segs[i - 1][1] + a) / 2
-        h1 = hi_h if i == len(segs) - 1 else (bb + segs[i + 1][0]) / 2
-        path.append((h0, h1, c))
-    covered = set().union(*(covers(c) for c in chosen))
-    return SectionPlan(label, "step" if len(path) > 1 else "full", view, "top", path, features=sorted(covered))
+    def build(chosen):
+        owner = {}
+        for n, _, _ in feats:
+            c_ = next((c for c in chosen if n in covers(c)), None)
+            if c_ is not None:
+                owner[n] = c_
+        reps, foot = [], []  # foot：各被剖要素在 H 上的占位（中心, 半宽）
+        for c in chosen:
+            mine = [(n, [pt for pt in pts if abs(pt[di_] - c) < TOL]) for n, pts, _ in feats if owner.get(n) == c]
+            mean = sum(pt[hi_] for _, ps in mine for pt in ps) / max(1, sum(len(ps) for _, ps in mine))
+            for n, ps in mine:
+                pt = min(ps, key=lambda q: abs(q[hi_] - mean))
+                reps.append((pt[hi_], c))
+                foot.append((pt[hi_], _half_width(p, n)))
+        order = sorted(chosen, key=lambda c: sum(h for h, cc in reps if cc == c) / max(1, sum(1 for _, cc in reps if cc == c)))
+        reps.sort(key=lambda r: (order.index(r[1]), r[0]))
+        # 同一位置的代表点按 H 排序后，若不同位置区间交叠，退回按 H 全排序
+        reps_h = sorted(reps)
+        reps = reps if all(a[0] <= b[0] for a, b in zip(reps, reps[1:])) else reps_h
+        segs: list[list[float]] = []
+        for h, c in reps:
+            if segs and segs[-1][2] == c:
+                segs[-1][1] = h
+            else:
+                segs.append([h, h, c])
+        path = []
+        for i, (a, bb, c) in enumerate(segs):
+            h0 = lo_h if i == 0 else (segs[i - 1][1] + a) / 2
+            h1 = hi_h if i == len(segs) - 1 else (bb + segs[i + 1][0]) / 2
+            path.append((h0, h1, c))
+        # GB/T 4458.6：剖切面转折处不应与轮廓线重合——转折点落在被剖要素内（不同位置的要素在 H 上重叠）即不可用
+        ok = not any(abs(h1 - h) < w + 1.0 for _, h1, _ in path[:-1] for h, w in foot)
+        return path, ok
+
+    # 不合规时在含主位置的子集中选剖到要素最多的一组；未剖到的多为简单孔，标注已说明深度
+    from itertools import combinations
+    subsets = [[best, *rest] for k in range(len(chosen) - 1, 0, -1) for rest in combinations(chosen[1:], k)]
+    subsets.sort(key=lambda cs: -len(set().union(*(covers(c) for c in cs))))
+    for cs in subsets:
+        path, ok = build(cs)
+        if ok:
+            covered = set().union(*(covers(c) for c in cs))
+            return SectionPlan(label, "step", view, "top", path, features=sorted(covered))
+    return SectionPlan(label, "full", view, "top", [(lo_h, hi_h, best)], features=sorted(covers(best)))
 
 
 def explicit_section(p, sp, label: str) -> SectionPlan:
