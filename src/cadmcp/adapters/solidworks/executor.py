@@ -1491,6 +1491,32 @@ class SwExecutor:
             note.GetAnnotation().SetPosition2(x0, (box[3] + 2) * MM, 0)
         return {"rows": len(rows), "read": len(got)}
 
+    def op_warn(self, message: str):
+        """规划层已知的缺项（不影响出图）：记入 readback 供 check_drawing 汇报。"""
+        self.readback.setdefault("warnings", []).append(message)
+        return {"warning": message}
+
+    def op_table(self, origin, columns, widths, rows, title: str = ""):
+        """通用表格（齿轮参数表等）：origin = 左上角（图纸 mm），表头在上；逐格写入并回读。"""
+        x0, y0 = origin[0] * MM, origin[1] * MM
+        # TODO(实机核对): swBOMConfigurationAnchor_TopLeft 取值（缺省 1）
+        tbl = self.model.InsertTableAnnotation2(False, x0, y0, self._k("swBOMConfigurationAnchor_TopLeft", 1), "",
+                                                len(rows) + 1, len(columns))
+        if tbl is None:
+            raise OpFailed("InsertTableAnnotation2 failed")
+        for c, (name, w) in enumerate(zip(columns, widths)):
+            self._set_cell(tbl, 0, c, name)
+            try:
+                tbl.SetColumnWidth(c, w * MM, 0)
+            except Exception:  # noqa: BLE001
+                pass
+        for r, row in enumerate(rows, 1):
+            for c, val in enumerate(row):
+                self._set_cell(tbl, r, c, str(val))
+        got = [[str(tbl.Text(r, c)).strip() for c in range(len(columns))] for r in range(1, len(rows) + 1)]
+        self.readback.setdefault("tables", []).append({"title": title, "rows": got})
+        return {"rows": len(rows)}
+
     def op_note(self, text: str, anchor: str, at: list[float] | None = None):
         """at：注释左上角（图纸 mm，规划层给出，与 SVG 同位置）；缺省时退回标题栏上方的旧规则。"""
         note = self.model.InsertNote(text)

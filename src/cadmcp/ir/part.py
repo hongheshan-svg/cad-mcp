@@ -295,6 +295,20 @@ class Roughness(Strict):
     ra: Num = Field(description="Ra 值 μm，优先 0.4/0.8/1.6/3.2/6.3/12.5")
 
 
+class GearSpec(Strict):
+    """渐开线直齿圆柱外齿轮（GB/T 1356 标准齿廓）。底座写 extrude + circle：直径 = 齿顶圆 da = m(z + 2 + 2x)，
+    厚度 = 齿宽 b；孔、键槽（贯通型腔）、减重孔照常写在 features 里。平台按渐开线生成真实齿形建模，
+    出图按 GB/T 4459.2 规定画法并在右上角附参数表。"""
+    module: Num = Field(description="模数 m（GB/T 1357 系列）")
+    teeth: int = Field(ge=6, description="齿数 z")
+    pressure_angle: Num = 20.0
+    shift: Num = Field(0.0, description="变位系数 x")
+    accuracy: str = Field("8 GB/T 10095.1", description="精度等级")
+    tip_tolerance: str = Field("h11", description="齿顶圆直径公差带")
+    flank_ra: Num = Field(1.6, description="齿面粗糙度 Ra")
+    mate: str | None = Field(None, description="配对齿轮图号（参数表可选行）")
+
+
 class CastingSpec(Strict):
     """铸件：spec 描述加工后的零件；平台据此生成毛坯（加工面加余量、小孔不铸出、铸孔留加工量）。"""
     process: Literal["sand", "investment", "die"] = Field("sand", description="砂型 / 熔模精铸 / 压铸")
@@ -328,9 +342,12 @@ class PartSpec(Strict):
     tolerances: list[GeoTol] = Field([], description="几何公差（形位公差）")
     roughness: list[Roughness] = Field([], description="个别表面粗糙度；其余表面按出图 surface_finish")
     casting: CastingSpec | None = Field(None, description="铸件（category=casting）：加工面、余量、拔模、最小铸孔")
+    gear: GearSpec | None = Field(None, description="直齿圆柱齿轮：底座为 extrude + circle（直径 = 齿顶圆）")
 
     @model_validator(mode="after")
     def _unique_names(self):
+        if self.gear is not None and (self.base.type != "extrude" or self.base.profile.shape != "circle"):
+            raise ValueError("gear: base must be extrude with a circle profile (diameter = tip diameter da)")
         if self.casting is not None and self.base.type != "extrude":
             raise ValueError("casting: only extrude-based parts are supported in v1")
         if (self.category == "casting") != (self.casting is not None):

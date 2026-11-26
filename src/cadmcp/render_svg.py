@@ -103,8 +103,8 @@ class _Svg:
             xd = x0 + wm + 0.5
             wd = max(_plain_w(up, ds), _plain_w(lo, ds))
             t = (f"<g{rot}><text x='{x0:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(main)}</text>"
-                 f"<text x='{xd:.2f}' y='{Y - 0.55 * size:.2f}' font-size='{ds:.2f}' {FONT}>{escape(up)}</text>"
-                 f"<text x='{xd:.2f}' y='{Y + 0.05 * size:.2f}' font-size='{ds:.2f}' {FONT}>{escape(lo)}</text>")
+                 f"<text x='{xd:.2f}' y='{Y - 0.72 * ds - 0.3:.2f}' font-size='{ds:.2f}' {FONT}>{escape(up)}</text>"
+                 f"<text x='{xd:.2f}' y='{Y:.2f}' font-size='{ds:.2f}' {FONT}>{escape(lo)}</text>")  # 下偏差与尺寸数字同基线
             if tail:
                 t += f"<text x='{xd + wd:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(tail)}</text>"
             self.parts.append(t + "</g>")
@@ -733,7 +733,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if part is not None and part.base_type == "shaft":
         from .render_shaft import render_shaft
         render_shaft(s, plan, part, rendered_refs)
-    for v in ([] if part is not None and part.base_type == "shaft" else plan.views):
+    if part is not None and plan.layout == "gear":
+        from .render_gear import render_gear
+        render_gear(s, plan, part, rendered_refs)
+    for v in ([] if part is not None and (part.base_type == "shaft" or plan.layout == "gear") else plan.views):
         sc = v.scale * (0.5 if v.type == "iso" else 1)
         cx, cy = v.origin_on_sheet
         if v.type == "flat_pattern":  # 基本视图按 GB 不标名称；展开图需注明

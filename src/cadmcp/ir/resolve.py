@@ -140,6 +140,7 @@ class ResolvedPart:
     cut_list: list[dict[str, Any]] = field(default_factory=list)
     weld_findings: list[dict[str, Any]] = field(default_factory=list)
     weld_options: dict[str, Any] = field(default_factory=dict)
+    gear: dict[str, Any] | None = None  # 齿轮：geometry() + 精度、齿顶圆公差、齿面 Ra
     casting: dict[str, Any] = field(default_factory=dict)  # 铸件：工艺参数、技术要求、是否毛坯
 
     def step_z(self, i: int) -> tuple[float, float]:
@@ -173,6 +174,24 @@ def _fmt(v: float) -> str:
 
 
 # ---------------- profiles ----------------
+def _gear_profile(gs, circle: ResolvedProfile, ev) -> tuple[ResolvedProfile, dict[str, Any]]:
+    """齿轮：底圆直径须等于齿顶圆；轮廓换成整圈渐开线齿廓折线（建模与质量用）。"""
+    from .. import gear as G
+    m, z, x = ev(gs.module), gs.teeth, ev(gs.shift)
+    g = G.geometry(m, z, ev(gs.pressure_angle), x)
+    d = circle.data["diameter"]
+    if abs(d - g["da"]) > 0.01:
+        raise CadError(SPEC_INVALID, f"gear: base circle diameter {d:g} ≠ tip diameter da = m(z+2+2x) = {g['da']:g}")
+    cx, cy = circle.data["center"]
+    if abs(cx) > 1e-9 or abs(cy) > 1e-9:
+        raise CadError(SPEC_INVALID, "gear: base circle must be centred at the origin")
+    pts = G.outline(m, z, g["alpha"], x)
+    per = sum(math.dist(a, b) for a, b in zip(pts, pts[1:] + pts[:1]))
+    prof = ResolvedProfile("polygon", G.polygon_area(pts), circle.bbox2d, pts, per, {"points": [list(p) for p in pts]})
+    g.update({"accuracy": gs.accuracy, "tip_tolerance": gs.tip_tolerance, "flank_ra": ev(gs.flank_ra), "mate": gs.mate})
+    return prof, g
+
+
 def resolve_profile(p, ev) -> ResolvedProfile:
     if isinstance(p, Rect):
         w, h, r = ev(p.width), ev(p.height), ev(p.corner_radius)
@@ -518,8 +537,11 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     shaft_chamfer = 0.0
     flat_box = None
 
+    gear = None
     if isinstance(base, ExtrudeBase):
         profile = resolve_profile(base.profile, ev)
+        if spec.gear is not None:
+            profile, gear = _gear_profile(spec.gear, profile, ev)
         thickness = ev(base.thickness)
         if thickness <= 0:
             raise CadError(SPEC_INVALID, "thickness must be > 0")
@@ -781,7 +803,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
         shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats,
-        **({"casting": _casting_info(spec)} if spec.casting else {}),
+        **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,
             "weld_options": {"end_caps": base.end_caps, "open_ends": wr.open_ends,

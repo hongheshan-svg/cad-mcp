@@ -419,6 +419,58 @@ def section_ops(plan) -> list[NativeOp]:
     return ops
 
 
+def _gear_drawing_ops(plan, model_file: str) -> list[NativeOp]:
+    """齿轮（GB/T 4459.2）：左视图 = 端面（模型 XY，SW *Front）；主视图 = 左视图上过中心竖直剖切线生成的全剖视图。
+    尺寸选两条边线（extra pick_pts）标注；分度线/分度圆不是模型几何，原生图上不生成（warn）。参数表用通用表格。"""
+    main, end = plan.views[0], plan.views[1]
+    ex, ey = end.origin_on_sheet
+    half = end.size_mm[1] / 2
+    ops = [NativeOp("model_view", {"view": "left", "sw_view": "*Front", "model": model_file, "center": end.origin_on_sheet,
+                                   "scale": end.scale, "rotate_deg": 0, "display": "hidden_visible"}, "端面视图"),
+           NativeOp("section_cut", {"view": "front", "parent": "left", "label": "A", "kind": "full",
+                                    "points": [[round(ex, 3), round(ey + half + 5, 3)], [round(ex, 3), round(ey - half - 5, 3)]],
+                                    "center": main.origin_on_sheet},
+                    "端面视图过中心（键槽）画竖直剖切线 → CreateSectionViewAt5，放到主视图位置"),
+           NativeOp("center_marks", {"view": "left", "types": 5, "connection": 0})]
+    skipped = []
+    for d in plan.dims:
+        ex_ = d.extra or {}
+        if d.kind in ("diameter", "linear"):
+            if not ex_.get("pick_pts"):
+                skipped.append(d.text)
+                continue
+            ops.append(NativeOp("shaft_dimension", {"view": d.view, "kind": d.kind, "text": d.text, "at": None,
+                                                    "ref": d.ref, "pts": ex_["pick_pts"], "pos": ex_.get("sheet_pos"),
+                                                    "orient": ex_.get("orient")}, "选两条边线 AddDimension2；配合公差走 SW 原生"))
+        elif d.kind == "callout" and ex_.get("label"):
+            lb = ex_["label"]
+            ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": None, "ref": d.ref,
+                                                "text_pos": lb["text_at"], "anchor": lb["anchor"]}, "孔径引线标注"))
+        elif d.kind == "roughness":
+            ops.append(NativeOp("surface_finish", {"view": d.view, "ref": d.ref, "at": ex_.get("sheet_at"), "pos": None,
+                                                   "fallback_text": f"√{d.text}", "at_model": None, "ra": d.value,
+                                                   "leader": False}))
+    if skipped:
+        ops.append(NativeOp("warn", {"message": "齿轮分度线/分度圆不是模型几何，原生图未标：" + "、".join(skipped)}))
+    from ...gear_drawing import param_table_rows
+    t = param_table_rows(plan)
+    ops.append(NativeOp("table", {"origin": list(t["origin"]), "columns": [c for c, _ in t["columns"]],
+                                  "widths": [w for _, w in t["columns"]], "rows": [list(r) for r in t["rows"]],
+                                  "title": "齿轮参数表"}, "图框右上角齿轮参数表（InsertTableAnnotation2）"))
+    from ...detailing import general_roughness_at, notes_origin
+    if plan.title_block.get("surface_finish"):
+        gx, gy = general_roughness_at(plan)
+        ops.append(NativeOp("note", {"text": f"其余 √{plan.title_block['surface_finish']} (√)", "anchor": "above_notes",
+                                     "at": [gx, gy + 4.5]}))
+    nx, ny = notes_origin(plan)
+    ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block",
+                                 "at": [nx, ny + 5 * max(len(plan.notes) - 1, 0) + 3.5]}))
+    ops.append(NativeOp("readback_annotations", {}, "回读尺寸/注释数量供出图检查"))
+    ops.append(NativeOp("save_as", {"name": plan.name, "ext": ".SLDDRW"}))
+    ops.append(NativeOp("export", {"format": "pdf"}))
+    return ops
+
+
 def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | None = None,
                     model_features: list | None = None) -> list[NativeOp]:
     sheet_templates = sheet_templates or {}
@@ -435,6 +487,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             "Revision": plan.title_block.get("revision", "")}},
             "模板标题栏用 $PRP 链接这些属性"),
     ]
+    if plan.layout == "gear":
+        return ops + _gear_drawing_ops(plan, model_file)
     for v in plan.views:
         if v.type == "flat_pattern":
             ops.append(NativeOp("flat_pattern_view", {"model": model_file, "center": v.origin_on_sheet, "scale": v.scale}))

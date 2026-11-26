@@ -379,3 +379,15 @@ def test_sw_flat_pattern_dims(sw_svc, tmp_path):
     assert len(flat) == 4 and all(r["ok"] and r["args"]["pts"] for r in flat)
     bends = [r for r in log if r["op"] == "leader_note" and r["args"]["ref"].startswith("bend")]
     assert len(bends) == 2 and all(r["args"].get("text_pos") for r in bends)
+
+
+def test_sw_gear_part_and_drawing(sw_svc):
+    """齿轮：渐开线齿廓折线草图拉伸；出图端面视图 + 全剖主视图 + 参数表，规则检查通过。"""
+    from test_gear import GEAR
+    svc, ad = sw_svc
+    svc.change_begin("GR")
+    svc.build(PartSpec.model_validate(GEAR))
+    r = svc.build(DrawingSpec.model_validate({"model": "GR1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    calls = [c[0] for c in ad.sw.calls]
+    assert "CreateSectionViewAt5" in calls and "InsertTableAnnotation2" in calls

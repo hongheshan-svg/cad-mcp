@@ -84,6 +84,8 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     if plan.projection != "first_angle":
         ops.append(NativeOp("warn", {"message": f"投影角 {plan.projection}：需模板 projection_type 与之一致，creopyson 无法设置"}))
 
+    if plan.layout == "gear":
+        return ops + _gear_view_ops(plan, model, vm, k, toolkit)
     front = next((v for v in plan.views if v.type == "front"), None)
     # 由剖视图替代的视图：扩展路径整体由扩展生成；TOOLKIT 路径先照常建投影视图，再由 drw.section 设为剖视
     replaced = set() if toolkit else {s.view for s in plan.sections if s.kind != "local"}
@@ -208,6 +210,36 @@ def _rows(rows) -> list[list[str]]:
     return [["" if v is None else (f"{v:g}" if isinstance(v, float) else str(v)) for v in r] for r in rows]
 
 
+def _gear_view_ops(plan, model: str, vm: dict, k: float, toolkit: bool) -> list[NativeOp]:
+    """齿轮（GB/T 4459.2）：左视图 = 沿轴线（IR Z）的端面一般视图；主视图 = 轴线水平的一般视图（RIGHT，
+    TODO(实机核对) 命名视图朝向），再由 drw.section 过轴线与键槽设为全剖。"""
+    main, end = plan.views[0], plan.views[1]
+    ops = [NativeOp("creoson.drawing_create_gen_view", {
+               "model_view": vm.get("section", "TOP"), "point": _pt(end.origin_on_sheet, k), "drawing": "$drawing",
+               "view": view_name("left"), "sheet": 1, "model": model, "scale": end.scale}, "端面视图（沿轴线）"),
+           NativeOp("creoson.drawing_create_gen_view", {
+               "model_view": vm.get("gear_axial", "RIGHT"), "point": _pt(main.origin_on_sheet, k), "drawing": "$drawing",
+               "view": view_name("front"), "sheet": 1, "model": model, "scale": main.scale}, "主视图（轴线水平）")]
+    if not toolkit:
+        ops.append(NativeOp("warn", {"message": "齿轮图的全剖、尺寸与参数表需 TOOLKIT 路径"}))
+        return ops
+    g = plan.gear_table
+    R = plan.views[1].size_mm[0] / plan.views[1].scale / 2
+    ops.append(NativeOp("tk.drw.section", {
+        "drawing": "$drawing", "parent": view_name("left"), "replaces": view_name("front"), "label": "A", "kind": "full",
+        "cut_points": [[0.0, -R - 5, 0.0], [0.0, R + 5, 0.0]], "center": _xy(main.origin_on_sheet)},
+        "过轴线（YZ 平面，键槽在 +Y）的全剖"))
+    ops += tk_detail_ops(plan)
+    ops.append(NativeOp("tk.drw.table", {"drawing": "$drawing", "origin": _xy((g["origin"][0], g["origin"][1] - g["size"][1])),
+                                         "columns": _cols(g["columns"]), "rows": _rows([list(r) for r in g["rows"]]),
+                                         "row_height": g["row_height"], "header_bottom": False},
+                        "齿轮参数表（图框右上角，表头在上）"))
+    ops.append(NativeOp("creoson.file_save", {"file_": "$drawing"}, "保存 .drw"))
+    ops.append(NativeOp("creoson.interface_export_pdf", {"file_": "$drawing", "dirname": "$out_dir",
+                                                         "filename": f"{plan.name or Path(model).stem}.pdf"}, "导出 PDF"))
+    return ops
+
+
 def tk_detail_ops(plan) -> list[NativeOp]:
     """DrawingPlan → 逐项 `tk.drw.*`。坐标全部是规划层已算好的图纸坐标（mm，左下角原点），与 SVG 预览一致：
     尺寸 sheet_pts/sheet_pos/orient，引线标注 extra["label"]，精度符号 sheet_at/sheet_pos，孔表 hole_table_box，
@@ -261,8 +293,11 @@ def tk_detail_ops(plan) -> list[NativeOp]:
         elif d.view == "flat_pattern":  # 展开图首期不建（见上），其标注一并跳过
             skip("展开图标注")
             continue
+        if plan.layout == "gear" and d.kind in ("linear", "diameter") and not ex.get("pick_pts"):
+            skip("分度线/分度圆尺寸（非模型几何）")
+            continue
         if d.kind in ("linear", "diameter", "ordinate") and ex.get("sheet_pts"):
-            p1, p2 = ex["sheet_pts"]
+            p1, p2 = ex.get("pick_pts") or ex["sheet_pts"]  # pick_pts：原生选边点（与预览尺寸界线起点不同时）
             args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",
                     "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
             if d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值

@@ -419,3 +419,7 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
   取值（缺省 9）与 `IDimensionTolerance.SetFitValues(孔, 轴)`；数值应与预览一致（如 Φ20k6 +0.015/+0.002）。
   失败时 readback 有 `dim_fit_failed`，图上退回文字后缀。Creo 端 `drw.dim` 的 `tol` 参数走原生正负公差（ProDimensionToltypeSet + ProDimensionToleranceSet，
   会话里打开 tol_display）；应答 `tol_set: false` 时核对下偏差符号约定与签名。
+- 齿轮（tests/test_gear.py 的 GR1）：SW/Creo 零件应有 40 个渐开线齿（折线草图约 680 段，核对建模耗时与质量 ≈0.70 kg）。
+  出图：端面视图（SW *Front / Creo 沿 IR Z）+ 过键槽的全剖主视图（轴线水平；Creo 用 RIGHT 命名视图，核对朝向）+
+  右上角参数表（SW `op_table` 的 swBOMConfigurationAnchor_TopLeft 取值缺省 1）。原生图上齿形按实际几何显示（非规定画法），
+  分度线 / Φd 不生成（warn）。

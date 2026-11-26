@@ -1,0 +1,105 @@
+"""渐开线直齿圆柱齿轮：几何（GB/T 1356）、公法线（GB/T 6443）、规定画法与参数表（GB/T 4459.2）、SW/Creo 出图。"""
+import pytest
+
+from cadmcp.detailing import plan_part_drawing
+from cadmcp.gear import geometry, outline, polygon_area
+from cadmcp.ir import DrawingSpec, PartSpec
+from cadmcp.ir.resolve import resolve_part
+from cadmcp.render_svg import render
+
+GEAR = {"name": "GR1", "part_no": "GR-01", "title": "直齿圆柱齿轮", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 84}, "thickness": 20},
+        "gear": {"module": 2, "teeth": 40},
+        "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 25, "tolerance": "H7",
+                      "positions": [[0, 0]]},
+                     {"feature": "pocket", "name": "KW", "face": "top", "depth": "through",
+                      "profile": {"shape": "rect", "width": 8, "height": 5.8, "center": [0, 12.9]}}]}
+
+
+def _p(spec=GEAR):
+    return resolve_part(PartSpec.model_validate(spec))
+
+
+@pytest.mark.parametrize("m,z,x,k,W", [(1, 20, 0, 3, 7.660), (2, 20, 0, 3, 15.321), (2, 40, 0, 5, 27.690),
+                                       (3, 17, 0, 2, 13.998)])
+def test_geometry_and_span(m, z, x, k, W):
+    g = geometry(m, z, 20, x)
+    assert g["d"] == m * z and g["da"] == pytest.approx(m * (z + 2)) and g["df"] == pytest.approx(m * (z - 2.5))
+    assert g["k"] == k and g["Wk"] == pytest.approx(W, abs=0.002)
+
+
+def test_outline_area_between_root_and_tip():
+    import math
+    pts = outline(2, 40)
+    a = polygon_area(pts)
+    assert math.pi * 37.5 ** 2 < a < math.pi * 42 ** 2
+    assert max(math.hypot(*p) for p in pts) == pytest.approx(42, abs=1e-3)
+    assert min(math.hypot(*p) for p in pts) == pytest.approx(37.5, abs=1e-3)  # 齿根圆 df = m(z − 2.5)
+
+
+def test_resolve_tip_diameter_check_and_mass():
+    p = _p()
+    assert p.profile.shape == "polygon" and p.gear["da"] == 84
+    assert 0.6 < p.mass_kg < 0.75
+    bad = {**GEAR, "base": {**GEAR["base"], "profile": {"shape": "circle", "diameter": 80}}}
+    with pytest.raises(Exception, match="tip diameter"):
+        _p(bad)
+
+
+def test_plan_gear_drawing():
+    p = _p()
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), p)
+    assert plan.layout == "gear" and [v.type for v in plan.views] == ["front", "left"]
+    texts = {d.ref: d.text for d in plan.dims}
+    assert texts["gear_da"] == "Φ84h11(0/-0.220)" and texts["gear_d"] == "Φ80" and texts["gear_b"] == "20"
+    assert texts["gear_bore"] == "Φ25H7(+0.021/0)"
+    assert texts["KW_w"] == "8JS9(+0.018/-0.018)" and texts["KW_t"] == "28.3(+0.2/0)"
+    rows = {r[0]: r[2] for r in plan.gear_table["rows"]}
+    assert rows["模数"] == "2" and rows["齿数"] == "40" and rows["公法线长度"] == "27.690" and rows["跨齿数"] == "5"
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    assert "gear_table" in out["dim_refs"] and "gear_bore" in out["dim_refs"]
+    assert svg.count("<polygon") < 60  # 规定画法：不画齿形
+
+
+def test_sw_gear_drawing_ops():
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), _p())
+    ops = compile_drawing(plan, "GR1.SLDPRT")
+    names = [o.op for o in ops]
+    assert names.index("model_view") < names.index("section_cut")
+    cut = next(o for o in ops if o.op == "section_cut")
+    assert cut.args["parent"] == "left" and cut.args["points"][0][0] == cut.args["points"][1][0]
+    dims = {o.args["ref"]: o for o in ops if o.op == "shaft_dimension"}
+    assert set(dims) == {"gear_da", "gear_b", "KW_w", "KW_t"}
+    assert any(o.op == "leader_note" and o.args["ref"] == "gear_bore" for o in ops)
+    assert any(o.op == "warn" and "Φ80" in o.args["message"] for o in ops)
+    tbl = next(o for o in ops if o.op == "table")
+    assert tbl.args["columns"] == ["名称", "代号", "数值"] and len(tbl.args["rows"]) == 9
+
+
+def test_creo_gear_drawing_ops():
+    from cadmcp.adapters.creo.drawing import compile_drawing
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), _p())
+    ops = compile_drawing(plan, "GR1.prt", toolkit=True)
+    sec = next(o for o in ops if o.op == "tk.drw.section")
+    assert sec.args["kind"] == "full" and sec.args["replaces"] == "V_FRONT"
+    dims = [o for o in ops if o.op == "tk.drw.dim"]
+    assert len(dims) == 4 and any(o.args.get("tol") == [0, -0.22] for o in dims)
+    assert any(o.op == "tk.drw.table" and len(o.args["rows"]) == 9 for o in ops)
+    assert any(o.op == "tk.drw.note" and o.args.get("leader_to") for o in ops)
+
+
+def test_service_build_mock(svc):
+    svc.change_begin("G")
+    svc.build(PartSpec.model_validate(GEAR))
+    r = svc.build(DrawingSpec.model_validate({"model": "GR1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+
+
+def test_creo_toolkit_part_uses_involute_polyline():
+    from cadmcp.adapters.creo.compile import compile_part_tk
+    s = PartSpec.model_validate(GEAR)
+    ops = compile_part_tk(s, resolve_part(s))
+    base = next(o for o in ops if o.op == "tk.feat.extrude" and o.args.get("feature") == "Base")
+    assert len(base.args["entities"]) >= 40 * 10  # 每齿 ≥10 段

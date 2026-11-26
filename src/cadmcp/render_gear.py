@@ -1,0 +1,165 @@
+"""直齿圆柱齿轮零件图 SVG 渲染（GB/T 4459.2）：主视图过轴线全剖、轮齿不剖；左视图三圆 + 轴孔键槽；参数表。"""
+from __future__ import annotations
+
+import math
+
+from .gear_drawing import gear_parts, param_table
+from .detailing import DrawingPlan
+from .ir.resolve import ResolvedPart
+from .render_shaft import _arrow, _hdim
+
+THIN, THICK = 0.25, 0.5
+CENTER = "6,1.5,1,1.5"
+
+
+def _hatch(s, cid, poly, x0, y0, x1, y1, step=2.5):
+    path = " ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in poly)
+    s.parts.append(f"<clipPath id='{cid}'><polygon points='{path}'/></clipPath>")
+    lines = []
+    span = (x1 - x0) + (y1 - y0)
+    k = -span
+    while k < span:
+        lines.append(f"<line x1='{x0 + k:.2f}' y1='{s.y(y0):.2f}' x2='{x0 + k + (y1 - y0):.2f}' "
+                     f"y2='{s.y(y1):.2f}' stroke='#111' stroke-width='0.18'/>")
+        k += step
+    s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
+
+
+def _vdim_text(s, x_line, x_from, ya, yb, text):
+    """竖直尺寸：尺寸界线从视图边线引到 x_line，双箭头，文字在线左侧竖写。"""
+    for y in (ya, yb):
+        s.line(x_from - 1, y, x_line - 1.5, y, THIN)
+    s.line(x_line, ya, x_line, yb, THIN)
+    _arrow(s, x_line, ya, 0, -1)
+    _arrow(s, x_line, yb, 0, 1)
+    s.text(x_line - 1, (ya + yb) / 2, text, 3.5, "middle", -90)
+
+
+def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> None:
+    from . import render_gdt
+    g = part.gear
+    main, end = plan.views[0], plan.views[1]
+    sc = main.scale
+    b = part.bbox.zmax - part.bbox.zmin
+    cx, cy = main.origin_on_sheet
+    xl, xr = cx - b * sc / 2, cx + b * sc / 2
+    ra, r, rf = g["da"] / 2 * sc, g["d"] / 2 * sc, g["df"] / 2 * sc
+    parts = gear_parts(part)
+    bore, kw = parts["bore"], parts["keyway"]
+    rb = bore.max_dia / 2 * sc if bore is not None else 0.0
+    ytop_hole = cy + (kw["top"] * sc if kw else rb)  # 剖切面过键槽：上半孔壁在键槽底
+    ybot_hole = cy - rb
+
+    # ---- 主视图：全剖，轮齿不剖 ----
+    if bore is not None:
+        up = [(xl, cy + rf), (xr, cy + rf), (xr, ytop_hole), (xl, ytop_hole)]
+        dn = [(xl, ybot_hole), (xr, ybot_hole), (xr, cy - rf), (xl, cy - rf)]
+        _hatch(s, "gearU", up, xl, ytop_hole, xr, cy + rf)
+        _hatch(s, "gearD", dn, xl, cy - rf, xr, ybot_hole)
+        s.line(xl, ytop_hole, xr, ytop_hole, THICK)
+        s.line(xl, ybot_hole, xr, ybot_hole, THICK)
+        if kw:  # 剖切面之后键槽侧壁与孔壁的交线（可见）
+            hw = kw["width"] / 2 * sc
+            yk0 = cy + math.sqrt(max(rb * rb - hw * hw, 0.0))
+            s.line(xl, yk0, xr, yk0, THICK)
+    s.line(xl, cy + ra, xr, cy + ra, THICK)                   # 齿顶线
+    s.line(xl, cy - ra, xr, cy - ra, THICK)
+    for x in (xl, xr):                                        # 端面：剖视中只画有材料处（孔里没有线）
+        if bore is not None:
+            s.line(x, ytop_hole, x, cy + ra, THICK)
+            s.line(x, cy - ra, x, ybot_hole, THICK)
+        else:
+            s.line(x, cy - ra, x, cy + ra, THICK)
+    s.line(xl, cy + rf, xr, cy + rf, THICK)                   # 齿根线（剖视中粗实线）
+    s.line(xl, cy - rf, xr, cy - rf, THICK)
+    for sign in (1, -1):                                      # 分度线：细点画线，超出端面 2–3 mm
+        s.line(xl - 3, cy + sign * r, xr + 3, cy + sign * r, THIN, CENTER)
+    s.line(xl - 4, cy, xr + 4, cy, THIN, CENTER)              # 轴线
+
+    # ---- 左视图 ----
+    ex, ey = end.origin_on_sheet
+    s.circle(ex, ey, ra, THICK)
+    s.circle(ex, ey, r, THIN, CENTER)
+    s.circle(ex, ey, rf, THIN)
+    s.line(ex - ra - 4, ey, ex + ra + 4, ey, THIN, CENTER)
+    s.line(ex, ey - ra - 4, ex, ey + ra + 4, THIN, CENTER)
+    if bore is not None:
+        if kw:
+            hw = kw["width"] / 2 * sc
+            a0 = math.asin(min(1.0, hw / rb))
+            pts = [(ex + rb * math.sin(a), ey + rb * math.cos(a))
+                   for a in [a0 + (2 * math.pi - 2 * a0) * k / 96 for k in range(97)]]
+            yk = ey + kw["top"] * sc
+            pts += [(ex - hw, yk), (ex + hw, yk)]
+            s.poly(pts, THICK)
+        else:
+            s.circle(ex, ey, rb, THICK)
+    for h in parts["others"]:
+        for inst in h.instances:
+            s.circle(ex + inst.xyz[0] * sc, ey + inst.xyz[1] * sc, h.max_dia / 2 * sc, THICK)
+
+    # ---- 尺寸与精度符号 ----
+    for d in plan.dims:
+        ex_ = d.extra or {}
+        if d.kind == "diameter" and "sheet_pts" in ex_:
+            (xf, ya), (_, yb) = ex_["sheet_pts"]
+            _vdim_text(s, ex_["sheet_pos"][0], xf, ya, yb, d.text)
+        elif d.kind == "linear" and ex_.get("orient") == "h" and "sheet_pts" in ex_:
+            (xa, ya), (xb, yb) = ex_["sheet_pts"]
+            px, py = ex_["sheet_pos"]
+            if abs(px - (xa + xb) / 2) < 0.5:
+                _hdim(s, xa, xb, ya, yb, py, d.text)
+            else:  # 文字偏到一侧：尺寸线延长到文字下方
+                from .render_svg import _text_w
+                tw = _text_w(d.text, 3.5)
+                for x, yf in ((xa, ya), (xb, yb)):
+                    s.line(x, yf + 1, x, py + 1.5, THIN)
+                s.line(min(xa, px - tw / 2), py, max(xb, px + tw / 2), py, THIN)
+                _arrow(s, xa, py, 1, 0)
+                _arrow(s, xb, py, -1, 0)
+                s.text(px, py + 0.8, d.text, 3.5, "middle")
+        elif d.kind == "linear" and ex_.get("orient") == "v" and "sheet_pts" in ex_:
+            (xa, ya), (xb, yb) = ex_["sheet_pts"]
+            xl_ = ex_["sheet_pos"][0]
+            s.line(xa + 1, ya, xl_ + 1.5, ya, THIN)
+            s.line(xb + 1, yb, xl_ + 1.5, yb, THIN)
+            s.line(xl_, ya, xl_, yb, THIN)
+            _arrow(s, xl_, ya, 0, -1)
+            _arrow(s, xl_, yb, 0, 1)
+            ty = ex_["sheet_pos"][1]
+            if ty + 0 > max(ya, yb):
+                pass
+            s.text(xl_ - 1, ty, d.text, 3.5, "middle", -90)
+        elif d.kind == "roughness" and "sheet_at" in ex_:
+            render_gdt.draw(s, "roughness", *ex_["sheet_at"], ex_, d.text)
+        elif d.kind == "callout" and ex_.get("label"):
+            lb = ex_["label"]
+            ax, ay = lb["anchor"]
+            exb, eyb = lb["elbow"]
+            s.line(ax, ay, exb, eyb, THIN)
+            s.line(exb, eyb, lb["end"][0], lb["end"][1], THIN)
+            _arrow(s, ax, ay, ax - exb, ay - eyb)
+            s.text(*lb["text_at"], d.text, 3.5)
+        else:
+            continue
+        refs.append(d.ref)
+
+    # ---- 参数表（右上角，表头在上）----
+    t = param_table(plan, part)
+    x0, ytop = t["origin"]
+    rh = t["row_height"]
+    widths = [w for _, w in t["columns"]]
+    rows = [tuple(c for c, _ in t["columns"])] + t["rows"]
+    tw, th = t["size"]
+    s.rect(x0, ytop - th, tw, th, THICK)
+    for i, row in enumerate(rows):
+        y = ytop - (i + 1) * rh
+        if i < len(rows) - 1:
+            s.line(x0, y, x0 + tw, y, THIN)
+        x = x0
+        for j, (w, c) in enumerate(zip(widths, row)):
+            if j:
+                s.line(x, ytop, x, ytop - th, THIN)
+            s.text(x + w / 2, y + 2.2, str(c), 3.0 if len(str(c)) < 14 else 2.5, "middle")
+            x += w
+    refs.append("gear_table")

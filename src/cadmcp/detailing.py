@@ -112,6 +112,7 @@ class DrawingPlan:
     missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
     layout: str = "standard"  # standard | shaft（轴线水平 + 移出断面）
     cut_list: list[dict[str, Any]] = field(default_factory=list)  # 焊接件切割清单
+    gear_table: dict[str, Any] = field(default_factory=dict)  # 齿轮参数表：origin/columns/rows/row_height/size
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -475,6 +476,9 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         return plan_shaft_drawing(spec, p, today)
     if p.base_type == "weldment":
         return plan_weldment_drawing(spec, p, today)
+    if p.gear:
+        from .gear_drawing import plan_gear_drawing
+        return plan_gear_drawing(spec, p, today)
     b = p.bbox
     min_feat = min((h.drill for h in p.holes), default=0.0)
     # 焊接件尺寸大、孔是焊后加工的少数特征：按装配图方式选图幅（比例 ≥1:5 的最小图幅）
