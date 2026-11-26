@@ -221,13 +221,15 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
             feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],
                  major_diameter=h["d"], length=h["depth"])
         for h in p.cross_holes:  # 径向横孔：RIGHT（u=+Y, v=+Z，法向 +X）上画圆；通孔从 +X 外侧反向切穿，盲孔草绘面在孔底向外切
+            # vertical：FRONT（u=+X, v=+Z，法向 −Y，offset 沿 −Y）——盲孔从 −Y（主视图上方）钻入，同 270° 键槽
             R = h["D"] / 2
+            ref = "FRONT" if h["dir"] == "vertical" else "RIGHT"
             circ = [_circle((0, h["z"]), h["hole"] / 2)]
             if h["through"]:
-                feat("feat.extrude", h["name"], h["callout"], plane={"ref": "RIGHT", "offset": R + 1}, entities=circ,
+                feat("feat.extrude", h["name"], h["callout"], plane={"ref": ref, "offset": R + 1}, entities=circ,
                      depth=2 * R + 2, direction="reverse", op="cut", through_all=False)
             else:
-                feat("feat.extrude", h["name"], h["callout"], plane={"ref": "RIGHT", "offset": R - h["drill"]},
+                feat("feat.extrude", h["name"], h["callout"], plane={"ref": ref, "offset": R - h["drill"]},
                      entities=circ, depth=h["drill"] + 1, direction="normal", op="cut", through_all=False)
             if h["thread"]:
                 feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],

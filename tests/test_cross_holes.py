@@ -98,3 +98,41 @@ def test_at_assembly_pin_hole():
     assert not any(f["rule"] == "S007" for f in rules.check_part(p))
     svg, out = render(plan, p)
     assert not out["crossings"] and not out["collisions"]
+
+
+XV = {"name": "XV", "part_no": "XV-01", "title": "销轴", "material": "45#",
+      "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 40, "diameter": 30}, {"length": 60, "diameter": 25}],
+               "cross_holes": [{"step": 0, "diameter": 6, "direction": "vertical"},
+                               {"step": 1, "position": 45, "size": "M6", "depth": 8, "direction": "vertical"},
+                               {"step": 1, "position": 20, "diameter": 4, "depth": 10, "direction": "vertical"}]}}
+
+
+def test_vertical_cross_holes():
+    """主视图竖直的横孔：实心轴局部剖（每孔一处），引线避开尺寸数字；原生在 Top Plane / FRONT 上切。"""
+    sp = PartSpec.model_validate(XV)
+    p = resolve_part(sp)
+    plan = plan_part_drawing(DrawingSpec(model="XV"), p)
+    ls = plan.views[0].local_sections
+    assert [x["name"] for x in ls] == ["XH1", "XH2", "XH3"] and all(x["depth"] in (15, 12.5) for x in ls)
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"] and "clip-path='url(#xhXH1" in svg
+    ops = compile_drawing(plan, "XV.SLDPRT")
+    assert sum(1 for o in ops if o.op == "broken_out_section") == 3
+    sw = compile_part(sp, p)
+    planes = [o.args["plane"] for o in sw if o.op == "sketch_on_plane" and o.args["sketch"].startswith("SK_XH")]
+    assert set(planes) == {"Top Plane"}
+    cut = next(o.args for o in sw if o.op == "keyway_cut" and o.args["feature"] == "XH2")
+    assert cut["flip"] is True and cut["start_offset"] == 12.5 - 11  # 从 −Y（主视图上方）钻入
+    tk = {o.args["feature"]: o.args for o in creo_part(sp, p) if o.args.get("feature", "").startswith("XH")}
+    assert tk["XH1"]["plane"]["ref"] == "FRONT"
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    assert sum(1 for o in tk_detail_ops(plan) if o.op == "tk.drw.section" and o.args["kind"] == "local") == 3
+
+
+def test_vertical_cross_hole_sleeve():
+    sl = {**XV, "base": {**XV["base"], "bores": [{"diameter": 12}], "cross_holes": [{"step": 0, "diameter": 6, "direction": "vertical"}]}}
+    p = _p(sl)
+    plan = plan_part_drawing(DrawingSpec(model="XV"), p)
+    assert not plan.views[0].local_sections and plan.views[0].full_section  # 已全剖：孔在上下壁断开
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]

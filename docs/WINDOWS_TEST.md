@@ -525,3 +525,8 @@ Creo：`feat.round` edges 同样给点坐标。
 - 齿轮轴 auto_precision 样例：断面图 D-D 左侧 ⌯ 0.015 C。SW `gtol` 的 view = `section:D-D`，`at` 在槽宽尺寸线左端
   （槽侧壁延长线上，模型边线不一定在那里）——核对 `_select_edge_at` 是否选中槽侧壁；选不中时框格无引线附着，
   需改为附着到槽宽尺寸（SW：选中尺寸后 InsertGtol）。Creo `tk.drw.gtol` 同。
+
+### 竖直横孔局部剖（direction: vertical）
+- `tests/test_cross_holes.py` 的 XV 样例：SW 每孔一个 `broken_out_section`（孔周矩形、深度 = 轴半径），核对局部剖
+  边界是否画成波浪线（SW 样条边界）、剖面线是否只在剖到的实体上；Top Plane 上的孔从 −Y（主视图上方）钻入。
+- Creo：同一视图上多处 `tk.drw.section kind=local` 能否共存（TODO）。

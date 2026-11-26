@@ -85,6 +85,7 @@ class ViewPlan:
     label: str = ""  # 断面图名称（如 A-A）
     target: str = ""  # 断面图对应的特征
     full_section: dict | None = None  # 原位全剖（空心轴/套类主视图）：{boundary 图纸 mm 矩形, depth 模型 mm, cut_points 模型}
+    local_sections: list = field(default_factory=list)  # 局部剖（轴类主视图竖直横孔）：[{boundary 图纸 mm, depth 模型 mm, zone 模型 (za, zb, y0, y1)}]
     breaks: list = field(default_factory=list)  # 断开画法：去掉的模型 z 区间 [(a, b)]（轴类主视图），每处在图上留 BREAK_GAP
     detail: dict | None = None  # 局部放大图：{zc, yc 模型 mm（放大区域中心）, rm 模型半径, circle (cx, cy, r) 主视图图纸 mm,
     #                             label_at 主视图罗马数字位置, leader [(x, y), (x, y)]}
@@ -1279,6 +1280,18 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 "anchor": (round(anchor[0], 2), round(anchor[1], 2)), "elbow": (round(elbow[0], 2), round(elbow[1], 2)),
                 "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
+    if not (p.shaft_bores or p.flange_holes):  # 实心轴竖直横孔：主视图局部剖（剖到轴线平面）
+        f0 = views[0]
+        for h in p.cross_holes:
+            if h["dir"] != "vertical":
+                continue
+            za, zb, y0, y1 = cross_hole_zone(p, h, scale)
+            xa, xb = shaft_sx(f0, Ltot, za), shaft_sx(f0, Ltot, zb)
+            cy_ = f0.origin_on_sheet[1]
+            ya, yb = cy_ + (y0 - (1 if h["through"] else 0)) * scale, cy_ + (y1 + 1) * scale
+            f0.local_sections.append({"name": h["name"], "zone": (za, zb, y0, y1), "depth": round(h["D"] / 2, 3),
+                                      "boundary": [(round(xa, 2), round(ya, 2)), (round(xb, 2), round(ya, 2)),
+                                                   (round(xb, 2), round(yb, 2)), (round(xa, 2), round(yb, 2))]})
     if p.shaft_bores or p.flange_holes:  # 空心轴/套类/盘盖：主视图过轴线原位全剖（GB/T 4458.6；剖切面过对称面且按投影配置，不标注）
         f0 = views[0]
         cx_, cy_ = f0.origin_on_sheet
@@ -1957,6 +1970,19 @@ def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: fl
     return out
 
 
+def cross_hole_zone(p: ResolvedPart, h: dict, sc: float) -> tuple[float, float, float, float]:
+    """竖直横孔局部剖范围（模型 mm）：z 向孔两侧各留 3 mm 图纸（不越出所在轴段），y 向通孔全径、盲孔到孔底以下 3 mm 图纸。"""
+    z0, z1 = p.step_z(h["step"])
+    m = 3.0 / sc
+    R = h["D"] / 2
+    ext = (h["thread"]["d"] if h["thread"] else h["hole"]) / 2
+    za, zb = max(h["z"] - ext - m, z0), min(h["z"] + ext + m, z1)
+    if h["through"]:
+        return za, zb, -R, R
+    cone = h["hole"] / 2 * math.tan(math.radians(31))
+    return za, zb, max(R - h["drill"] - cone - m, -R), R
+
+
 def hub_keyway_symmetry_extra(hk: list, ex: float, ey: float, r_out: float) -> dict:
     """轮毂键槽对称度框格的引线（端视图，图纸 mm）：箭头在槽宽右尺寸界线上、与尺寸线对齐，水平向右 4 mm 后折向上，
     框格在端视图外圆上方（避开 d+t2 竖直尺寸及其外移的文字）。hk = hub_keyway_dims 的结果；r_out = 外圆图上半径。"""
@@ -2399,7 +2425,8 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
     # 文字的障碍：键槽/环槽轮廓、各竖线、轴端螺孔虚线；螺纹只有终止线（小径细线是水平的）
     obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
     obst += [(h["z0"], h["z1"] + 0.3 * h["tap"]) for h in p.end_holes]
-    obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) for h in p.cross_holes]
+    obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) if h["dir"] == "view"
+             else cross_hole_zone(p, h, sc)[:2] for h in p.cross_holes]
     busy += [(h["z"] - h["d"] / 2, h["z"] + h["d"] / 2) for h in p.cross_holes if h["step"] == i]
     for f in p.shaft_features:
         if f["step"] == i and f["kind"] == "thread":
@@ -2478,7 +2505,11 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 y = y_top + 14 - 7 * (d.extra or {}).get("track", 0)
             kw = not d.ref.startswith(("step", "overall"))
             xh = {round(h["z"], 6): h for h in p.cross_holes} if d.ref.startswith("XH") else {}
-            pts = [(round(X(z), 2), round(cy + xh[round(z, 6)]["hole"] / 2 * sc, 2)) if round(z, 6) in xh
+            def xh_pt(h):  # 横孔：view 向取孔圆顶点；竖直孔取左孔壁线上一点（TODO(实机核对) 原生需量到孔轴线）
+                if h["dir"] == "vertical":
+                    return (round(X(h["z"] - h["hole"] / 2), 2), round(cy + h["D"] / 2 * 0.6 * sc, 2))
+                return (round(X(h["z"]), 2), round(cy + h["hole"] / 2 * sc, 2))
+            pts = [xh_pt(xh[round(z, 6)]) if round(z, 6) in xh
                    else edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": (round((pts[0][0] + pts[1][0]) / 2, 2), round(y, 2)),
                        "orient": "h"}
@@ -2513,6 +2544,8 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             h = next(h for h in p.cross_holes if h["name"] == d.ref[3:])
             rh = h["hole"] / 2 * sc
             ax, ay = X(h["z"]) + rh * 0.7071, cy + rh * 0.7071
+            if h["dir"] == "vertical":  # 竖直孔：箭头在孔口（上轮廓处孔壁）
+                ax, ay = X(h["z"]) + rh, cy + h["D"] / 2 * sc
             ty = y_top + 18
             ex_ = ax + (ty - ay)
             w = text_width(d.text, 3.5) + 1
@@ -2529,7 +2562,59 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(tx, 2), round(ty, 2)),
                                                      "text_at": (round(tx + 0.5, 2), round(ty + 0.8, 2)),
                                                      "end": (round(tx + w, 2), round(ty, 2)), "dir": 1}}
+    _xh_callout_flip(plan)
     _shaft_section_dim_sheet(plan, p)
+
+
+def _seg_cross(p1, p2, q1, q2) -> bool:
+    def o(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    return o(p1, p2, q1) * o(p1, p2, q2) < 0 and o(q1, q2, p1) * o(q1, q2, p2) < 0
+
+
+def _xh_callout_flip(plan: "DrawingPlan") -> None:
+    """横孔引线布置：候选 右上 45° / 左上 45° / 再高一行（右、左），取第一个引线不穿尺寸数字、文字不压别的引线标注的。"""
+    boxes = []
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view == "front" and d.kind == "linear" and ex.get("orient") == "h" and ex.get("sheet_pos"):
+            px, py = ex["sheet_pos"]
+            hw = text_width(d.text, 3.5) / 2 + 0.5
+            boxes.append((px - hw, py, px + hw, py + 4.5))
+    placed = [(lb["text_at"][0], lb["elbow"][1], lb["text_at"][0] + text_width(d.text, 3.5), lb["elbow"][1] + 4.5)
+              for d in plan.dims if d.kind == "callout" and not d.ref.startswith("xh:") and d.view == "front"
+              and (lb := (d.extra or {}).get("label"))]
+
+    def hits(a, b, bxs):
+        return sum(1 for x0, y0, x1, y1 in bxs
+                   if any(x0 <= a[0] + (b[0] - a[0]) * t / 20 <= x1 and y0 <= a[1] + (b[1] - a[1]) * t / 20 <= y1
+                          for t in range(21)))
+    xs = sorted((d for d in plan.dims if d.kind == "callout" and d.ref.startswith("xh:") and (d.extra or {}).get("label")),
+                key=lambda d: d.extra["label"]["anchor"][0])
+    lines_: list = []
+    for d in xs:
+        lb = d.extra["label"]
+        (ax, ay), (ex0, ty0) = lb["anchor"], lb["elbow"]
+        w = lb["end"][0] - ex0
+        best = None
+        cands = [(sg, dy, f) for f in (1.0, 0.577) for dy in (0, 7) for sg in (1, -1)]  # 45° / 60° 引线
+        for k, (sg, dy, f) in enumerate(cands):
+            ty = ty0 + dy
+            ex_ = ax + sg * (ty - ay) * f
+            tb = (ex_ + 0.5, ty, ex_ + w, ty) if sg > 0 else (ex_ - w + 0.5, ty, ex_, ty)
+            tbox = (tb[0], ty, tb[2], ty + 4.5)
+            over = sum(1 for x0, y0, x1, y1 in placed if tbox[0] < x1 and x0 < tbox[2] and tbox[1] < y1 and y0 < tbox[3])
+            segs_ = [((ax, ay), (ex_, ty)), ((ex_, ty), (ex_ + sg * w, ty))]
+            xing = sum(1 for p1, p2 in segs_ for q1, q2 in lines_ if _seg_cross(p1, p2, q1, q2))
+            cost = 10 * (hits((ax, ay), (ex_, ty), boxes + placed) + over) + 5 * xing + k
+            if best is None or cost < best[0]:
+                best = (cost, sg, ty, ex_, tbox)
+        _, sg, ty, ex_, tbox = best
+        end = ex_ + sg * w
+        lines_ += [((ax, ay), (ex_, ty)), ((ex_, ty), (end, ty))]
+        d.extra["label"] = {**lb, "elbow": (round(ex_, 2), round(ty, 2)), "end": (round(end, 2), round(ty, 2)),
+                            "text_at": (round(min(ex_, end) + 0.5, 2), round(ty + 0.8, 2)), "dir": sg}
+        placed.append(tbox)
 
 
 def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:

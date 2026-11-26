@@ -181,6 +181,74 @@ def _hollow_section(s, part, P, segs, c, Ltot):
             s.line(xc0 - 2, yc, xc1 + 2, yc, THIN, CENTER)
 
 
+def _vertical_cross_hole(s, part, main, P, h, sect, segs) -> None:
+    """主视图上竖直的径向横孔（GB/T 4458.6 局部剖）：
+    实心轴 —— 局部剖区域内画剖面线（孔内不画），两侧（盲孔还有下边）细波浪线为界；孔壁粗实线，盲孔 118° 钻尖；
+    螺孔：小径（底孔）粗实线、大径细实线到螺纹深、终止线粗实线，剖面线画到小径（GB/T 4459.1）。
+    套类（主视图已全剖）—— 只在上下壁上断开剖面线和轮廓线，孔壁粗实线。孔轴线细点画线。"""
+    from .detailing import bore_radius_at, cross_hole_zone
+    from .render_gear import _hatch
+    sc = main.scale
+    R = h["D"] / 2
+    rt = h["hole"] / 2
+    rd = h["thread"]["d"] / 2 if h["thread"] else rt
+    z = h["z"]
+    y_end = -R if h["through"] else R - h["drill"]
+    y_thr = -R if h["through"] else R - (h["depth"] if h["thread"] else h["drill"])
+    cone = 0.0 if h["through"] else rt * math.tan(math.radians(31))
+
+    def white(za, zb, ya, yb):
+        (xa, y_a), (xb, y_b) = P(za, ya), P(zb, yb)
+        lo, hi = min(y_a, y_b), max(y_a, y_b)
+        s.parts.append(f"<rect x='{xa:.2f}' y='{s.y(hi) - 0.4:.2f}' width='{xb - xa:.2f}' height='{hi - lo + 0.8:.2f}' "
+                       f"fill='white' stroke='none'/>")
+    if sect:
+        rb = bore_radius_at(part, z)
+        for sign in (1, -1):
+            white(z - rt, z + rt, sign * rb if sign > 0 else -R, R if sign > 0 else -rb)
+            for x_ in (z - rt, z + rt):
+                s.line(*P(x_, sign * rb), *P(x_, sign * R), THICK)
+    else:
+        za, zb, y0, y1 = cross_hole_zone(part, h, sc)
+        white(z - rt, z + rt, R - 0.01, R + 0.01)  # 孔口处上轮廓线断开
+        if h["through"]:
+            white(z - rt, z + rt, -R - 0.01, -R + 0.01)
+        n = 0
+        for a, b in ((za, z - rt), (z + rt, zb)):  # 孔两侧的剖面
+            if b - a > 1e-6:
+                poly = [P(a, y0), P(b, y0), P(b, y1), P(a, y1)]
+                xs = [q[0] for q in poly]
+                ys = [q[1] for q in poly]
+                _hatch(s, f"xh{h['name']}{n}", poly, min(xs), min(ys), max(xs), max(ys))
+                n += 1
+        if not h["through"]:  # 孔底以下
+            poly = [P(z - rt, y0), P(z + rt, y0), P(z + rt, y_end - cone), P(z, y_end - cone), P(z - rt, y_end)]
+            xs = [q[0] for q in poly]
+            ys = [q[1] for q in poly]
+            _hatch(s, f"xh{h['name']}b", poly, min(xs), min(ys), max(xs), max(ys))
+        for zz in (za, zb):  # 两侧波浪线
+            k = 16
+            pts = [(P(zz, 0)[0] + 0.5 * math.sin(i * math.pi / 4), P(0, y0 + (y1 - y0) * i / k)[1]) for i in range(k + 1)]
+            s.poly(pts, THIN, close=False)
+        if not h["through"]:
+            k = 12
+            pts = [(P(za + (zb - za) * i / k, 0)[0], P(0, y0)[1] + 0.5 * math.sin(i * math.pi / 3)) for i in range(k + 1)]
+            s.poly(pts, THIN, close=False)
+    if not sect:
+        for x_ in (z - rt, z + rt):  # 孔壁（小径）
+            s.line(*P(x_, R), *P(x_, y_end), THICK)
+    if not sect and not h["through"]:  # 钻尖
+        s.line(*P(z - rt, y_end), *P(z, y_end - cone), THICK)
+        s.line(*P(z + rt, y_end), *P(z, y_end - cone), THICK)
+    if h["thread"] and not sect:  # 大径细实线到螺纹深 + 终止线
+        for x_ in (z - rd, z + rd):
+            s.line(*P(x_, R), *P(x_, y_thr), THIN)
+        if not h["through"]:
+            s.line(*P(z - rd, y_thr), *P(z + rd, y_thr), THICK)
+    y_bot = -R - 2.5 / sc if h["through"] else y_end - cone - 2 / sc
+    s.line(*P(z, R + 2.5 / sc), *P(z, y_bot), THIN, CENTER)
+
+
 def radius_at_seg(segs, z):
     for a, b, r in segs:
         if a - 1e-9 <= z <= b + 1e-9:
@@ -235,8 +303,13 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         for y in (rd, -rd):
             s.line(*P(z_end, y), *P(zt, y), THIN, dash=HIDDEN)
         s.line(*P(zt, -rd), *P(zt, rd), THIN, dash=HIDDEN)
+    for h in part.cross_holes:  # 竖直横孔：局部剖（实心轴）或全剖中孔壁断开（套类）
+        if h["dir"] == "vertical":
+            _vertical_cross_hole(s, part, main, P, h, sect, segs)
     # 径向横孔（孔轴线沿投射方向）：孔圆粗实线；螺孔加大径 3/4 圈细实线（GB/T 4459.1）；竖直中心线
     for h in part.cross_holes:
+        if h["dir"] == "vertical":
+            continue
         hx, hy = P(h["z"], 0)
         rh = h["hole"] / 2 * sc
         s.circle(hx, hy, rh, THICK)

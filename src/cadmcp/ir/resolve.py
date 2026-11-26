@@ -1114,7 +1114,7 @@ def _cross_holes(base, steps, feats, bores, chamfer, ev) -> list[dict[str, Any]]
         if h.at_assembly:
             callout += " 配作"
         out.append({"name": name, "step": i, "z": z, "d": d, "hole": hole, "D": D, "through": through,
-                    "at_assembly": h.at_assembly,
+                    "at_assembly": h.at_assembly, "dir": h.direction,
                     "depth": depth, "drill": drill, "thread": thread, "tol": tol, "callout": callout, "volume": vol,
                     "pos": pos})
     return out

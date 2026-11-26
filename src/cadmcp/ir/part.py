@@ -51,6 +51,9 @@ class CrossHole(Strict):
     depth: Num | None = Field(None, description="孔深（螺孔为螺纹深）；省略 = 通孔")
     drill_depth: Num | None = Field(None, description="螺孔底孔深；缺省 = 螺纹深 + 0.5d（取整）")
     tolerance: str | None = Field(None, description="光孔公差带（如 H7）；螺孔缺省 6H")
+    direction: Literal["view", "vertical"] = Field(
+        "view", description="孔轴线方向：view = 沿主视图投射方向（主视图画圆）；vertical = 主视图上竖直（与 view 成 90°，"
+                            "主视图局部剖表达，盲孔从主视图上方钻入）")
     at_assembly: bool = Field(False, description="装配时与相配件一起配钻（配铰）：标注加\"配作\"，技术要求注明，零件图上不注定位尺寸")
 
 
