@@ -352,6 +352,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
                 k = 0.7071
                 return view, (u - h.max_dia / 2 * k, w - h.max_dia / 2 * k), (-k, -k)
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
+        if k == "bore":
+            return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
         i = int(ref)
         z0, z1 = p.step_z(i)
         d = p.shaft_steps[i][1]
@@ -396,7 +398,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
     for d in p.datums:
         a = anchor(d["target"], "datum")
         if a:
-            dims.append(Dim(a[0], "datum", None, None, d["name"], f"datum:{d['name']}", a[1], {"normal": a[2]}))
+            dims.append(Dim(a[0], "datum", None, None, d["name"], f"datum:{d['name']}", a[1],
+                            {"normal": a[2], **(a[3] if len(a) > 3 else {})}))
     for g in p.geotols:
         gkey = f"{g['type']}@{g['target']}"
         a = anchor(g["target"], "gtol")
@@ -1660,7 +1663,7 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 at = (round(ax - 3.5 + 2.5, 2), round(row + 6.0, 2))
                 d.extra = {**(d.extra or {}), "sheet_at": at, "sheet_pos": at}
             continue
-        reach = {"datum": 10.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else (d.extra or {}).get("reach") or ra_reach(nx, d.text)}[d.kind]
+        reach = {"datum": (d.extra or {}).get("reach", 7.0) + 3.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else (d.extra or {}).get("reach") or ra_reach(nx, d.text)}[d.kind]
         pos = (ax + nx * reach, ay + ny * reach)
         if d.kind == "gtol" and (d.extra or {}).get("attach") == "callout":
             hole = d.ref.split("@hole:")[-1]
@@ -1705,6 +1708,36 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     if p.gear and any(f["kind"] == "gear" and f["step"] == j for f in p.shaft_features):
         tj = p.gear["tip_tolerance"]
     return _dia_text(p.shaft_steps[j][1], tj, deviations)
+
+
+def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):
+    """套类内孔的精度符号锚点（主视图全剖）：
+    基准 —— 三角形贴在下孔壁、与孔径尺寸线对齐（表示以孔轴线为基准），引线穿出剖面，方框在零件下方；
+    框格 —— 引线指向上孔壁（render_shaft 统一放到框格行）；
+    粗糙度 —— 孔够大时立在下孔壁上（孔内空白），避开竖直尺寸线；否则从下孔壁向下引出。"""
+    b = p.shaft_bores[k]
+    rb = b["d"] / 2
+    zd = bore_dia_place(p, k, sc)
+    z0, z1 = b["z0"], b["z1"]
+
+    def r_out(z):
+        return next((d / 2 for i, (L, d) in enumerate(p.shaft_steps) if p.step_z(i)[0] - 1e-9 <= z <= p.step_z(i)[1] + 1e-9), rb)
+    if kind == "datum":
+        return "front", (zd, -rb), (0, -1), {"reach": (r_out(zd) - rb) * sc + 7}
+    if kind == "gtol":
+        zg = z0 + 0.3 * (z1 - z0)
+        if abs(zg - zd) * sc < 3:
+            zg = z0 + 0.7 * (z1 - z0)
+        return "front", (zg, rb), (0, 1)
+    vlines = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))] + \
+             [bore_dia_place(p, i, sc) for i in range(len(p.shaft_bores))] + bore_steps(p)
+    if b["d"] * sc >= 14:
+        cands = [z0 + (z1 - z0) * t / 20 for t in range(1, 20)]
+        best = min(cands, key=lambda z: (sum(z - 3.5 / sc <= x <= z + 22 / sc for x in vlines), abs(z - (z0 + z1) / 2)))
+        if not any(best - 3.5 / sc <= x <= best + 22 / sc for x in vlines):  # √ 左笔画伸出约 2.4 mm
+            return "front", (best, -rb), (0, 1)
+    zr = z0 + 0.5 * (z1 - z0)
+    return "front", (zr, -rb), (0, -1), {"reach": (r_out(zr) - rb) * sc + 6}
 
 
 def _step_bounds(p: ResolvedPart) -> list[float]:

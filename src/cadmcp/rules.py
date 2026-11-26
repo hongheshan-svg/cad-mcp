@@ -169,6 +169,14 @@ def _check_precision(p: ResolvedPart) -> list[Finding]:
             out.append(_f("G004", "warning", f"step:{i}",
                           f"轴段 {i} 为 {tol} 配合，粗糙度{'未标注' if got is None else f' Ra{got:g} 偏粗'}",
                           f"在 roughness 中加 {{'target': 'step:{i}', 'ra': {need:g}}}"))
+    for k, b in enumerate(p.shaft_bores):  # 配合内孔（H7 等）同样要注粗糙度
+        digits = "".join(ch for ch in (b["tol"] or "") if ch.isdigit())
+        need = IT_GRADE_RA.get(int(digits)) if digits else None
+        got = ra_of.get(f"bore:{k}")
+        if need and (got is None or got > need):
+            out.append(_f("G004", "warning", f"bore:{k}",
+                          f"内孔 Φ{b['d']:g}{b['tol']} 粗糙度{'未标注' if got is None else f' Ra{got:g} 偏粗'}",
+                          f"在 roughness 中加 {{'target': 'bore:{k}', 'ra': {need:g}}}"))
     # 轴上配合段（IT5–IT7）不注几何公差：装配后跳动无从检验（审图常见退回项）
     fits = [i for i, t in enumerate(p.shaft_tolerances)
             if t and any(ch.isdigit() for ch in t) and int("".join(ch for ch in t if ch.isdigit())) <= 7]

@@ -11,12 +11,12 @@ def _tri(s, pts):
     s.parts.append("<polygon points='" + " ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in pts) + "' fill='#111'/>")
 
 
-def datum(s, ax, ay, n, letter):
-    """基准：涂黑三角形贴在边线上 + 引线 + 方框字母。"""
+def datum(s, ax, ay, n, letter, reach: float = 7.0):
+    """基准：涂黑三角形贴在边线上 + 引线（长 reach）+ 方框字母。"""
     nx, ny = n
     tx, ty = -ny, nx  # 沿边方向
     _tri(s, [(ax + tx * 1.8, ay + ty * 1.8), (ax - tx * 1.8, ay - ty * 1.8), (ax + nx * 2.6, ay + ny * 2.6)])
-    ex, ey = ax + nx * 7, ay + ny * 7
+    ex, ey = ax + nx * reach, ay + ny * reach
     s.line(ax + nx * 2.6, ay + ny * 2.6, ex, ey, THIN)
     bx, by = ex + nx * CELL_H / 2, ey + ny * CELL_H / 2
     s.rect(bx - CELL_H / 2, by - CELL_H / 2, CELL_H, CELL_H, THIN)
@@ -102,7 +102,7 @@ def draw(s, kind, px, py, extra, text):
         else:
             fcf_box(s, px + 12, py + 9, extra["cells"])  # 无布置信息：孔标注横线起点 (px+12, py+9)
     elif kind == "datum":
-        datum(s, px, py, n, text)
+        datum(s, px, py, n, text, (extra or {}).get("reach") or 7.0)
     elif kind == "gtol":
         fcf(s, px, py, n, extra["cells"])
     else:

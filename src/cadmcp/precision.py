@@ -5,6 +5,7 @@
 - 其余配合段（IT ≤ 7）：注对 A(-B) 的径向圆跳动（GB/T 1184 圆跳动，IT ≤ 6 取 6 级、否则 7 级）；
   齿轮段齿顶圆跳动按齿坯公差（gear.blank_runout）。
 - 配合段未注粗糙度时按公差等级补 Ra（与审图规则 G004 一致）。
+- 套类：精度最高的配合内孔（IT ≤ 7）为基准 A，外圆配合段注对 A 的径向圆跳动，内孔按公差等级补 Ra。
 用户已写基准或几何公差时不改动这两类，只补粗糙度。
 
 数值来源核实状态：GB/T 275 轴颈圆柱度、GB/T 1184 圆跳动两张表按设计手册常用值录入，尚未对照标准原文核实
@@ -51,6 +52,14 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
     keyed = {f.step for f in spec.features if getattr(f, "feature", "") == "keyway"}  # 有键槽 = 装轮毂/联轴器，不是轴承位
     bearings = [i for i, (fd, it) in fits.items() if fd in _BEARING_FITS and it <= 6 and i not in keyed]
     datums, tols, rough = list(spec.datums), list(spec.tolerances), list(spec.roughness)
+    bores = [(k, g, float(ev(b.diameter))) for k, b in enumerate(spec.base.bores) if (g := _grade(b.tolerance.lower() if b.tolerance else None)) and g[1] <= 7]
+    if not datums and not tols and bores:
+        # 套类：精度最高（同级取最大）的配合内孔为基准 A，外圆配合段注对 A 的径向圆跳动
+        kb = min(bores, key=lambda t: (t[1][1], -t[2]))[0]
+        datums = [Datum(name="A", target=f"bore:{kb}")]
+        for i in sorted(set(fits) | gears):
+            tols.append(GeoTol(type="circular_runout", value=runout(steps[i][1], 6 if fits.get(i, ("", 7))[1] <= 6 else 7),
+                               target=f"step:{i}", datums=["A"]))
     if not datums and not tols and (bearings or fits):
         base = [bearings[0], bearings[-1]] if len(bearings) >= 2 else bearings[:1]
         if not base and len(fits) + len(gears) >= 2:  # 无轴承位：取最外两处配合段
@@ -71,6 +80,9 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
                 v = blank_runout(float(ev(g.module)) * g.teeth, g.accuracy) or v
             tols.append(GeoTol(type="circular_runout", value=v, target=f"step:{i}", datums=letters))
     have = {r.target for r in rough}
+    for k, (fd, it), _ in bores:
+        if f"bore:{k}" not in have and it in IT_GRADE_RA:
+            rough.append(Roughness(target=f"bore:{k}", ra=IT_GRADE_RA[it]))
     for i, (fd, it) in sorted(fits.items()):
         if f"step:{i}" not in have and it in IT_GRADE_RA:
             rough.append(Roughness(target=f"step:{i}", ra=IT_GRADE_RA[it]))

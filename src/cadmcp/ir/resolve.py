@@ -841,10 +841,11 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         kind, _, ref = tgt.partition(":")
         ok = (kind == "face" and ref in FACE_NORMAL and not isinstance(base, ShaftBase)) or \
              (kind == "hole" and any(h.name == ref for h in holes)) or \
-             (kind == "step" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(steps))
+             (kind == "step" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(steps)) or \
+             (kind == "bore" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(base.bores))
         if not ok:
             raise CadError(SPEC_INVALID, f"{what}: invalid target {tgt!r}",
-                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>（轴类）")
+                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>、bore:<内孔序号>（轴类）")
         return kind, ref
 
     datums = [{"name": d.name, "target": d.target, "kind": _target(d.target, f"datum {d.name}")[0]}
@@ -853,7 +854,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     for g in spec.tolerances:
         kind, _ = _target(g.target, f"tolerance {g.type}")
         val = ev(g.value)
-        dia = g.type in ("position", "coaxiality") and kind in ("hole", "step")
+        dia = g.type in ("position", "coaxiality") and kind in ("hole", "step", "bore")
         geotols.append({"type": g.type, "value": val, "target": g.target, "kind": kind, "datums": list(g.datums),
                         "symbol": GEOTOL_SYMBOL[g.type], "zone": f"{'Φ' if dia else ''}{val:g}",
                         "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})

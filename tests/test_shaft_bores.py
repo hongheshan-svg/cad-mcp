@@ -73,3 +73,27 @@ def test_native_ops():
     assert sum(1 for o in creo if o.op == "tk.feat.extrude" and o.args.get("op") == "cut") == 2
     sec = [o for o in tk_detail_ops(plan) if o.op == "tk.drw.section"]
     assert sec and sec[0].args["kind"] == "local"
+
+
+def test_bore_precision_targets_and_auto():
+    from cadmcp import rules
+    p0 = _p()
+    assert any(f["rule"] == "G004" and f["target"] == "bore:0" for f in rules.check_part(p0))
+    p = _p({**SL, "auto_precision": True})
+    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "bore:0")]
+    assert [(g["type"], g["target"], g["datums"]) for g in p.geotols] == [("circular_runout", "step:1", ["A"])]
+    assert {r["target"] for r in p.roughness} == {"bore:0", "step:1"}
+    assert not any(f["rule"] == "G004" for f in rules.check_part(p))
+    plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
+    dat = next(d for d in plan.dims if d.kind == "datum")
+    zd = bore_dia_place(p, 0, plan.scale)
+    assert dat.at == (zd, -15) and dat.extra["normal"] == (0, -1)  # 与孔径尺寸线对齐 → 以孔轴线为基准
+    ra = next(d for d in plan.dims if d.ref == "ra:bore:0")
+    assert ra.extra["normal"] == (0, 1)  # 立在下孔壁上（孔内）
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+
+
+def test_bad_bore_target():
+    with pytest.raises(CadError, match="invalid target"):
+        _p({**SL, "datums": [{"name": "A", "target": "bore:5"}]})

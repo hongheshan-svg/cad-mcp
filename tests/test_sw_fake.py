@@ -414,3 +414,15 @@ def test_sw_sleeve_full_section(sw_svc):
     r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
     assert "CreateBreakOutSection" in [c[0] for c in ad.sw.calls]
+
+
+def test_sw_sleeve_bore_datum(sw_svc):
+    """套类精度：内孔基准 A、外圆跳动、内孔粗糙度走原生符号，规则检查无 G004。"""
+    from test_shaft_bores import SL
+    svc, ad = sw_svc
+    svc.change_begin("SL")
+    svc.build(PartSpec.model_validate({**SL, "auto_precision": True}))
+    r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    calls = [c[0] for c in ad.sw.calls]
+    assert "InsertDatumTag2" in calls or any("Datum" in c for c in calls)
