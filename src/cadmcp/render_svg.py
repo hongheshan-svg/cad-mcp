@@ -756,6 +756,15 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     iso = _iso_xy(cx, cy, sc, box)
     if part is not None and part.base_type not in ("shaft",) and not part.weld_bodies:
         _iso_top_features(s, iso, part, box.zmax)
+    if part is not None and part.profile is not None and part.base_type == "sheet_metal" \
+            and part.profile.shape == "rect" and not part.profile.data.get("corner_radius"):
+        from .ir.resolve import Box  # 矩形底板 + 翻边：全是长方体 → 画家算法消隐
+        u0, u1, v0, v1 = part.profile.bbox2d
+        boxes = [Box(u0, u1, v0, v1, 0.0, part.thickness)] + [bb for _, bb in _sheet_flange_boxes(part)]
+        for bb in _painter_order(boxes):
+            _iso_box_faces(s, iso, bb)
+        _iso_top_features(s, iso, part, part.thickness)  # 底板上的孔画在最上层
+        return
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
         pts = part.profile.drawn()
         z0, z1 = 0.0, part.thickness
