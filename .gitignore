@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 probe_report_*.json
 .remember/
+.claude/worktrees/

@@ -24,6 +24,7 @@ ARITY = {
     "InsertDatumTag2": 0, "InsertGtol": 0, "SetFrameSymbols2": 9, "SetFrameValues2": 6, "SetLabel": 1,
     "InsertSurfaceFinishSymbol3": 14,
     "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader
+    "AddDimension2": 3, "AddDimension2().SetText": 2,  # native_shaft_dims
 }
 
 

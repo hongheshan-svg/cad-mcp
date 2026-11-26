@@ -503,6 +503,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     if spec.dimensions != "none":
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
+        overall_dim_sheet(plan, p)
     return plan
 
 
@@ -801,6 +802,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
     precision_sheet(plan, p)
+    if spec.dimensions != "none":
+        shaft_dim_sheet(plan, p)
     return plan
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
@@ -827,8 +830,10 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
           "projection": "第一角" if spec.projection == "first_angle" else "第三角",
           "designer": "", "checker": "", "approver": "", "date": (today or date.today()).isoformat()}
     tb.update(spec.title_block)
-    return DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
+    plan = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
+    overall_dim_sheet(plan, a)
+    return plan
 
 
 BALLOON_R = 4.0       # 序号圆半径（图纸 mm，GB/T 4458.2 细实线圆）
@@ -1111,6 +1116,103 @@ def check_revision_table(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[
                  "message": f"修订表 {rendered['revision_rows']} 行，方案要求 {want} 行",
                  "fix": "核对 InsertRevisionTable2 / AddRevision 回读"}]
     return []
+
+def shaft_dia_z(p: ResolvedPart, i: int) -> float:
+    """第 i 段直径尺寸线的轴向位置：该轴段内离键槽/环槽最远、避开端部倒角的位置（SVG 与原生标注共用）。"""
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    c = p.shaft_chamfer
+    z0, z1 = p.step_z(i)
+    busy = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i]
+    cands = [z0 + (z1 - z0) * k / 20 for k in range(2, 19)]
+    return max(cands, key=lambda z: (min(min([abs(z - (a + b) / 2) - (b - a) / 2 for a, b in busy] or [1e9]), 4.0),
+                                      min(z, Ltot - z) > c + 2,  # 避开端部倒角
+                                      -abs(z - (z0 + z1) / 2)))
+
+
+def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """轴类主视图尺寸的图纸坐标（mm，与 render_shaft 的 SVG 一致：P(z, r) = (cx - Ltot*sc/2 + z*sc, cy + r*sc)），
+    供 CAD 原生标注选边：extra["sheet_pts"] = 两个被标注点（线性尺寸 = 两条垂直边线上的点；
+    直径 = 上下两条轮廓线上的点），extra["sheet_pos"] = 尺寸线/文字放置点，extra["orient"] = h | v。"""
+    from .render_shaft import _profile
+    main = next((v for v in plan.views if v.type == "front"), None)
+    if main is None:
+        return
+    sc = main.scale
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    cx, cy = main.origin_on_sheet
+    xl = cx - Ltot * sc / 2
+    c = p.shaft_chamfer
+    segs = _profile(p)
+    R = max(d for _, d in p.shaft_steps) / 2
+    y_top, y_bot = cy + R * sc, cy - R * sc
+
+    def radius_at(z):
+        for a, b, r in segs:
+            if a - 1e-9 <= z <= b + 1e-9:
+                return r
+        return 0.0
+
+    def edge_pt(z, keyway_end):
+        """z 处垂直边线上的一点：键槽端部取圆弧最远点（轴线高度），轴肩/端面取偏离轴线的点避开键槽。"""
+        if keyway_end:
+            return (round(xl + z * sc, 2), round(cy, 2))
+        rs = [r for r in (radius_at(z - 1e-6), radius_at(z + 1e-6)) if r > 0]
+        r = min(rs)
+        off = min(0.85 * r, max(r - c - 0.5, 0.3 * r))
+        return (round(xl + z * sc, 2), round(cy - off * sc, 2))
+
+    kw_ends = {round(f[k], 6) for f in p.shaft_features if f["kind"] == "keyway" for k in ("z0", "z1")}
+    for d in plan.dims:
+        if d.view != "front" or d.at is None:
+            continue
+        if d.kind == "linear" and d.axis == "z":
+            za, zb = d.at
+            if d.ref == "overall_z":
+                y = y_bot - 26
+            elif d.ref.startswith("step"):
+                y = y_bot - 15
+            else:
+                y = y_top + 14
+            kw = not d.ref.startswith(("step", "overall"))
+            pts = [edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
+            d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": (round((pts[0][0] + pts[1][0]) / 2, 2), round(y, 2)),
+                       "orient": "h"}
+        elif d.kind == "diameter" and d.ref.startswith("step"):
+            i = int(d.ref[4:].split("_")[0])
+            x = xl + shaft_dia_z(p, i) * sc
+            r = d.at[1] / 2
+            d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
+                       "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
+
+
+def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
+    """零件各视图总体尺寸的图纸坐标（mm），位置规则与 render_svg 一致：
+    p 为 ResolvedPart / ResolvedAssembly（只用 bbox）。水平尺寸取视图左右两条竖直轮廓线（高度中点），尺寸线在视图下方；竖直尺寸取上下两条水平轮廓线，尺寸线在视图左侧。"""
+    for v in plan.views:
+        if v.type not in VIEW_AXES:
+            continue
+        ha, va = VIEW_AXES[v.type]
+        (ulo, uhi), (wlo, whi) = vrange(p.bbox, ha), vrange(p.bbox, va)
+        (x0, y0), (x1, y1) = _uv_sheet(v, p.bbox, (ulo, wlo)), _uv_sheet(v, p.bbox, (uhi, whi))
+        mid = _uv_sheet(v, p.bbox, ((ulo + uhi) / 2, (wlo + whi) / 2))
+        ords = [d for d in plan.dims if d.view == v.type]
+        has_ord_h = any(d.kind == "ordinate" and d.axis == ha for d in ords)
+        norms = [tuple(d.extra["normal"]) for d in ords if d.kind in ("datum", "gtol", "roughness")
+                 and d.extra and "normal" in d.extra and not d.extra.get("attach")]
+        for d in ords:
+            if d.kind != "linear" or d.at is not None:
+                continue
+            if d.axis == ha:
+                y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)
+                pts = [(round(x0, 2), round(mid[1], 2)), (round(x1, 2), round(mid[1], 2))]
+                pos, orient = (round((x0 + x1) / 2, 2), round(y, 2)), "h"
+            elif d.axis == va:
+                x = x0 - (22 if (-1, 0) in norms else 10)
+                pts = [(round(mid[0], 2), round(y0, 2)), (round(mid[0], 2), round(y1, 2))]
+                pos, orient = (round(x, 2), round((y0 + y1) / 2, 2)), "v"
+            else:
+                continue
+            d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": pos, "orient": orient}
 
 
 def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:

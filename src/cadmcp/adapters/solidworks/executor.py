@@ -776,8 +776,31 @@ class SwExecutor:
             raise OpFailed(f"AutoDimension status {r}")
         return {"status": r}
 
-    def op_overall_dimension(self, view: str, axis: str, value: float):
-        raise OpFailed("overall dimension on non-ordinate views: P1（需按视图轮廓选边）")
+    def _dim_between_edges(self, view: str, ref: str, pts, pos, orient):
+        """激活视图，在图纸坐标 pts（mm）处选中两条边线，AddDimension2 在 pos（mm）放置尺寸；返回显示尺寸对象。
+        选不中边线或没生成尺寸时抛 OpFailed（上层按 NON_CRITICAL 处理）；成功的 ref 记入 readback["dim_refs"]。"""
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        if not pts or len(pts) != 2 or pos is None:
+            raise OpFailed(f"{ref}: 规划层没有给出图纸坐标（P1：该视图类型暂未规划，sheet_pts/sheet_pos）")
+        self.model.ActivateView(v.Name)
+        self.model.ClearSelection2(True)
+        for i, (x, y) in enumerate(pts):
+            ok = self.model.Extension.SelectByID2("", "EDGE", x * MM, y * MM, 0, i > 0, 0, None, 0)
+            if not ok:
+                self.model.ClearSelection2(True)
+                raise OpFailed(f"{ref}: 图纸坐标 ({x:g}, {y:g}) mm 处选不中边线")
+        disp = self.model.AddDimension2(pos[0] * MM, pos[1] * MM, 0)
+        if disp is None:
+            raise OpFailed(f"{ref}: AddDimension2 未生成尺寸（两条边线不能标注，或不在同一视图）")
+        self.model.ClearSelection2(True)
+        self.readback.setdefault("dim_refs", []).append(ref)
+        return disp
+
+    def op_overall_dimension(self, view: str, axis: str, value: float, ref: str = "", pts=None, pos=None, orient=None):
+        self._dim_between_edges(view, ref or f"overall_{axis}", pts, pos, orient)
+        return {"value": value}
 
     def op_section_cut(self, view: str, parent: str, label: str, kind: str, points, center):
         """父视图中画剖切折线（图纸坐标），选中后生成剖视图并放到 center；剖视图登记为 view（后续尺寸/注释挂在它上面）。"""
@@ -829,8 +852,20 @@ class SwExecutor:
     def op_section_view(self, label: str, parent: str, z: float, center):
         raise OpFailed("section view: P1 实机实现（在主视图画垂直剖切线 + CreateSectionViewAt5，移出放置）")
 
-    def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str):
-        raise OpFailed("shaft dimension: P1 实机实现（按轴肩边线选边标注 / 直径标注加公差带）")
+    def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str, pts=None, pos=None, orient=None):
+        """轴类尺寸：线性（轴段长/总长/键槽长与定位）= 选两条垂直边线；直径 = 选上下两条轮廓线，
+        再用文字覆盖成 Φ + 公差带（text 如 Φ20k6），不依赖公差枚举。"""
+        disp = self._dim_between_edges(view, ref, pts, pos, orient)
+        if kind == "diameter":
+            m = re.match(r"^\s*[Φφ⌀]?\s*[0-9.]+\s*(.*)$", text)
+            suffix = (m.group(1) if m else "").strip()
+            all_ = self._k("swDimensionTextAll", 0)
+            try:  # <MOD-DIAM> 为 SW 直径符号标记，<DIM> 为尺寸值；公差带作为后缀文字
+                disp.SetText(all_, "<MOD-DIAM><DIM>" + suffix)
+            except Exception as e:  # noqa: BLE001  文字覆盖失败只影响外观，尺寸本身已生成
+                self.readback.setdefault("dim_text_failed", []).append(ref)
+                return {"text_override": f"failed: {e}"}
+        return {"text": text}
 
     def op_leader_note(self, view: str, text: str, at_model, ref: str, text_pos=None, anchor=None):
         v = self.views.get(view)
