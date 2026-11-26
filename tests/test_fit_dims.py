@@ -98,6 +98,12 @@ def test_bearing_fits_one_side():
     assert sorted(d.text for d in plan.dims if d.ref.startswith("fit:")) == ["Φ25k6", "Φ52H7"]
     _, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == []  # 两个配合挤在同一段：上下错开，序号让开
+    # 全剖：轴承按通用画法（GB/T 4459.7）——不画剖面线，两侧截面各一个正十字；剖面线只分给座板
+    from cadmcp.detailing import asm_section_regions
+    sec = plan.asm_section
+    assert sec["bearings"] == ["brg"] and "brg" not in sec["hatch"] and "shaft" in sec["exclude"]
+    br = next(r for r in asm_section_regions(a, plan.views[0], sec) if r["id"] == "brg")
+    assert br["state"] == "bearing" and len(br["cells"]) == 2 and len(br["crosses"]) == 4
     # 座孔没写公差带
     h2 = {**housing, "name": "BH2", "features": [{**housing["features"][0], "tolerance": None}]}
     svc.build(PartSpec.model_validate(h2))

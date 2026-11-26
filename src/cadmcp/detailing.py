@@ -1525,11 +1525,14 @@ def plan_asm_section(a: ResolvedAssembly, views: list[ViewPlan]) -> dict[str, An
     cut = [i for i in a.instances if i.world_bbox.ymin < yc - 1e-6 < yc + 1e-6 < i.world_bbox.ymax]
     exclude = [i.id for i in cut if i.source.kind == "standard" and not any(sg[3] > 0 for sg in i.source.revolve)
                or (i.source.revolve and all(sg[3] <= 0 for sg in i.source.revolve))]
+    bearings = [i.id for i in cut if i.id not in exclude and i.source.kind in ("standard", "purchased")
+                and i.source.revolve and any(sg[3] > 0 for sg in i.source.revolve)]
     hatch = {}
-    for k, i in enumerate(x for x in cut if x.id not in exclude):
+    for k, i in enumerate(x for x in cut if x.id not in exclude and x.id not in bearings):
         hatch[i.id] = (45 if k % 2 == 0 else 135, (2.5, 2.5, 3.5, 3.5)[k % 4])
     sym = abs(yc - (a.bbox.ymin + a.bbox.ymax) / 2) < 1e-6
     out = {"view": "front", "parent": "top", "axis": "y", "plane": yc, "exclude": exclude, "hatch": hatch,
+           "bearings": bearings,
            "label": "" if sym else "A"}
     top = next((v for v in views if v.type == "top"), None)
     if top is not None:
@@ -1665,6 +1668,13 @@ def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]
                         return True
                 return False
             edges = [e_ for e_ in edges if not on_base(e_)]
+        if inst.id in sec.get("bearings", []):  # 滚动轴承通用画法（GB/T 4459.7）：矩形线框 + 中央正十字，不画剖面线
+            crosses = []
+            for x0, y0, x1, y1 in cells:
+                cx_, cy_, h_ = (x0 + x1) / 2, (y0 + y1) / 2, min(x1 - x0, y1 - y0) / 3
+                crosses += [((cx_ - h_, cy_), (cx_ + h_, cy_)), ((cx_, cy_ - h_), (cx_, cy_ + h_))]
+            out.append({"id": inst.id, "state": "bearing", "cells": cells, "edges": edges, "crosses": crosses})
+            continue
         out.append({"id": inst.id, "state": "cut", "cells": cells, "edges": edges, "hatch": sec["hatch"].get(inst.id, (45, 2.5)),
                     "thin": thin, "thick": thick, "cones": cones})
     return out

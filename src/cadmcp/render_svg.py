@@ -421,7 +421,7 @@ def _draw_asm_section(s, asm, v, sec):
     剖切面后方零件只画未被剖面挡住的可见轮廓（剖视图不画虚线）。"""
     from .detailing import asm_section_regions
     regs = asm_section_regions(asm, v, sec)
-    occ = [c for r in regs if r["state"] == "cut" for c in r["cells"]] + \
+    occ = [c for r in regs if r["state"] in ("cut", "bearing") for c in r["cells"]] + \
         [q for r in regs if r["state"] == "excluded" for q in r["rects"]]
     for r in regs:
         if r["state"] == "behind":
@@ -440,6 +440,12 @@ def _draw_asm_section(s, asm, v, sec):
             for a_, b_ in r.get("thin", []):  # 内螺纹大径
                 s.line(*a_, *b_, THIN)
             for a_, b_ in r.get("thick", []):  # 螺纹终止线
+                s.poly([a_, b_], THICK, close=False)
+    for r in regs:
+        if r["state"] == "bearing":
+            for x0, y0, x1, y1 in r["cells"]:
+                s.face([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+            for a_, b_ in r["crosses"]:
                 s.poly([a_, b_], THICK, close=False)
     ha, va = VIEW_AXES[v.type]
     cx, cy = v.origin_on_sheet
