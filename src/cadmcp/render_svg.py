@@ -92,7 +92,7 @@ class _Svg:
               (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.2 * size, y + w / 2 if anchor == "middle" else y)
         self.texts.append((s, box))
         rot = f" transform='rotate({rotate} {x:.2f} {self.y(y):.2f})'" if rotate else ""
-        from .detailing import DEV_RATIO, _plain_w, split_deviation
+        from .detailing import DEV_GAP, DEV_RATIO, _plain_w, split_deviation
         sp = split_deviation(s)
         if sp:  # 极限偏差：代号后上下叠写、小一号（GB/T 4458.5），整体按原锚点对齐
             main, up, lo, tail = sp
@@ -100,7 +100,7 @@ class _Svg:
             Y = self.y(y)
             wm = _plain_w(main, size)
             x0 = x - w if anchor == "end" else x0
-            xd = x0 + wm + 0.8
+            xd = x0 + wm + DEV_GAP * size  # 代号与偏差的间隙（随字高）
             wd = max(_plain_w(up, ds), _plain_w(lo, ds))
             t = (f"<g{rot}><text x='{x0:.2f}' y='{Y:.2f}' font-size='{size}' {FONT}>{escape(main)}</text>"
                  f"<text x='{xd:.2f}' y='{Y - 0.72 * ds - 0.3:.2f}' font-size='{ds:.2f}' {FONT}>{escape(up)}</text>"

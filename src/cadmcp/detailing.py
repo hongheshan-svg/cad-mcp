@@ -1281,6 +1281,7 @@ FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", 
 
 _DEV_RE = re.compile(r"^(.*?)\(([+-]?\d+(?:\.\d+)?)/([+-]?\d+(?:\.\d+)?)\)(.*)$")
 DEV_RATIO = 0.7  # 极限偏差字高比尺寸数字小一号（GB/T 4458.5）
+DEV_GAP = 0.35  # 代号与偏差之间的间隙（× 字高）：字宽估算偏小时也不贴字
 
 
 def split_deviation(s: str):
@@ -1299,7 +1300,7 @@ def text_width(s: str, size: float) -> float:
     if not sp:
         return _plain_w(s, size)
     main, up, lo, tail = sp
-    return (_plain_w(main, size) + 0.5 + max(_plain_w(up, size * DEV_RATIO), _plain_w(lo, size * DEV_RATIO))
+    return (_plain_w(main, size) + DEV_GAP * size + max(_plain_w(up, size * DEV_RATIO), _plain_w(lo, size * DEV_RATIO))
             + _plain_w(tail, size))
 
 
