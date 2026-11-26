@@ -20,7 +20,7 @@ from typing import Any
 from ..native import NativeOp
 
 MM = 0.001
-NON_CRITICAL = {"probe_gdt_constants", "datum_tag", "gtol", "surface_finish", "hole_tags", "hole_table", "broken_out_section", "section_cut", "cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
+NON_CRITICAL = {"check_body_extent", "probe_gdt_constants", "datum_tag", "gtol", "surface_finish", "hole_tags", "hole_table", "broken_out_section", "section_cut", "cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
@@ -512,9 +512,75 @@ class SwExecutor:
         self.features[feature] = feat
         return {"feature": feature}
 
-    def op_dimension_profile(self, sketch: str, links: dict[str, str]):
-        # P1：草图尺寸标注与方程式链接待实机完成；当前仅链接拉伸深度（见 extrude_boss）
-        raise OpFailed("dimension_profile not implemented yet (non-critical)")
+    # 草图几何关系 → IModelDoc2.SketchAddConstraints 的关系 ID（字符串，SW API 帮助 "sgXXX"）
+    SKETCH_RELATION = {"coincident": "sgCOINCIDENT", "same_x": "sgVERTICALPOINTS2D", "same_y": "sgHORIZONTALPOINTS2D",
+                       "horizontal": "sgHORIZONTAL2D", "vertical": "sgVERTICAL2D"}
+
+    def _sketch_pick(self, pick, append: bool) -> bool:
+        """pick = [u, v, kind]（草图平面 mm）；kind: seg 草图线段/圆弧上一点 | pt 草图点 | origin 草图原点。"""
+        u, v, kind = pick
+        ext = self.model.Extension
+        if kind == "origin":
+            # TODO(实机核对): 中文版 SW 原点名可能为 "Point1@原点"；失败时退回按坐标选 EXTSKETCHPOINT
+            return bool(ext.SelectByID2("Point1@Origin", "EXTSKETCHPOINT", 0, 0, 0, append, 0, None, 0)
+                        or ext.SelectByID2("", "EXTSKETCHPOINT", 0, 0, 0, append, 0, None, 0))
+        x, y = self._sk((u, v))
+        typ = "SKETCHSEGMENT" if kind == "seg" else "SKETCHPOINT"
+        return bool(ext.SelectByID2("", typ, x, y, 0, append, 0, None, 0))
+
+    def op_dimension_profile(self, sketch: str, relations, dims):
+        """外形草图完全定义：按规划（sketch_plan.profile_dimension_plan）先加关系、再加驱动尺寸，
+        退出草图后把含全局变量的尺寸写成方程式 "Dn@<sketch>" = <link>，并回读草图约束状态。"""
+        sk = self.model.SketchManager.ActiveSketch
+        if sk is None:
+            raise OpFailed("no active sketch")
+        toggle = self._const(["swInputDimValOnCreate"])  # 关掉"创建尺寸时弹出修改框"
+        old = None
+        if toggle is not None:
+            old = self.sw.GetUserPreferenceToggle(toggle)
+            self.sw.SetUserPreferenceToggle(toggle, False)
+        problems: list[str] = []
+        names: dict[str, str] = {}
+        try:
+            for r in relations:
+                self.model.ClearSelection2(True)
+                if not all(self._sketch_pick(pk, i > 0) for i, pk in enumerate(r["pick"])):
+                    problems.append(f"relation {r['kind']}: pick failed")
+                    continue
+                self.model.SketchAddConstraints(self.SKETCH_RELATION[r["kind"]])
+            for d in dims:
+                self.model.ClearSelection2(True)
+                if not all(self._sketch_pick(pk, i > 0) for i, pk in enumerate(d["pick"])):
+                    problems.append(f"dim {d['name']}: pick failed")
+                    continue
+                x, y = self._sk(d["place"])
+                dd = self.model.AddDimension2(x, y, 0)
+                if dd is None:
+                    problems.append(f"dim {d['name']}: AddDimension2 returned None")
+                    continue
+                names[d["name"]] = str(dd.GetDimension2(0).Name)  # 尺寸值取当前几何（规划坐标即设计值）
+            self.model.ClearSelection2(True)
+            full = self._const(["swConstrainedStatus_FullyConstrained"])
+            st = sk.GetConstrainedStatus()
+            status = "fully" if full is not None and st == full else f"raw:{st}"
+        finally:
+            if toggle is not None and old is not None:
+                self.sw.SetUserPreferenceToggle(toggle, bool(old))
+        self._close_sketch()  # 草图改名为计划名后才能写 "D1@SK_Base"
+        mgr = self.model.GetEquationMgr()
+        linked = 0
+        for d in dims:
+            if d.get("link") and d["name"] in names:
+                if mgr.Add2(-1, f'"{names[d["name"]]}@{sketch}" = {d["link"]}', True) < 0:
+                    problems.append(f"equation for {d['name']} rejected")
+                else:
+                    linked += 1
+        self.readback.setdefault("sketch_status", {})[sketch] = status
+        if status != "fully":
+            problems.append(f"sketch {sketch} not fully defined ({status})")
+        if problems:
+            raise OpFailed("; ".join(problems))
+        return {"relations": len(relations), "dims": len(names), "linked": linked, "status": status}
 
     # ---------- 特征 ----------
     def op_extrude_boss(self, feature: str, sketch: str, depth: float, depth_equation: str | None = None):
@@ -570,8 +636,51 @@ class SwExecutor:
         feat.Name = feature
         return {}
 
-    def op_sheet_metal_edge_flange(self, **kw):
-        raise OpFailed("edge flange: P1 实机实现（需按边选择规则 + InsertSheetMetalEdgeFlange2）")
+    def op_sheet_metal_edge_flange(self, feature: str, edge: str, edge_point, length: float, angle: float,
+                                   radius: float, direction: str = "up", expect_z=None,
+                                   length_type: str = "outer_virtual_sharp"):
+        """边线法兰：按底板边线中点（resolve 给出，向上翻取顶面边、向下翻取底面边）选边 →
+        IFeatureManager.InsertSheetMetalEdgeFlange2（材料在内：底板外形即零件外形；长度 = 外部虚拟交点高度）。"""
+        self._close_sketch()
+        self.model.ClearSelection2(True)
+        x, y, z = (v * MM for v in edge_point)
+        if not self.model.Extension.SelectByID2("", "EDGE", x, y, z, False, 0, None, 0):
+            raise OpFailed(f"edge flange {feature}: no edge at {edge_point}（{edge} 边）")
+        e = self.model.SelectionManager.GetSelectedObject6(1, -1)
+        if e is None:
+            raise OpFailed(f"edge flange {feature}: selected edge object unavailable")
+        pos = self._const(["swFlangePositionTypeMaterialInside"])
+        if pos is None:
+            raise OpFailed("constant swFlangePositionTypeMaterialInside not found in type library")
+        opts = sum(v for v in (self._const(["swInsertEdgeFlangeUseDefaultRelief"]),) if v is not None)
+        arr = self.pythoncom.VT_ARRAY | self.pythoncom.VT_DISPATCH
+        edges = self.win32.VARIANT(arr, [e])
+        sketches = self.win32.VARIANT(arr, [None])  # TODO(实机核对): 无自定义轮廓时传 [None] 还是 Nothing
+        self.model.ClearSelection2(True)
+        # TODO(实机核对): 14 个实参（FlangeEdges, SketchFeats, Options, Angle, Radius, BendPosition, Length,
+        #   ReliefType, ReliefRatio, ReliefWidth, ReliefDepth, ReliefTearType, CustomBendAllowance, ByRef Errors）
+        res = self.model.FeatureManager.InsertSheetMetalEdgeFlange2(
+            edges, sketches, opts, math.radians(angle), radius * MM, pos, length * MM, 0, 0.5, 0.0, 0.0, 0, None, 0)
+        feat, err = (res[0], res[-1]) if isinstance(res, tuple) else (res, None)
+        if feat is None:
+            raise OpFailed(f"InsertSheetMetalEdgeFlange2 failed for {edge} edge (errors={err})")
+        feat.Name = feature
+        self.features[feature] = feat
+        # TODO(实机核对): 长度类型（外部虚拟交点）按 SW 默认；不是时经 feat.GetDefinition() 的 IEdgeFlangeFeatureData 设置
+        return {"feature": feature, "edge": edge, "length_type": length_type}
+
+    def op_check_body_extent(self, axis: str, expect, tol: float = 0.05):
+        """建模后核对实体包围盒在某轴上的范围（mm），用于发现翻边方向/长度类型与规划不一致。"""
+        bodies = self.model.GetBodies2(self._k("swSolidBody", 0), False)
+        if not bodies:
+            raise OpFailed("no solid body")
+        box = bodies[0].GetBodyBox()
+        i = "xyz".index(axis)
+        got = (round(box[i] / MM, 3), round(box[i + 3] / MM, 3))
+        self.readback.setdefault("extent", {})[axis] = got
+        if abs(got[0] - expect[0]) > tol or abs(got[1] - expect[1]) > tol:
+            raise OpFailed(f"{axis} 向范围 {got} 与规划 {tuple(expect)} 不符：检查翻边方向（上/下）与长度类型")
+        return {"extent": got}
 
     def op_hole_wizard(self, **kw):
         raise OpFailed("hole_wizard: 需实机核对 HoleWizard5 GB 标准参数表；请用 holes_via='cut'")

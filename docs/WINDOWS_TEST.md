@@ -328,3 +328,21 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
 2. SHAFT：旋转体 + 2 个键槽 + 挡圈槽；主视图直径尺寸带 Φ 和公差带。
 3. GRID（`tests/test_hole_table.py`）：孔表位置与 SVG 一致，孔号注释在孔旁。
 4. 坐标映射：在 Creo 中查看 TOP 面草绘的矩形是否与 IR 的 X/Y 一致、FRONT 命名视图是否从 −Y 看（Z 向上）。
+
+## SW 草图完全定义 / 边线法兰（dimension_profile / sheet_metal_edge_flange）
+
+规划在 CAD 无关层：`src/cadmcp/sketch_plan.py`（外形草图的关系 + 驱动尺寸，自由度恰好为 0）、
+`ir/resolve.py` 的 `bends[].edge_point / expect_z`（翻边选边点与翻边后 Z 向范围）。
+
+### 待实机核对
+1. `SketchAddConstraints` 的关系 ID：`sgCOINCIDENT`、`sgVERTICALPOINTS2D`（两点竖直对齐 = 同 x）、`sgHORIZONTALPOINTS2D`、`sgHORIZONTAL2D`、`sgVERTICAL2D`。
+2. 草图原点选择：`SelectByID2("Point1@Origin", "EXTSKETCHPOINT", …)`；中文界面名称可能不同（代码已退回按坐标选）。
+3. `AddDimension2(x, y, 0)`：两点尺寸按放置位置决定水平/竖直（规划把 dx 放在两点上方、dy 放在右侧）；确认无"修改尺寸"弹窗（已临时关 `swInputDimValOnCreate`）。
+4. 回读：oplog 中 `dimension_profile.result.status` 应为 `fully`；否则为 `raw:<值>`，对照 `swConstrainedStatus_e`。
+   方程式 `"D1@SK_Base" = "W"` 是否被接受（尺寸名来自 `IDimension.Name`）。
+5. `InsertSheetMetalEdgeFlange2` 14 个实参顺序与含义（FlangeEdges, SketchFeats, Options, Angle(rad), Radius(m), BendPosition,
+   Length(m), ReliefType, ReliefRatio, ReliefWidth, ReliefDepth, ReliefTearType, CustomBendAllowance, ByRef Errors），
+   `SketchFeats` 传 `[None]` 是否可行；`swFlangePositionTypeMaterialInside`、`swInsertEdgeFlangeUseDefaultRelief` 常量名。
+6. 翻边方向：向上翻选顶面（z=t）边、向下翻选底面（z=0）边。`check_body_extent` 会比较实体 Z 范围与规划；
+   报"不符"时看是方向反了还是长度类型不是"外部虚拟交点"（需经 `GetDefinition()` 的 IEdgeFlangeFeatureData 设置）。
+7. 验收：`tests/test_sw_sheetmetal.py` 的 SM（U 形，前边上翻 30、后边下翻 25）建模后 Z 范围 −23..30 mm，展开尺寸与 SVG 展开图一致。
