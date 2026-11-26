@@ -233,3 +233,44 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 2. **边选择**：含 `fillet`/`chamfer`（`outer_vertical`/`top_outer`/`bottom_outer`）的 extrude 零件。假设 `GetBodies2(swSolidBody, False)`、`Body2.GetBodyBox()`（xmin,ymin,zmin,xmax,ymax,zmax）、`Face2.Normal`/`GetBox()`/`GetLoops()`、`Loop2.IsOuter()/GetEdges()`、`Edge.GetStartVertex().GetPoint()`、`Edge.Select4(Append, Data)` 均可用；基体沿 +Z 拉伸（顶面 = Z 最大平面）。核对 `readback["selected_edges"]` 的边数（矩形板 outer_vertical=4）。
 3. **圆角/倒角**（原为占位，现依赖上面的选边）：假设 `FeatureFillet3(195, R, R, 0×9)`（12 个实参，待核对）和 `InsertFeatureChamfer(4, swChamferEqualDistance, d, 0, d, 0, 0, 0)`（8 个实参，待核对）；核对圆角半径/倒角值与 spec 一致。
 4. **命名基准**：`MP_*`（面）→ 默认基准面偏移 `InsertRefPlane(Distance=8, 偏移, 0,0,0,0)`，偏移为 0 时用重合约束 2；负偏移（如底面 Z<0）假设传负距离即反向，需核对位置。`AX_*` → 先对孔壁圆柱面 `SelectByRay` 后 `InsertAxis2(True)`，失败退回两个辅助偏移面求交（辅助面命名 `<名>_aux1/2`）；`PT_*` → 三个辅助偏移面 + `InsertReferencePoint(swRefPointIntersection(默认4), 0, 0, 1)`，失败退回 3D 草图点。核对特征树里名称与 spec 一致，且装配里能被配合引用。
+
+## Creo 修改现有模型（edit.py：inspect / apply_edits / references / refresh）
+
+代码在 `src/cadmcp/adapters/creo/edit.py`，测试在 `tests/test_creo_edit.py`（假 creopyson，函数与参数名已对照 creopyson 0.7.8 源码）。
+真实 Creo 行为未验证，请在 Creo 10 + CREOSON 上按下列步骤核对，并把不一致的返回字段发回。
+
+### 步骤
+1. 用 `cad_change_begin(sources=[含 .prt/.asm/.drw 的目录])`，对一个零件调用 `cad_inspect_existing`：
+   - `dimensions`：名称（d1、d2…）与数值是否对；单位是 inch 的模型值应已换成 mm；角度尺寸 unit 为 deg。
+   - `features`：名称/类型/状态；压缩特征 `suppressed=true`。
+   - `variables`/`properties`：DOUBLE/INTEGER 参数进 variables，STRING 参数进 properties。
+   - `equations`：来自 `file_relations_get`，应是 "d2 = d1*2" 这类行；关系式驱动的尺寸再被改会报 E003。
+   - `mass_kg`：对照 Creo 里的质量属性（核对质量单位换算）。
+2. `cad_edit_existing` 改一个尺寸 + 压缩一个特征：Creo 中应看到尺寸变化；工作区文件应更新。
+3. 故意制造再生失败（如把孔径改到超出板厚）：应返回 `regen.status=errors`，磁盘文件不变，会话中该模型已被 erase。
+4. 对装配调 `cad_inspect_existing`：`components` 应是直接子件；`used_by` 应列出引用该零件的 .asm/.drw。
+5. 改零件后检查引用它的装配/工程图是否被 refresh（再生并保存）。
+
+### 需要实机确认的 creopyson / CREOSON 假设
+- `dimension_list_detail` 返回 `name/value/dim_type/dwg_dim`；`dim_type == "angular"` 视为角度（deg）。
+  CREOSON 不返回"是否从动"：按名称 `rdN` 判定为参考（从动）尺寸。若公司模板把尺寸改了名，这个判断会失效。
+- 尺寸与特征无直接对应：`dimensions[].feature` 恒为 None，`features[].parents` 恒为 []（E004 连带压缩警告因此不会触发）。
+- `feature_list` 返回字段按 `name / feat_id|feature_id / feat_type|type / status` 容错读取；状态含 SUPPRESSED、INACTIVE 等视为已压缩。
+  调用时带了 `inc_unnamed=True`（否则无名特征不列出）。
+- `file_get_length_units` / `file_get_mass_units` 返回的单位字符串（如 "inch"、"mm"、"lbm"、"tonne"）能否被识别；
+  不能识别时按 mm / kg 处理并在 `warnings` 中提示。mmNs 单位制的质量单位是 tonne，务必核对 `mass_kg`。
+- `file_massprops()["mass"]` 的单位是模型质量单位（而非固定 kg）。
+- `bom_get_paths(top_level=True)` 返回 `{"children": {"file":…, "children":[{"file", "seq_path", "status"}]}}`，
+  直接子件在根节点的 children 里；若实际结构是平铺列表，`_children` 也兼容。instance 取 `seq_path`。
+- `drawing_list_models(drawing=…)` 返回工程图引用的模型文件名。
+- `file_save` 在 Creo 里会生成新版本号文件（`part.prt.2`）；工作区里文件名因此可能从 `.prt` 变为 `.prt.N`。
+  需确认 Gateway 以哪个文件为准（必要时在 CREOSON 侧保存后清理旧版本，或配置 `keep_versions` 策略）。
+- 再生失败是否以异常抛出（本实现假定抛异常；若只返回状态，需改为读取 `file_open_errors`/特征状态）。
+- 失败时用 `file_erase(file_=…)` 把未保存的修改清出会话，磁盘文件保持原样。
+
+### 当前不支持（如实返回）
+- `replace_component`：creopyson 没有替换组件函数，抛 `CAPABILITY_UNSUPPORTED`（能力表 `replace_component=none`）。
+  需要 CREOSON 扩展命令（J-Link 替换组件）。
+- `retarget`：Creo 装配/工程图按模型名 + 搜索路径引用，不在文件内存路径，直接返回 0（不是错误）。
+- `refresh` 的悬空标注数（`dangling`）固定为 0：CREOSON 没有读取命令，需扩展；工程图 refresh 也不导出 PDF。
+- 包围盒 `bbox_mm` 为 None；`set_material` 要求材料已在 Creo 材料库（`file_set_cur_material`）。
