@@ -226,3 +226,42 @@ def test_gear_in_assembly_section():
     assert abs(abs(by - ay) - (20 * k + 5)) < 1e-6  # 齿宽 + 两端各伸出 2.5
     svg, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == [] and "6,1.5,1,1.5" in svg
+
+
+def test_gear_mesh_in_assembly():
+    """齿轮副：中心距 = (d1+d2)/2 → 不报包围盒干涉；全剖啮合区后画齿轮的齿顶线为细虚线；引出点不落在轴孔里。
+    中心距不对 → A006。"""
+    import tempfile
+
+    from cadmcp.detailing import plan_assembly_drawing
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import AssemblySpec, DrawingSpec
+    from cadmcp.render_svg import render
+    pin = {"name": "GP1", "part_no": "GR-02", "title": "小齿轮", "material": "40Cr",
+           "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 44}, "thickness": 20},
+           "gear": {"module": 2, "teeth": 20},
+           "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 15, "tolerance": "H7",
+                         "positions": [[0, 0]]}]}
+    asm = {"name": "GM", "part_no": "GM-00", "title": "齿轮副",
+           "components": [{"id": "pinion", "source": "part:GP1"},
+                          {"id": "gear", "source": "part:GR1", "place": {"offset": [60, 0, 0]}}]}
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("G")
+    for d in (pin, GEAR):
+        svc.build(PartSpec.model_validate(d))
+    r = svc.build(AssemblySpec.model_validate(asm))
+    rules = [f["rule"] for f in r["rules"]["findings"]]
+    assert "A001" not in rules and "A006" not in rules
+    a = svc._models()["GM"].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model="GM"), a)
+    svg, out = render(plan, a)
+    assert out["crossings"] == [] and out["collisions"] == []
+    k = plan.scale
+    gx = plan.views[0].origin_on_sheet[0] + (60 - 42 - (124 / 2 - 22)) * k  # 大齿轮齿顶线（x = 18）
+    assert f"x1='{gx:.2f}'" in svg and "stroke-dasharray='3,1'" in svg
+    for b in plan.balloons:  # 引出点在实体上：离各自轴线不小于孔半径
+        ax = plan.views[0].origin_on_sheet[0] + ((0 if b["instance"] == "pinion" else 60) - 40) * k
+        assert abs(b["anchor"][0] - ax) > (7.5 if b["instance"] == "pinion" else 12.5) * k
+    bad = {**asm, "name": "GM2", "components": [asm["components"][0], {**asm["components"][1], "place": {"offset": [58, 0, 0]}}]}
+    r2 = svc.build(AssemblySpec.model_validate(bad))
+    assert any(f["rule"] == "A006" and "中心距 58" in f["message"] for f in r2["rules"]["findings"])

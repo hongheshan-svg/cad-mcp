@@ -1913,6 +1913,23 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size, avoid: list 
         x0, x1, y0, y1 = rects[inst.id]
         # 引出点：在零件投影内取点，避开更小零件的投影（被遮挡/指不清）和已选引出点，略偏向视图外侧（引线短）
         best, c = None, ((x0 + x1) / 2, (y0 + y1) / 2)
+        void = None  # 空心回转件（轴承、齿轮、套）：内孔在图上的范围，引出点不落在孔里
+        src_ = getattr(inst, "source", None)
+        ri = max((sg[3] for sg in src_.revolve), default=0.0) / 2 if src_ is not None else 0.0
+        if ri > 0:
+            from .ir.assembly_resolve import apply
+            zs = [z for sg in inst.source.revolve for z in sg[:2]]
+            void = (_project(view, a, apply(inst.transform, (0.0, 0.0, min(zs)))),
+                    _project(view, a, apply(inst.transform, (0.0, 0.0, max(zs)))), (ri + 0.5) * view.scale)
+
+        def in_void(q):
+            if void is None:
+                return False
+            (ax_, ay_), (bx_, by_), rr_ = void
+            L = math.hypot(bx_ - ax_, by_ - ay_)
+            if L < 1e-6:
+                return math.hypot(q[0] - ax_, q[1] - ay_) < rr_
+            return abs((q[0] - ax_) * (by_ - ay_) - (q[1] - ay_) * (bx_ - ax_)) / L < rr_
         for fu in (0.5, 0.3, 0.7, 0.15, 0.85):
             for fv in (0.5, 0.3, 0.7, 0.15, 0.85):
                 q = (x0 + (x1 - x0) * fu, y0 + (y1 - y0) * fv)
@@ -1920,7 +1937,7 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size, avoid: list 
                             and rr[0] - 1 <= q[0] <= rr[1] + 1 and rr[2] - 1 <= q[1] <= rr[3] + 1)
                 near = min((math.hypot(q[0] - o[0], q[1] - o[1]) for o in chosen), default=99.0)
                 edge = min(q[0] - (cx - w / 2), (cx + w / 2) - q[0], q[1] - (cy - h / 2), (cy + h / 2) - q[1])
-                score = cover * 100 + max(0.0, 8 - near) * 10 + edge * 0.05
+                score = cover * 100 + in_void(q) * 300 + max(0.0, 8 - near) * 10 + edge * 0.05
                 if best is None or score < best - 1e-9:
                     best, c = score, q
         chosen.append(c)

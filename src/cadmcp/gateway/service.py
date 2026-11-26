@@ -21,7 +21,7 @@ from ..detailing import check_drawing, plan_assembly_drawing, plan_part_drawing
 from ..errors import (POLICY_DENIED, CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
                       TARGET_UNAVAILABLE, CadError)
 from ..ir import AssemblySpec, DrawingSpec, PartSpec
-from ..ir.assembly_resolve import (fit_gaps, part_fits, part_revolve, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
+from ..ir.assembly_resolve import (fit_gaps, gear_pairs, part_fits, part_revolve, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
                                   resolve_assembly)
 from ..ir.resolve import ResolvedPart, ResolvedRef, resolve_part
 from ..library import Library
@@ -246,6 +246,12 @@ class CadService:
                              "message": f"包围盒重叠 {i['overlap_mm']} mm（需精确干涉检查确认）"} for i in interf]
                 findings += interface_check(spec, self._source_info)
                 findings += fit_gaps(res)
+                for g in gear_pairs(res):
+                    if not g["ok"]:
+                        why = (f"模数不同（m{g['m1']:g} / m{g['m2']:g}）" if g["m1"] != g["m2"]
+                               else f"中心距 {g['center']:g} ≠ (d1+d2)/2 = {g['expected']:g}")
+                        findings.append({"rule": "A006", "severity": "warning", "target": f"{g['a']}~{g['b']}",
+                                         "message": f"齿轮啮合不正确：{why}", "hint": "标准中心距 a = m(z1+z2)/2（变位齿轮另算）"})
                 out = {"summary": res.summary(), "bom": res.bom()}
                 for code in placeholders:
                     findings.append({"rule": "A002", "severity": "warning", "target": code,

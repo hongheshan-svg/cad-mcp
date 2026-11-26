@@ -115,7 +115,7 @@ def part_revolve(p) -> tuple[list[tuple[float, float, float, float]], list[dict[
     盘状齿轮按齿顶圆 × 齿宽、内径 = 中心轴孔。其它零件返回空。"""
     if p.base_type == "shaft":
         rev = [(*p.step_z(k), d, 0.0) for k, (_, d) in enumerate(p.shaft_steps)]
-        gears = [{"z0": f["z0"], "z1": f["z1"], "da": f["d"], "d": f["pd"], "df": f["df"]}
+        gears = [{"z0": f["z0"], "z1": f["z1"], "da": f["d"], "d": f["pd"], "df": f["df"], "m": f["m"]}
                  for f in (p.shaft_features or []) if f.get("kind") == "gear"]
         return rev, gears
     if p.gear:
@@ -123,7 +123,7 @@ def part_revolve(p) -> tuple[list[tuple[float, float, float, float]], list[dict[
         bore = gear_parts(p)["bore"]
         g = p.gear
         z0, z1 = p.bbox.zmin, p.bbox.zmax
-        return [(z0, z1, g["da"], bore.drill if bore else 0.0)], [{"z0": z0, "z1": z1, "da": g["da"], "d": g["d"], "df": g["df"]}]
+        return [(z0, z1, g["da"], bore.drill if bore else 0.0)], [{"z0": z0, "z1": z1, "da": g["da"], "d": g["d"], "df": g["df"], "m": g["m"]}]
     return [], []
 
 
@@ -357,17 +357,52 @@ def resolve_assembly(spec: AssemblySpec, source_info: Callable[[str], SourceInfo
                             dict(spec.properties), extras)
 
 
+def gear_pairs(asm: ResolvedAssembly) -> list[dict[str, Any]]:
+    """轴线平行、齿宽有重叠、齿顶圆相交的两个齿轮段 → 候选啮合副：{a, b, center, expected(=(d1+d2)/2), ok, m1, m2}。"""
+    segs = []
+    for inst in asm.instances:
+        for g in inst.source.gears:
+            o = apply(inst.transform, (0.0, 0.0, 0.0))
+            zt = apply(inst.transform, (0.0, 0.0, 1.0))
+            u = tuple(zt[k] - o[k] for k in range(3))
+            segs.append((inst, g, apply(inst.transform, (0.0, 0.0, g["z0"])), apply(inst.transform, (0.0, 0.0, g["z1"])), u))
+    out = []
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            A, ga, a0, a1, ua = segs[i]
+            B, gb, b0, b1, ub = segs[j]
+            if A is B or abs(abs(sum(ua[k] * ub[k] for k in range(3))) - 1) > 1e-6:
+                continue
+            ta = sorted((sum(a0[k] * ua[k] for k in range(3)), sum(a1[k] * ua[k] for k in range(3))))
+            tb = sorted((sum(b0[k] * ua[k] for k in range(3)), sum(b1[k] * ua[k] for k in range(3))))
+            if min(ta[1], tb[1]) - max(ta[0], tb[0]) <= 1e-6:
+                continue
+            w = [b0[k] - a0[k] for k in range(3)]
+            t = sum(w[k] * ua[k] for k in range(3))
+            c = sum((w[k] - t * ua[k]) ** 2 for k in range(3)) ** 0.5
+            if c >= (ga["da"] + gb["da"]) / 2 - 1e-6 or c < 1e-6:
+                continue
+            exp = (ga["d"] + gb["d"]) / 2
+            out.append({"a": A.id, "b": B.id, "center": round(c, 3), "expected": round(exp, 3),
+                        "m1": ga.get("m"), "m2": gb.get("m"),
+                        "ok": abs(c - exp) <= 0.05 and ga.get("m") == gb.get("m")})
+    return out
+
+
 def aabb_interference(asm: ResolvedAssembly, tol: float = 0.01) -> list[dict[str, Any]]:
-    """包围盒干涉（保守：可能误报 L 形件等，不会漏报）。贴合面（重叠厚度 ≤ tol）不算干涉。"""
+    """包围盒干涉（保守：可能误报 L 形件等，不会漏报）。贴合面（重叠厚度 ≤ tol）不算干涉；
+    正确啮合的齿轮副、同轴配合的孔轴（同公称直径）不算。"""
     out = []
     ins = asm.instances
+    skip = {frozenset((g["a"], g["b"])) for g in gear_pairs(asm) if g["ok"]}
+    skip |= {frozenset((ih.id, js.id)) for ih, _, js, _, _, _ in _coaxial_pairs(asm)}
     for a in range(len(ins)):
         for b in range(a + 1, len(ins)):
             A, B = ins[a].world_bbox, ins[b].world_bbox
             dx = min(A.xmax, B.xmax) - max(A.xmin, B.xmin)
             dy = min(A.ymax, B.ymax) - max(A.ymin, B.ymin)
             dz = min(A.zmax, B.zmax) - max(A.zmin, B.zmin)
-            if dx > tol and dy > tol and dz > tol:
+            if dx > tol and dy > tol and dz > tol and frozenset((ins[a].id, ins[b].id)) not in skip:
                 out.append({"a": ins[a].id, "b": ins[b].id, "overlap_mm": [round(dx, 3), round(dy, 3), round(dz, 3)],
                             "volume_mm3": round(dx * dy * dz, 1)})
     return out

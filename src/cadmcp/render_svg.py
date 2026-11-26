@@ -428,13 +428,15 @@ def _draw_asm_section(s, asm, v, sec):
         if r["state"] == "behind":
             for x0, y0, x1, y1 in r["rects"]:
                 _rect_hidden(s, x0, y0, x1, y1, occ, THICK, show_hidden=False)
+    gear_occ = []
     for r in regs:
         if r["state"] == "cut":
             ang, step = r["hatch"]
             for n, c in enumerate(r["cells"]):
                 _hatch_dir(s, f"as{r['id']}_{n}", c, ang, step)
-            for a_, b_ in r["edges"]:
-                s.poly([a_, b_], THICK, close=False)
+            for a_, b_ in r["edges"]:  # 齿轮啮合区（GB/T 4459.2）：先画的齿轮轮齿可见，后画齿轮落在其轮齿区内的齿顶线画细虚线
+                _seg_hidden(s, a_, b_, gear_occ if r.get("plain") else None, THICK)
+            gear_occ += r.get("plain", [])
             for cone in r.get("cones", []):  # 螺纹底孔锥底：白底盖住剖面线，两斜边粗实线
                 s.face(cone, 0)
                 s.poly([cone[0], cone[2], cone[1]], THICK, close=False)
