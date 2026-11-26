@@ -48,6 +48,18 @@ class ResolvedProfile:
     perimeter: float
     data: dict[str, Any]
 
+    def drawn(self) -> list[tuple[float, float]]:
+        """画图用轮廓：矩形带 corner_radius 时四角为圆弧（outline 仍是直角多边形，供边距计算）。"""
+        r = float(self.data.get("corner_radius") or 0.0) if self.shape == "rect" else 0.0
+        if r <= 0:
+            return self.outline
+        u0, u1, v0, v1 = self.bbox2d
+        pts = []
+        for cu, cv, a0 in ((u0 + r, v0 + r, 180), (u1 - r, v0 + r, 270), (u1 - r, v1 - r, 0), (u0 + r, v1 - r, 90)):
+            pts += [(cu + r * math.cos(math.radians(a0 + 10 * k)), cv + r * math.sin(math.radians(a0 + 10 * k)))
+                    for k in range(10)]
+        return pts
+
 
 @dataclass
 class HoleInstance:

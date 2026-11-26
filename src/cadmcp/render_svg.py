@@ -666,7 +666,7 @@ def _iso_top_features(s, iso, part, ztop):
     for pk in part.pockets:
         if not (pk["face"] == "top" or (pk.get("through") and pk["face"] == "bottom")):
             continue
-        pts = pk["profile"].outline
+        pts = pk["profile"].drawn()
         s.poly([iso(x, y, ztop) for x, y in pts], THICK)
         if pk["face"] == "top" and not pk.get("through") and pk["profile"].shape != "circle":
             zb = ztop - pk["depth"]
@@ -678,11 +678,11 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     if part is not None and part.base_type not in ("shaft",) and not part.weld_bodies:
         _iso_top_features(s, iso, part, box.zmax)
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
-        pts = part.profile.outline
+        pts = part.profile.drawn()
         z0, z1 = 0.0, part.thickness
         s.poly([iso(x, y, z0) for x, y in pts], THIN)
         s.poly([iso(x, y, z1) for x, y in pts], THICK)
-        if part.profile.shape == "circle":  # 只画轮廓切线
+        if part.profile.shape == "circle" or pts is not part.profile.outline:  # 圆/圆角：只画轮廓切线
             xs = [iso(x, y, z0)[0] for x, y in pts]
             for k in (xs.index(min(xs)), xs.index(max(xs))):
                 s.line(*iso(*pts[k], z0), *iso(*pts[k], z1), THICK)
@@ -782,7 +782,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 c3 = (*pr.data["center"], 0.0)
                 s.circle(*V(c3), pr.data["diameter"] / 2 * sc)
             else:
-                s.poly([V((x, y, 0.0)) for x, y in pr.outline])
+                s.poly([V((x, y, 0.0)) for x, y in pr.drawn()])
             if part.base_type == "sheet_metal":  # 翻边在俯/仰视图中积聚为板厚条
                 for bd, bb in _sheet_flange_boxes(part):
                     vis = (bd["direction"] == "up") == (v.type == "top")
@@ -792,7 +792,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             for pk in part.pockets:
                 if pk["face"] in ("top", "bottom"):  # 背面的盲型腔不可见：细虚线
                     hid = pk["face"] != v.type and not pk.get("through")
-                    s.poly([V((x, y, 0.0)) for x, y in pk["profile"].outline], THIN, dash=HIDDEN if hid else None)
+                    s.poly([V((x, y, 0.0)) for x, y in pk["profile"].drawn()], THIN if hid else THICK,
+                           dash=HIDDEN if hid else None)
         elif part is not None and part.base_type == "sheet_metal" and v.type in ("front", "back", "left", "right"):
             _draw_sheet_side(s, part, v.type, ha, P)
         elif part is not None and part.base_type == "shaft" and v.type in ("front", "back", "left", "right"):

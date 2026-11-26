@@ -31,3 +31,24 @@ def test_pocket_corners():
     assert ("R011", "PK", "info") in _rules([small])
     ok = {**pk, "profile": {**pk["profile"], "corner_radius": 4}}
     assert not any(r[0] == "R011" for r in _rules([ok]))
+
+
+def test_pocket_corner_radius_drawn():
+    """型腔/板圆角：画图轮廓带圆弧，标注写 4×R，引线落在弧中点上。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    spec = {"name": "PK", "part_no": "PK-01", "title": "型腔板", "material": "AL6061-T6", "surface_treatment": "阳极氧化",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 80, "corner_radius": 6},
+                     "thickness": 25},
+            "features": [{"feature": "pocket", "name": "PK", "depth": 15,
+                          "profile": {"shape": "rect", "width": 60, "height": 40, "corner_radius": 4}}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    pr = p.pockets[0]["profile"]
+    assert len(pr.drawn()) == 40 and len(pr.outline) == 4
+    plan = plan_part_drawing(DrawingSpec(model="PK"), p)
+    d = next(d for d in plan.dims if d.ref == "PK")
+    assert d.text == "60×40 深15 4×R4"
+    import math
+    assert math.isclose(math.hypot(d.at[0] - 26, d.at[1] - 16), 4, abs_tol=0.05)  # 右上圆角圆心 (26, 16)
+    assert not render(plan, p)[1]["crossings"]

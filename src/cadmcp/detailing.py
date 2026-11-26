@@ -659,13 +659,15 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         for pk in p.pockets:
             pr = pk["profile"]
             txt = f"{pr.bbox2d[1] - pr.bbox2d[0]:g}×{pr.bbox2d[3] - pr.bbox2d[2]:g}" + ("" if pk["through"] else f" 深{pk['depth']:g}")
+            if pr.shape == "rect" and pr.data.get("corner_radius"):
+                txt += f" 4×R{pr.data['corner_radius']:g}"
             pv = hole_view(pk["face"], vtypes) or views[0].type
             at_ = None
             if pv in VIEW_AXES and pk["face"] in ("top", "bottom"):
                 pha, pva = VIEW_AXES[pv]
                 z_ = b.zmax if pk["face"] == "top" else b.zmin
-                pts_ = [(vc((x, y, z_), pha), vc((x, y, z_), pva)) for x, y in pr.outline]
-                at_ = max(pts_, key=lambda q: q[0] + q[1])  # 型腔轮廓右上角
+                pts_ = [(vc((x, y, z_), pha), vc((x, y, z_), pva)) for x, y in pr.drawn()]
+                at_ = max(pts_, key=lambda q: q[0] + q[1])  # 型腔轮廓右上角（有圆角时在弧中点）
             dims.append(Dim(pv, "callout", None, None, txt, pk["name"], at_))
         for f in p.finishes:
             txt = f"C{f['size']:g}" if f["type"] == "chamfer" else f"R{f['size']:g}"
