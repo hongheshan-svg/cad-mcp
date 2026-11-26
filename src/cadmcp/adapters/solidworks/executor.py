@@ -576,17 +576,140 @@ class SwExecutor:
     def op_hole_wizard(self, **kw):
         raise OpFailed("hole_wizard: 需实机核对 HoleWizard5 GB 标准参数表；请用 holes_via='cut'")
 
-    def op_cosmetic_thread(self, feature: str, size: str, depth: float | None):
-        raise OpFailed("cosmetic thread: P1 实现（InsertCosmeticThread3）")
+    def op_cosmetic_thread(self, feature: str, size: str, depth: float | None, edge_pts=None, diameter=None,
+                           external: bool = False):
+        """装饰螺纹：先选中孔口（或轴段端部）圆边，再 FeatureManager.InsertCosmeticThread3。
+        edge_pts 为圆边上的一个模型坐标点（mm）列表；diameter 为螺纹公称直径（mm），缺省按 size 的 M 后数字解析。
+        InsertCosmeticThread3 的实参个数/含义以实机帮助为准（见 docs/WINDOWS_TEST.md 的待核对项）。"""
+        self._close_sketch()
+        if not edge_pts:
+            raise OpFailed("cosmetic thread: no edge points given")
+        if diameter is None:
+            m = re.match(r"[Mm](\d+(?:\.\d+)?)", size or "")
+            if not m:
+                raise OpFailed(f"cosmetic thread: cannot parse nominal diameter from {size!r}")
+            diameter = float(m.group(1))
+        # 终止条件：给定深度 → 盲孔；否则通孔（枚举取不到时用 0/1）
+        blind = depth is not None
+        end_cond = self._k("swCosmeticThreadBlind", 0) if blind else self._k("swCosmeticThreadThroughAll", 1)
+        ttype = self._k("swCosmeticThreadExternal", 1) if external else self._k("swCosmeticThreadInternal", 0)
+        fm = self.model.FeatureManager
+        done = 0
+        for i, pt in enumerate(edge_pts):
+            self.model.ClearSelection2(True)
+            if not self.model.Extension.SelectByID2("", "EDGE", pt[0] * MM, pt[1] * MM, pt[2] * MM, False, 0, None, 0):
+                self.readback.setdefault("cosmetic_thread_errors", []).append(f"{feature}[{i}]: edge not found")
+                continue
+            feat = fm.InsertCosmeticThread3(ttype, diameter * MM, (depth or 0.0) * MM, end_cond,
+                                            "GB", "Metric Tap" if not external else "Metric Die", size or "", "6H")
+            if feat is None:
+                self.readback.setdefault("cosmetic_thread_errors", []).append(f"{feature}[{i}]: InsertCosmeticThread3 returned None")
+                continue
+            try:
+                feat.Name = f"{feature}_CT{i + 1}"
+            except Exception:  # noqa: BLE001
+                pass
+            done += 1
+        self.model.ClearSelection2(True)
+        self.readback["cosmetic_threads"] = self.readback.get("cosmetic_threads", 0) + done
+        if done == 0:
+            raise OpFailed(f"cosmetic thread {feature}: no thread created")
+        return {"count": done}
+
+    # ---- 边选择：按拓扑/几何规则枚举边（outer_vertical / top_outer / bottom_outer） ----
+    _EPS = 1e-6  # 米
+
+    def _body_edges_for_rule(self, rule: str) -> list:
+        bodies = self.model.GetBodies2(self._k("swSolidBody", 0), False)
+        if not bodies:
+            raise OpFailed("no solid body")
+        body = bodies[0]
+        box = body.GetBodyBox()
+        zmin, zmax = box[2], box[5]
+        eps = self._EPS
+
+        def pt(v):
+            return tuple(v.GetPoint())
+
+        def planar_outer_loop_edges(z):
+            for f in body.GetFaces() or []:
+                n = f.Normal
+                fb = f.GetBox()
+                if abs(n[2]) > 0.999 and abs(fb[2] - z) < eps and abs(fb[5] - z) < eps:
+                    for lp in f.GetLoops() or []:
+                        if lp.IsOuter():
+                            return list(lp.GetEdges() or [])
+            return []
+
+        if rule == "top_outer":
+            return planar_outer_loop_edges(zmax)
+        if rule == "bottom_outer":
+            return planar_outer_loop_edges(zmin)
+        if rule == "outer_vertical":
+            corners = set()
+            for e in planar_outer_loop_edges(zmax):
+                for v in (e.GetStartVertex(), e.GetEndVertex()):
+                    if v is not None:
+                        p = pt(v)
+                        corners.add((round(p[0] / eps), round(p[1] / eps)))
+            out, seen = [], set()
+            for f in body.GetFaces() or []:
+                if abs(f.Normal[2]) > 0.001:
+                    continue
+                for e in f.GetEdges() or []:
+                    sv, ev = e.GetStartVertex(), e.GetEndVertex()
+                    if sv is None or ev is None:
+                        continue
+                    a, b = pt(sv), pt(ev)
+                    if abs(a[0] - b[0]) > eps or abs(a[1] - b[1]) > eps or abs(a[2] - b[2]) < eps:
+                        continue
+                    key = (round(a[0] / eps), round(a[1] / eps))
+                    if key in corners and key not in seen:
+                        seen.add(key)
+                        out.append(e)
+            return out
+        raise OpFailed(f"unknown edge rule {rule!r}")
 
     def op_select_edges(self, rule: str):
-        raise OpFailed("edge selection rules: P1 实现")
+        self._close_sketch()
+        edges = self._body_edges_for_rule(rule)
+        if not edges:
+            raise OpFailed(f"no edges matched rule {rule!r}")
+        self.model.ClearSelection2(True)
+        n = 0
+        for e in edges:
+            if e.Select4(n > 0, None):
+                n += 1
+        if n == 0:
+            raise OpFailed(f"could not select edges for rule {rule!r}")
+        self.readback.setdefault("selected_edges", {})[rule] = n
+        return {"count": n}
 
     def op_fillet(self, feature: str, size: float):
-        raise OpFailed("skipped (edges not selected)")
+        """对 select_edges 选中的边倒圆角。FeatureFillet3 实参个数见 WINDOWS_TEST 待核对项。"""
+        if not self.readback.get("selected_edges"):
+            raise OpFailed("skipped (edges not selected)")
+        r = size * MM
+        feat = self.model.FeatureManager.FeatureFillet3(195, r, r, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        return self._finish_edge_feature(feat, feature, "FeatureFillet3")
 
     def op_chamfer(self, feature: str, size: float):
-        raise OpFailed("skipped (edges not selected)")
+        """对选中边倒等距 C 角：InsertFeatureChamfer(Options, Type, Width, Angle, OtherDist, V1, V2, V3)。"""
+        if not self.readback.get("selected_edges"):
+            raise OpFailed("skipped (edges not selected)")
+        d = size * MM
+        ctype = self._k("swChamferEqualDistance", 4)
+        feat = self.model.FeatureManager.InsertFeatureChamfer(4, ctype, d, 0.0, d, 0.0, 0.0, 0.0)
+        return self._finish_edge_feature(feat, feature, "InsertFeatureChamfer")
+
+    def _finish_edge_feature(self, feat, name: str, api: str):
+        self.readback.pop("selected_edges", None)  # 选择已被消耗
+        self.model.ClearSelection2(True)
+        if feat is None:
+            raise OpFailed(f"{api} failed")
+        feat.Name = name
+        self.features[name] = feat
+        return {}
 
     def op_coordinate_system(self, feature: str, origin, rotate_deg):
         self._close_sketch()
@@ -600,14 +723,100 @@ class SwExecutor:
         self.features[feature] = feat
         return {}
 
+    # ---- 命名基准：平面 / 轴 / 点（供装配配合引用） ----
+    _AXIS_PLANE = {0: "Right Plane", 1: "Top Plane", 2: "Front Plane"}  # 法向轴 → 默认基准面
+
+    @staticmethod
+    def _main_axis(vec) -> int:
+        """轴对齐向量 → 轴号；非轴对齐抛 OpFailed。"""
+        i = max(range(3), key=lambda k: abs(vec[k]))
+        if abs(vec[i]) < 0.999 * math.sqrt(sum(c * c for c in vec)):
+            raise OpFailed(f"only axis-aligned directions supported in v0: {list(vec)}")
+        return i
+
+    def _make_offset_plane(self, axis: int, offset_mm: float, name: str):
+        """由默认基准面偏移出新基准面（偏移为 0 时用重合约束）。约束枚举按名称查，失败用帮助里的数值。"""
+        self.model.ClearSelection2(True)
+        if not self._ref_planes()[self._AXIS_PLANE[axis]].Select2(False, 0):
+            raise OpFailed(f"could not select {self._AXIS_PLANE[axis]}")
+        if abs(offset_mm) < 1e-9:
+            cons, dist = self._k("swRefPlaneReferenceConstraint_Coincident", 2), 0.0
+        else:
+            cons, dist = self._k("swRefPlaneReferenceConstraint_Distance", 8), offset_mm * MM
+        feat = self.model.FeatureManager.InsertRefPlane(cons, dist, 0, 0, 0, 0)
+        if feat is None:
+            raise OpFailed("InsertRefPlane failed")
+        feat.Name = name
+        self.features[name] = feat
+        return feat
+
     def op_ref_plane_coincident(self, feature: str, point, normal):
-        raise OpFailed("named planes: P1 实现（SelectByRay + InsertRefPlane）")
+        self._close_sketch()
+        axis = self._main_axis(normal)
+        self._make_offset_plane(axis, point[axis], feature)
+        self.model.ClearSelection2(True)
+        self.readback.setdefault("named_refs", []).append(feature)
+        return {}
 
     def op_ref_axis(self, feature: str, point, direction):
-        raise OpFailed("named axes: P1 实现")
+        """过 point、沿 direction 的基准轴：优先选中该处圆柱面（孔壁）取其轴；
+        取不到时用过该点的两个辅助偏移面求交。"""
+        self._close_sketch()
+        axis = self._main_axis(direction)
+        perp = [k for k in range(3) if k != axis]
+        feat = None
+        # 1) 孔壁圆柱面：从孔内沿轴向微移的点向垂直方向射线，命中圆柱面
+        self.model.ClearSelection2(True)
+        d = [0.0, 0.0, 0.0]
+        d[perp[0]] = 1.0
+        p = [v * MM for v in point]
+        p[axis] -= 0.0001 * (1 if direction[axis] > 0 else -1)  # 微入孔内约 0.1mm
+        if self.model.Extension.SelectByRay(p[0], p[1], p[2], d[0], d[1], d[2], 0.0005, self.c.swSelFACES, False, 0, 0):
+            feat = self.model.InsertAxis2(True)
+        if feat is None:
+            # 2) 两个垂直于 perp 的辅助面求交
+            a1 = self._make_offset_plane(perp[0], point[perp[0]], f"{feature}_aux1")
+            a2 = self._make_offset_plane(perp[1], point[perp[1]], f"{feature}_aux2")
+            self.model.ClearSelection2(True)
+            a1.Select2(False, 0)
+            a2.Select2(True, 0)
+            feat = self.model.InsertAxis2(True)
+        if feat is None:
+            raise OpFailed("InsertAxis2 failed")
+        feat.Name = feature
+        self.features[feature] = feat
+        self.model.ClearSelection2(True)
+        self.readback.setdefault("named_refs", []).append(feature)
+        return {}
 
     def op_ref_point(self, feature: str, point):
-        raise OpFailed("named points: P1 实现")
+        """基准点：三个辅助偏移面的交点（InsertReferencePoint 交叉类型）；失败退回 3D 草图点并改名。"""
+        self._close_sketch()
+        feat = None
+        try:
+            planes = [self._make_offset_plane(k, point[k], f"{feature}_aux{k + 1}") for k in range(3)]
+            self.model.ClearSelection2(True)
+            for i, pl in enumerate(planes):
+                pl.Select2(i > 0, 0)
+            ptype = self._k("swRefPointIntersection", 4)
+            feat = self.model.FeatureManager.InsertReferencePoint(ptype, 0, 0.0, 1)
+        except OpFailed:
+            feat = None
+        if feat is None:
+            sm = self.model.SketchManager
+            self.model.ClearSelection2(True)
+            sm.Insert3DSketch(True)
+            sm.CreatePoint(point[0] * MM, point[1] * MM, point[2] * MM)
+            sm.Insert3DSketch(True)
+            feat = self.model.FeatureByPositionReverse(0)
+            self.readback.setdefault("named_ref_fallback", []).append(feature)
+        if feat is None:
+            raise OpFailed("reference point failed")
+        feat.Name = feature
+        self.features[feature] = feat
+        self.model.ClearSelection2(True)
+        self.readback.setdefault("named_refs", []).append(feature)
+        return {}
 
     # ---------- 校验 ----------
     def op_rebuild(self, force: bool = True):

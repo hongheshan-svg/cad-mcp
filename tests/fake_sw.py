@@ -23,6 +23,7 @@ ARITY = {
     "InsertTableAnnotation2": 7, "SetColumnWidth": 3, "CreateBreakOutSection": 1,
     "InsertDatumTag2": 0, "InsertGtol": 0, "SetFrameSymbols2": 9, "SetFrameValues2": 6, "SetLabel": 1,
     "InsertSurfaceFinishSymbol3": 14,
+    "InsertCosmeticThread3": 8, "InsertRefPlane": 6, "InsertAxis2": 1, "InsertReferencePoint": 4, "FeatureFillet3": 12, "InsertFeatureChamfer": 8, "GetBodies2": 2,  # sw-cosmetic-refs
 }
 
 
@@ -69,6 +70,8 @@ class FakeMethod(Fake):
             return 0
         if name == "FirstFeature":
             return root.feature_chain()
+        if name == "GetBodies2":
+            return [_FakeBody(root)]
         if name == "GetFirstView":
             return root.view_chain()
         ret = {"ForceRebuild3": True, "GetErrorCode2": (0, False), "GetTypeName2": "RefPlane",
@@ -119,6 +122,89 @@ class _Dim(Fake):
         if name in ("Type2", "DrivenState"):
             return 0
         return super().__getattr__(name)
+
+
+class _FakeVertex(Fake):
+    def __init__(self, root, p):
+        super().__init__(root, "vertex")
+        object.__setattr__(self, "_p", p)
+
+    def __getattr__(self, name):
+        return (lambda: self._p) if name == "GetPoint" else super().__getattr__(name)
+
+
+class _FakeEdge(Fake):
+    def __init__(self, root, a, b):
+        super().__init__(root, "edge")
+        object.__setattr__(self, "_ab", (a, b))
+
+    def __getattr__(self, name):
+        if name == "GetStartVertex":
+            return lambda: _FakeVertex(self._root, self._ab[0])
+        if name == "GetEndVertex":
+            return lambda: _FakeVertex(self._root, self._ab[1])
+        if name == "Select4":
+            def sel(append, data):
+                self._root.calls.append(("EdgeSelect4", (self._ab, append)))
+                return True
+            return sel
+        return super().__getattr__(name)
+
+
+class _FakeLoop(Fake):
+    def __init__(self, root, edges, outer):
+        super().__init__(root, "loop")
+        object.__setattr__(self, "_e", (edges, outer))
+
+    def __getattr__(self, name):
+        if name == "IsOuter":
+            return lambda: self._e[1]
+        if name == "GetEdges":
+            return lambda: self._e[0]
+        return super().__getattr__(name)
+
+
+class _FakeFace(Fake):
+    def __init__(self, root, normal, box, edges, loops=()):
+        super().__init__(root, "face")
+        object.__setattr__(self, "_f", (normal, box, edges, loops))
+
+    def __getattr__(self, name):
+        if name == "Normal":
+            return self._f[0]
+        if name == "GetBox":
+            return lambda: self._f[1]
+        if name == "GetEdges":
+            return lambda: self._f[2]
+        if name == "GetLoops":
+            return lambda: self._f[3]
+        return super().__getattr__(name)
+
+
+class _FakeBody(Fake):
+    """100x60x10 mm 矩形板（米）：顶面外环 4 边 + 一个孔内环；4 个侧面各带两条竖边。"""
+    def __init__(self, root):
+        super().__init__(root, "body")
+
+    def __getattr__(self, name):
+        if name == "GetBodyBox":
+            return lambda: [0.0, 0.0, 0.0, 0.1, 0.06, 0.01]
+        if name == "GetFaces":
+            return self._faces
+        return super().__getattr__(name)
+
+    def _faces(self):
+        r = self._root
+        c = [(0.0, 0.0), (0.1, 0.0), (0.1, 0.06), (0.0, 0.06)]
+        top = [_FakeEdge(r, (*c[i], 0.01), (*c[(i + 1) % 4], 0.01)) for i in range(4)]
+        hole = _FakeEdge(r, (0.05, 0.03, 0.01), (0.05, 0.03, 0.01))
+        vert = [_FakeEdge(r, (*xy, 0.0), (*xy, 0.01)) for xy in c]
+        faces = [_FakeFace(r, (0, 0, 1), [0, 0, 0.01, 0.1, 0.06, 0.01], top + [hole],
+                           [_FakeLoop(r, top, True), _FakeLoop(r, [hole], False)])]
+        for i in range(4):
+            n = [(0, -1, 0), (1, 0, 0), (0, 1, 0), (-1, 0, 0)][i]
+            faces.append(_FakeFace(r, n, [0, 0, 0, 0.1, 0.06, 0.01], [vert[i], vert[(i + 1) % 4]]))
+        return faces
 
 
 class FakeSw(Fake):
