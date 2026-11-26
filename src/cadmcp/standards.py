@@ -208,3 +208,22 @@ def fit_text(d: float, code: str | None) -> str:
     if lim is None:
         return f"Φ{d:g}{code}"
     return f"Φ{d:g}{code}({fmt_deviation(lim[0])}/{fmt_deviation(lim[1])})"
+
+
+# 中心孔（GB/T 145-2001）：d → (A 型 D, A 型 l1, B 型 D2, B 型 l1)，mm
+CENTER_HOLES = {1.0: (2.12, 0.97, 3.15, 1.27), 1.6: (3.35, 1.52, 5.0, 1.99), 2.0: (4.25, 1.95, 6.3, 2.54),
+                2.5: (5.3, 2.42, 8.0, 3.2), 3.15: (6.7, 3.07, 10.0, 4.03), 4.0: (8.5, 3.9, 12.5, 5.05),
+                6.3: (13.2, 5.98, 18.0, 7.36), 10.0: (21.2, 9.7, 28.0, 11.66)}
+# 按轴端直径推荐中心孔 d（常用经验，选用参考）
+_CH_BY_DIA = ((8, 1.0), (12, 1.6), (18, 2.0), (30, 2.5), (50, 3.15), (80, 4.0), (120, 6.3))
+
+
+def center_hole(kind: str, d: float | None, end_dia: float) -> dict:
+    """中心孔尺寸与标记：kind A | B；d=None 时按轴端直径推荐。返回 {type, d, D, l1, code}，code 如 B2.5/8。"""
+    if d is None:
+        d = next((v for lim, v in _CH_BY_DIA if end_dia <= lim), 10.0)
+    if d not in CENTER_HOLES:
+        raise ValueError(f"中心孔 d={d:g} 不在 GB/T 145 系列 {sorted(CENTER_HOLES)} 中")
+    Da, la, Db, lb = CENTER_HOLES[d]
+    D, l1 = (Da, la) if kind == "A" else (Db, lb)
+    return {"type": kind, "d": d, "D": D, "l1": l1, "code": f"{kind}{d:g}/{D:g}"}

@@ -191,6 +191,19 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 render_gdt.roughness(s, px - 3.5 + 2.5, y_top + 22 + render_gdt.CELL_H, (0, 1), d.text)
             else:
                 render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
+        elif d.kind == "callout" and d.ref.startswith("ch:") and (d.extra or {}).get("label"):
+            lb = d.extra["label"]  # 中心孔 GB/T 4459.5
+            s.line(*lb["anchor"], *lb["elbow"], THIN)
+            s.line(*lb["elbow"], *lb["end"], THIN)
+            _arrow(s, *lb["anchor"], lb["anchor"][0] - lb["elbow"][0], lb["anchor"][1] - lb["elbow"][1])
+            sx, sy = lb["sym_at"]
+            keep = d.extra.get("keep")
+            if keep in ("required", "forbidden"):  # 60° 开口符号（"<"）；不允许保留再加一竖
+                s.line(sx + 0.3, sy + 2.2, sx + 3, sy + 3.75, THIN)
+                s.line(sx + 0.3, sy + 2.2, sx + 3, sy + 0.65, THIN)
+                if keep == "forbidden":
+                    s.line(sx + 1.8, sy + 0.6, sx + 1.8, sy + 3.8, THIN)
+            s.text(*lb["text_at"], d.text, 3)
         elif d.kind == "callout" and d.at is not None:
             z, r = d.at
             px, py = P(z, r)

@@ -439,3 +439,9 @@ SW：
 
 Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenVisibleAreaGet/Set`），Creo 目标自动 `broken_view: false` 画全长。
 如需支持，可核对 `ProDrawingViewBrokenVisibleAreaSet` 能否把一般视图改成断开视图（PTC 文章 CS412079）。
+
+## 轴端中心孔标注（GB/T 4459.5）
+
+样例：`tests/test_center_holes.py`。SW 走 `leader_note`（引线箭头在端面轴线处），Creo 走 `tk.drw.note` + `leader_to`。
+核对：引线是否附着到端面（轴线与端面交点不是边线，可能附着失败而成为自由注释）；预览里的保留符号 "<" 原生端没有画，
+保留要求只体现在技术要求里。

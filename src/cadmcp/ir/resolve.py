@@ -129,6 +129,7 @@ class ResolvedPart:
     properties: dict[str, str] = field(default_factory=dict)
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
+    center_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端中心孔 {end: start|end, type, d, D, l1, code, keep}
     shaft_features: list[dict[str, Any]] = field(default_factory=list)  # keyway / groove
     datums: list[dict[str, Any]] = field(default_factory=list)
     geotols: list[dict[str, Any]] = field(default_factory=list)
@@ -536,6 +537,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     bends: list[dict[str, Any]] = []
     steps: list[tuple[float, float]] = []
     shaft_chamfer = 0.0
+    center_holes: list[dict[str, Any]] = []
     flat_box = None
 
     gear = None
@@ -559,6 +561,19 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         shaft_chamfer = ev(base.chamfer)
         for d in (steps[0][1], steps[-1][1]):
             volume -= math.pi * d * shaft_chamfer ** 2 / 2  # 端部 45° 倒角近似
+        if base.center_holes:
+            from ..standards import center_hole
+            ch = base.center_holes
+            for end in (("start", "end") if ch.ends == "both" else (ch.ends,)):
+                de = steps[0][1] if end == "start" else steps[-1][1]
+                try:
+                    h = center_hole(ch.type, ch.d, de)
+                except ValueError as e:
+                    raise CadError(SPEC_INVALID, str(e)) from None
+                if h["D"] > de - 2 * shaft_chamfer - 1:
+                    raise CadError(SPEC_INVALID, f"中心孔 {h['code']} 的锥口 Φ{h['D']:g} 超出轴端（Φ{de:g}，倒角 C{shaft_chamfer:g}）",
+                                   hint="减小中心孔 d 或改用 A 型")
+                center_holes.append({"end": end, "keep": ch.keep, **h})
     elif isinstance(base, SheetMetalBase):
         profile = resolve_profile(base.profile, ev)
         t = thickness = ev(base.thickness)
@@ -823,7 +838,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,

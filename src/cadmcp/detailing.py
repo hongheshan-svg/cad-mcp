@@ -423,6 +423,11 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     if p.base_type == "shaft" and p.shaft_chamfer:
         notes.append(f"{n}. 未注倒角 C0.5。")
         n += 1
+    keep = {h["keep"] for h in p.center_holes}
+    if keep & {"required", "forbidden"}:
+        where = "两端" if len(p.center_holes) == 2 else ""
+        notes.append(f"{n}. {where}中心孔完工后{'须保留' if 'required' in keep else '不得保留'}（GB/T 4459.5）。")
+        n += 1
     if p.base_type.startswith("weldment"):
         ks = sorted({w["size"] for w in p.welds})
         k0 = max(ks, key=lambda k: sum(1 for w in p.welds if w["size"] == k)) if ks else 3
@@ -1054,7 +1059,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     sec_d = max((f["d"] for f in kws), default=0.0)
     brk = shaft_breaks(p) if spec.broken_view else []
     Lv = Ltot - sum(b_ - a_ for a_, b_ in brk) + len(brk) * BREAK_GAP  # 断开后的视图长（模型 mm，间隙按 1:1 估）
-    col_w = [Lv + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
+    # 右端中心孔标注向右伸出（文字约 40 mm，图纸尺寸，按 1:1 预留）；左端用左侧留白
+    ch_r = max((text_width(f"GB/T 4459.5-{h['code']}", 3.0) + 12 for h in p.center_holes if h["end"] == "end"), default=0.0)
+    col_w = [Lv + max(92 if p.gear else 0, ch_r)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
     # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
@@ -1099,6 +1106,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if p.shaft_chamfer:
             dims.append(Dim("front", "callout", None, p.shaft_chamfer, f"2×C{p.shaft_chamfer:g}", "chamfer",
                             (0.0, p.shaft_steps[0][1] / 2)))
+        for h in p.center_holes:  # 中心孔：GB/T 4459.5 简化标注，从端面轴线处引出
+            dims.append(Dim("front", "callout", None, h["d"], f"GB/T 4459.5-{h['code']}", f"ch:{h['end']}",
+                            (0.0 if h["end"] == "start" else Ltot, 0.0), {"keep": h["keep"]}))
         for f in p.shaft_features:
             sz0 = p.step_z(f["step"])[0]
             if f["kind"] == "gear":  # 齿面粗糙度注在分度线延长线上（齿段右端外）
@@ -1919,6 +1929,20 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
                        "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
+        elif d.kind == "callout" and d.ref.startswith("ch:"):
+            # 中心孔：从端面轴线处向外下方引出，文字沿水平线向外（左端向左、右端向右）；保留/不允许保留符号在文字前
+            z, _ = d.at
+            ax, ay = X(z), cy
+            sgn = -1 if d.ref == "ch:start" else 1
+            sym = 4.0 if (d.extra or {}).get("keep") in ("required", "forbidden") else 0.0
+            w = text_width(d.text, 3.0) + sym + 1
+            ex_, ey_ = ax + sgn * 5, cy - R * sc - 5
+            end = (ex_ + sgn * w, ey_)
+            sx = min(ex_, end[0]) + 0.5  # 符号在文字之前（左侧）
+            d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex_, 2), round(ey_, 2)),
+                                                     "text_at": (round(sx + sym, 2), round(ey_ + 0.8, 2)),
+                                                     "end": (round(end[0], 2), round(end[1], 2)), "dir": sgn,
+                                                     "sym_at": (round(sx, 2), round(ey_, 2))}}
         elif d.kind == "callout" and d.ref in ({"chamfer"} | {f["name"] for f in p.shaft_features}):
             # 位置同 render_shaft：引线从轮廓点斜向上到主视图上方的水平线
             z, r = d.at

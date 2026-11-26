@@ -31,6 +31,15 @@ class ShaftBase(Strict):
     type: Literal["shaft"] = "shaft"
     steps: list[ShaftStep] = Field(min_length=1)
     chamfer: Num = Field(0.0, description="两端倒角 C 值（mm），0 为不倒角")
+    center_holes: "CenterHoles | None" = Field(None, description="轴端中心孔（GB/T 145，图上按 GB/T 4459.5 简化标注）")
+
+
+class CenterHoles(Strict):
+    type: Literal["A", "B"] = Field("B", description="A 不带护锥；B 带 120° 护锥（完工后保留时常用）")
+    d: float | None = Field(None, description="中心孔公称直径 1/1.6/2/2.5/3.15/4/6.3/10；缺省按轴端直径推荐")
+    ends: Literal["both", "start", "end"] = "both"
+    keep: Literal["required", "optional", "forbidden"] = Field(
+        "optional", description="完工零件上：required 要求保留、optional 可以保留、forbidden 不允许保留")
 
 
 class Flange(Strict):
@@ -378,3 +387,5 @@ class PartSpec(Strict):
             if r.hole and r.hole not in holes:
                 raise ValueError(f"{r.name}: hole {r.hole!r} not defined")
         return self
+
+ShaftBase.model_rebuild()
