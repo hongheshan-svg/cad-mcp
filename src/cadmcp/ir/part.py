@@ -197,6 +197,8 @@ class Hole(Strict):
     depth: Num | Literal["through"] = "through"
     thread_depth: Num | None = None
     tolerance: str | None = Field(None, description='fit, e.g. "H7" for dowel holes')
+    chamfer: Num | None = Field(None, description="孔口倒角 C 值（90° 锥口），螺纹孔按大径、其它按孔径加 2C；"
+                                                   "仅 simple/clearance/tapped")
     slot_length: Num | None = Field(None, description="腰型孔两端圆心距（调节行程），mm")
     slot_angle: Num = Field(0.0, description="腰型孔方向，相对面内第一轴，度")
     at: Num | None = Field(None, description="非外表面时：该面所在平面在其法向轴上的坐标（如台阶面 z=10、L 形内侧面 y=8）")
@@ -209,6 +211,8 @@ class Hole(Strict):
             raise ValueError(f"hole {self.name!r}: give positions or a pattern")
         if self.type not in ("simple", "slot") and not isinstance(self.size, str):
             raise ValueError(f"hole {self.name!r}: type {self.type} needs a metric size like 'M6'")
+        if self.chamfer is not None and self.type not in ("simple", "clearance", "tapped"):
+            raise ValueError(f"hole {self.name!r}: chamfer 只用于 simple/clearance/tapped（沉头孔已有锥口）")
         if self.type == "slot" and self.slot_length is None:
             raise ValueError(f"hole {self.name!r}: slot needs slot_length (center distance)")
         return self

@@ -482,6 +482,13 @@ def resolve_hole(h: Hole, ev, box: Box, section: list[tuple[float, float]] | Non
         callout = f"{prefix}Φ{_fmt(drill)} {depth_txt} ⌵Φ{_fmt(csink)}×90°"
     else:
         callout = f"{prefix}{label} {depth_txt}"
+    if h.chamfer is not None:  # 孔口倒角 = 90° 锥口，复用沉头孔几何（csink 为锥口大径）
+        c = ev(h.chamfer)
+        if c <= 0:
+            raise CadError(SPEC_INVALID, f"hole {h.name}: chamfer must be > 0")
+        csink = (nominal if h.type == "tapped" else drill) + 2 * c
+        maxd = max(maxd, csink)
+        callout += f" 孔口C{_fmt(c)}"
     circ = None
     if isinstance(h.pattern, CircularPattern) and not h.positions:
         circ = {"center_u": ev(h.pattern.center[0]), "center_v": ev(h.pattern.center[1]),

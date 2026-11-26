@@ -89,3 +89,21 @@ def test_views_balanced_vertically():
     top = H - 7 - max(v.origin_on_sheet[1] + v.size_mm[1] / 2 + 12 for v in proj)
     bot = min(v.origin_on_sheet[1] - v.size_mm[1] / 2 - 30 for v in proj) - 7
     assert abs(top - bot) < 3, (top, bot)
+
+
+def test_hole_mouth_chamfer():
+    spec = {"name": "HC", "part_no": "HC-01", "title": "板", "material": "45#", "surface_treatment": "发黑",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 20},
+            "features": [{"feature": "hole", "name": "T", "type": "tapped", "size": "M8", "depth": 16, "thread_depth": 12,
+                          "chamfer": 1, "positions": [[-30, 0]]},
+                         {"feature": "hole", "name": "P", "type": "simple", "size": 8, "tolerance": "H7", "chamfer": 0.5,
+                          "positions": [[0, 0]]}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    t, pin = p.holes
+    assert t.csink == 10 and t.callout.endswith("孔口C1") and pin.csink == 9 and pin.max_dia == 9
+    from cadmcp.adapters.solidworks.compile import compile_part
+    ops = compile_part(PartSpec.model_validate(spec), p)
+    assert any(o.op == "extrude_cut" and o.args["feature"] == "T_CB" and o.args["draft_deg"] == 45 for o in ops)
+    import pytest
+    with pytest.raises(Exception):
+        PartSpec.model_validate({**spec, "features": [{**spec["features"][0], "type": "counterbore"}]})
