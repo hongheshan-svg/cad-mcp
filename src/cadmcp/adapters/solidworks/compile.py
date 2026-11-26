@@ -244,8 +244,13 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                 ops.append(NativeOp("extrude_cut", {"feature": h.name + "_CB", "sketch": sk + "_CB", "end": "blind",
                                                     "depth": dep2, "draft_deg": 45 if h.csink else 0}))
             if h.type == "tapped":
+                # 孔口圆边上的一个点（面内偏移半径；left/right 面在 Y 方向，其余在 X 方向），供执行器选边
+                r = h.drill / 2
+                dx, dy = (0.0, r) if h.face in ("left", "right") else (r, 0.0)
+                edge_pts = [[i.xyz[0] + dx, i.xyz[1] + dy, i.xyz[2]] for i in h.instances]
                 ops.append(NativeOp("cosmetic_thread", {"feature": h.name, "size": h.size_label,
-                                                        "depth": h.thread_depth}, "装饰螺纹线（失败不影响几何）"))
+                                                        "depth": h.thread_depth, "edge_pts": edge_pts,
+                                                        "diameter": h.nominal}, "装饰螺纹线（失败不影响几何）"))
             continue
         ops.append(_face_sketch(h.face, p.bbox, sk, h.at, uv0))
         ops.append(NativeOp("sketch_points", {"sketch": sk, "points": [i.xyz for i in h.instances]}))

@@ -221,3 +221,15 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
      公差带只是文字，未写入 IDimensionTolerance（拟合公差类型枚举写不准）；失败记入 `readback["dim_text_failed"]`，尺寸仍保留。
    - 轴类视图的边线是否能被 `SelectByID2(..., "EDGE", ...)` 按图纸坐标选中，取决于该视图当前精度；选不中时 oplog 会写明坐标。
 4. 非坐标视图的总体尺寸（零件/装配的各视图）取左右（或上下）轮廓线的中点；L 形等非矩形轮廓可能选不中，属预期的软失败。
+
+## 装饰螺纹 / 命名参考 / 边选择（sw-cosmetic-refs）
+
+以下 API 用法在假 COM 上验证了调用流程与实参个数，未经实机验证，需逐项核对（失败均为 NON_CRITICAL，不影响几何）：
+
+1. **装饰螺纹**：做一个带 `tapped` 孔的零件（`holes_via=cut`），看 oplog 中 `cosmetic_thread` 是否 ok，`readback["cosmetic_threads"]` 应等于孔数；特征树出现 `<孔名>_CT1…`；工程图中螺纹线自动显示。
+   - 假设：先 `Extension.SelectByID2("", "EDGE", x, y, z, ...)` 在孔口圆边（孔面内偏移钻孔半径处）选边，再 `FeatureManager.InsertCosmeticThread3(Type, Diameter, Depth, EndCondition, Standard, FastenerType, Size, Class)`（8 个实参，**参数个数/顺序待对照 API 帮助**）。若不符，改 `executor.op_cosmetic_thread` 和 `tests/fake_sw.py` ARITY。
+   - 常量 `swCosmeticThreadBlind/ThroughAll/Internal/External` 为猜测名，取不到时用默认 0/1/0/1，需核对。
+   - 轴类外螺纹：IR 目前没有螺纹字段，`op_cosmetic_thread(external=True)` 已支持但 compile 未生成。
+2. **边选择**：含 `fillet`/`chamfer`（`outer_vertical`/`top_outer`/`bottom_outer`）的 extrude 零件。假设 `GetBodies2(swSolidBody, False)`、`Body2.GetBodyBox()`（xmin,ymin,zmin,xmax,ymax,zmax）、`Face2.Normal`/`GetBox()`/`GetLoops()`、`Loop2.IsOuter()/GetEdges()`、`Edge.GetStartVertex().GetPoint()`、`Edge.Select4(Append, Data)` 均可用；基体沿 +Z 拉伸（顶面 = Z 最大平面）。核对 `readback["selected_edges"]` 的边数（矩形板 outer_vertical=4）。
+3. **圆角/倒角**（原为占位，现依赖上面的选边）：假设 `FeatureFillet3(195, R, R, 0×9)`（12 个实参，待核对）和 `InsertFeatureChamfer(4, swChamferEqualDistance, d, 0, d, 0, 0, 0)`（8 个实参，待核对）；核对圆角半径/倒角值与 spec 一致。
+4. **命名基准**：`MP_*`（面）→ 默认基准面偏移 `InsertRefPlane(Distance=8, 偏移, 0,0,0,0)`，偏移为 0 时用重合约束 2；负偏移（如底面 Z<0）假设传负距离即反向，需核对位置。`AX_*` → 先对孔壁圆柱面 `SelectByRay` 后 `InsertAxis2(True)`，失败退回两个辅助偏移面求交（辅助面命名 `<名>_aux1/2`）；`PT_*` → 三个辅助偏移面 + `InsertReferencePoint(swRefPointIntersection(默认4), 0, 0, 1)`，失败退回 3D 草图点。核对特征树里名称与 spec 一致，且装配里能被配合引用。

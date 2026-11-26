@@ -271,3 +271,56 @@ def test_sw_overall_dimension_native(sw_svc):
     svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
     adds = [c[1] for c in ad.sw.calls if c[0] == "AddDimension2"]
     assert len(adds) >= 2 and all(len(a) == 3 for a in adds)
+
+def _cosmetic_spec():
+    return PartSpec.model_validate({
+        "name": "CT1", "part_no": "CT-01", "title": "装饰螺纹板", "material": "AL6061-T6",
+        "base": {"type": "extrude", "thickness": 10, "profile": {"shape": "rect", "width": 100, "height": 60}},
+        "features": [
+            {"feature": "hole", "name": "Tap", "face": "top", "type": "tapped", "size": "M6", "positions": [[10, 10], [30, 10]]},
+            {"feature": "fillet", "name": "R2", "edges": "outer_vertical", "size": 2},
+            {"feature": "chamfer", "name": "C1", "edges": "top_outer", "size": 1},
+        ],
+        "references": [
+            {"name": "MP_Mid", "face": "top"},
+            {"name": "AX_Tap", "hole": "Tap", "index": 0},
+            {"name": "PT_Center", "origin": [50, 30, 5]},
+        ],
+    })
+
+
+def _part_log(tmp_path, name):
+    lg = next((tmp_path / "ws").rglob(f"{name}.oplog.json"))
+    return {r["op"]: r for r in json.loads(lg.read_text(encoding="utf-8"))}
+
+
+def test_sw_cosmetic_thread_and_named_refs(sw_svc, tmp_path):
+    svc, ad = sw_svc
+    svc.change_begin("CT1")
+    svc.build(_cosmetic_spec())
+    names = [c[0] for c in ad.sw.calls]
+    # 螺纹孔 2 个实例 -> 2 次 InsertCosmeticThread3，实参个数由 ARITY 核对
+    assert names.count("InsertCosmeticThread3") == 2
+    edge_sel = [c[1] for c in ad.sw.calls if c[0] == "SelectByID2" and c[1][1] == "EDGE"]
+    assert len(edge_sel) == 2
+    # 命名参考：面/轴/点都创建并改名
+    assert "InsertRefPlane" in names and "InsertAxis2" in names and "InsertReferencePoint" in names
+    renamed = [v for k, v in ad.sw.sets if k.endswith(".Name")]
+    for n in ("MP_Mid", "AX_Tap", "PT_Center"):
+        assert n in renamed, renamed
+    log = _part_log(tmp_path, "CT1")
+    assert log["cosmetic_thread"]["ok"] and log["ref_plane_coincident"]["ok"]
+
+
+def test_sw_select_edges_rules_and_finish(sw_svc, tmp_path):
+    svc, ad = sw_svc
+    svc.change_begin("CT1")
+    svc.build(_cosmetic_spec())
+    sel_calls = [c[1] for c in ad.sw.calls if c[0] == "EdgeSelect4"]
+    # outer_vertical：4 条竖边（孔内环不算）；top_outer：顶面外环 4 条边
+    verts = [c for c in sel_calls if c[0][0][2] != c[0][1][2]]
+    tops = [c for c in sel_calls if c[0][0][2] == c[0][1][2] == 0.01]
+    assert len(verts) == 4 and len(tops) == 4
+    assert all(c[0][0] != (0.05, 0.03, 0.01) for c in sel_calls)  # 孔内环未被选
+    names = [c[0] for c in ad.sw.calls]
+    assert "FeatureFillet3" in names and "InsertFeatureChamfer" in names
