@@ -52,3 +52,5 @@ def test_pocket_corner_radius_drawn():
     import math
     assert math.isclose(math.hypot(d.at[0] - 26, d.at[1] - 16), 4, abs_tol=0.05)  # 右上圆角圆心 (26, 16)
     assert not render(plan, p)[1]["crossings"]
+    ords = {(x.axis, x.value) for x in plan.dims if x.kind == "ordinate" and x.view == "top"}
+    assert {("x", 30.0), ("y", 20.0)} <= ords  # 型腔左下角定位

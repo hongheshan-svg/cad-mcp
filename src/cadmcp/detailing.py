@@ -649,6 +649,20 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                     val = round(pt[ax] - origin[ax], 3)
                     ordinates.setdefault(("top", ax, val), Dim("top", "ordinate", ax, val, f"{val:g}",
                                                                f"ord:top.{ax}={val:g}", (pt[ha], pt[va])))
+        # 型腔定位：矩形型腔左下角、圆形型腔圆心进坐标尺寸（大小在型腔标注里，不重复标）
+        if "top" in vtypes and p.base_type in ("extrude", "cast"):
+            ha, va = VIEW_AXES["top"]
+            origin = {ha: vrange(b, ha)[0], va: vrange(b, va)[0]}
+            for pk in p.pockets:
+                if pk["face"] not in ("top", "bottom") or pk["profile"].shape not in ("rect", "circle"):
+                    continue
+                pr = pk["profile"]
+                u, v_ = pr.data["center"] if pr.shape == "circle" else (pr.bbox2d[0], pr.bbox2d[2])
+                pt = {ha: vc((u, v_, b.zmax), ha), va: vc((u, v_, b.zmax), va)}
+                for ax in (ha, va):
+                    val = round(pt[ax] - origin[ax], 3)
+                    ordinates.setdefault(("top", ax, val), Dim("top", "ordinate", ax, val, f"{val:g}",
+                                                               f"ord:top.{ax}={val:g}", (pt[ha], pt[va])))
         if ordinates:
             for view in {k[0] for k in ordinates}:
                 ha, va = VIEW_AXES.get(view, ("x", "y"))
