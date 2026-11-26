@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
     register_session_cmds();
     register_model_cmds();
     register_drawing_cmds();
+    register_assembly_cmds();
 
     int rc = run_server(port);
 

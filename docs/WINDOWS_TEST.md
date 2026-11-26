@@ -328,3 +328,8 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
 2. SHAFT：旋转体 + 2 个键槽 + 挡圈槽；主视图直径尺寸带 Φ 和公差带。
 3. GRID（`tests/test_hole_table.py`）：孔表位置与 SVG 一致，孔号注释在孔旁。
 4. 坐标映射：在 Creo 中查看 TOP 面草绘的矩形是否与 IR 的 X/Y 一致、FRONT 命名视图是否从 −Y 看（Z 向上）。
+
+### Creo TOOLKIT 装配（asm.*）
+1. 先建 `examples/cylinder_station.py` 的两块板，再建 ASSEMBLY：库件无 `<library_root>/<编码>.prt` 时平台先经 TOOLKIT 建包络占位件。
+2. 核对元件位置与 SVG/模拟结果一致（坐标映射 `(x, z, −y)` + `Q·T·Qᵀ`）；oplog 中 `asm.add_component` 的 `placement` 应为 `csys`（有 place 无偏移）或 `fixed`。
+3. 人为让两件重叠，`asm.interference` 回读 `{components, volume_mm3}` 应出现在 build 结果的 interferences 中。

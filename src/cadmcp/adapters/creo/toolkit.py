@@ -127,6 +127,10 @@ def run_tk_ops(tk: "ToolkitClient", ops: list, out_dir, name: str) -> dict[str, 
                 readback["features"] = res.get("features", [])
             elif cmd == "model.save":
                 readback["path"] = res.get("path")
+            elif cmd == "asm.interference":  # 与 SW 执行器回读同形：{components, volume_mm3}
+                readback["interferences"] = [{"components": list(p.get("components", [])),
+                                              "volume_mm3": round(float(p.get("volume_mm3", 0)), 1)}
+                                             for p in res.get("pairs", [])]
         except Exception as e:  # noqa: BLE001
             rec.update(ok=False, error=f"{type(e).__name__}: {e}", trace=traceback.format_exc(limit=3))
             if cmd in TK_NON_CRITICAL:

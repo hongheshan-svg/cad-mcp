@@ -90,8 +90,20 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | `drw.balloon` | `view`, `component`（组件路径名列表）, `item`, `at`, `pos` |
 | `drw.readback` | – → `{"dims": n, "notes": n, "tables": [{"rows": [[...]]}], "views": [...], "symbols": n}` |
 
+### 3.4 装配（cmd_assembly.cpp）
+所有装配命令带 `asm`（装配名）。打开/参数/再生/保存仍用 §3.1 的 `model.*`（`name` = 装配名）。
+位姿 `transform` 为 **IR 坐标** 的 4×4 齐次矩阵（列向量约定：`p_asm = T · p_comp`，平移在第 4 列，mm），
+C++ 端换算为 Creo 坐标：`T_creo = Q · T · Qᵀ`，Q 为 IR→Creo 的旋转 `(x, y, z) → (x, z, −y)`，再转成 `ProMatrix`（行向量约定）。
+
+| cmd | 关键 args |
+|---|---|
+| `asm.new` | `name`, `start_asm`（可空：空则 `ProSolidCreate(PRO_ASSEMBLY)` 并设 mmNs） → `{"name"}` |
+| `asm.add_component` | `file`（零件/子装配完整路径，未在会话中则先打开）, `name`（实例 id，服务端记住实例 id 与元件特征 id 的对应，供后续 `target` 引用）, `transform`（4×4，IR）, `csys`（可空：`{"ref": 元件坐标系名, "target": 目标实例 id 或 null=装配本身, "target_ref": 目标坐标系名}`，有则建坐标系重合约束，约束失败或为空时按 `transform` 固定放置） → `{"id": 元件特征 id, "placement": "csys|fixed"}` |
+| `asm.interference` | – → `{"pairs": [{"components": [实例 id, 实例 id], "volume_mm3": v}]}`（全局干涉） |
+
 ## 4. Python 端
 - `src/cadmcp/adapters/creo/toolkit.py`：`ToolkitClient(host, port)`：`call(cmd, **args)`，超时、id 递增、ok=false 抛 `ToolkitError(code, msg)`。
+- 装配：`creo/compile.py` 的 `compile_assembly_tk(spec, asm, files, library_root)` → `tk.asm.*` + `tk.model.*`。
 - 建模：`creo/compile.py` 的 `compile_part_tk(spec, resolved)` → `NativeOp("tk.<cmd>", args)`；CREOSON 只做打开/参数/保存。
 - 出图：`creo/drawing.py` 现有 `ext.cadmcp_*` 粗粒度命令改为逐项 `tk.drw.*`（坐标来自规划层：`Dim.extra["label"]`、`sheet_pts`、`sheet_pos`、`sheet_at`，`hole_table_box` 等）。
 - 测试用 `tests/fake_toolkit.py`：本地线程起一个假服务，按本文 schema 校验 args（缺必填/多余键报 BAD_ARGS）。

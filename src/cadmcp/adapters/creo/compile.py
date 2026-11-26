@@ -292,3 +292,44 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
     ops.append(NativeOp("tk.model.feature_status", {"name": m}))
     ops.append(NativeOp("tk.model.save", {"name": m, "dir": "$out_dir"}))
     return ops
+
+
+# ---------------------------------------------------------------------------------------------
+# TOOLKIT 装配（docs/CREO_TOOLKIT.md §3.4）：ResolvedAssembly → tk.asm.* 计划
+# ---------------------------------------------------------------------------------------------
+def compile_assembly_tk(spec, asm, component_files: dict[str, str], library_root: str = "",
+                        start_asm: str = "") -> list[NativeOp]:
+    """元件先按求得的位姿（IR 4×4）放入；有 place 且无偏移/旋转时附带坐标系重合约束（服务端约束失败退回固定），
+    有偏移/旋转时位姿已含在 transform 里，直接固定放置。库件无原生模型文件时取 library_root/<编码>.prt。"""
+    from pathlib import PurePath
+
+    m = spec.name
+    ops: list[NativeOp] = [NativeOp("tk.asm.new", {"name": m, "start_asm": start_asm},
+                                    "start_asm 为空则建空装配（无 ASM_DEF_CSYS，坐标系约束会退回固定）")]
+    for k, v in {"PART_NO": spec.part_no, "TITLE": spec.title, **{k.upper(): v for k, v in spec.properties.items()}}.items():
+        ops.append(NativeOp("tk.model.param_set", {"name": m, "param": k, "value": str(v), "type": "string"}))
+    comps = {c.id: c for c in spec.components}
+    ids = {i.id for i in asm.instances}
+    for inst in asm.instances:
+        c = comps[inst.component]
+        kind, _, ref = c.source.partition(":")
+        if inst.component in component_files:
+            file = str(component_files[inst.component])
+        elif kind == "lib" and library_root:
+            file = str(PurePath(library_root) / f"{ref.partition('?')[0]}.prt")
+        else:
+            raise CadError(CAPABILITY_UNSUPPORTED, f"组件 {inst.id}（{c.source}）没有可装入的 Creo 模型文件",
+                           hint="在节点配置中设置 library_root，或先在本会话中建出该零件")
+        args = {"asm": m, "file": file, "name": inst.id,
+                "transform": [[round(float(x), 9) for x in row] for row in inst.transform], "csys": None}
+        why = "按求得的位姿固定放置"
+        if c.place is not None and not any(c.place.offset) and not any(c.place.rotate):
+            tgt, _, tref = c.place.to.partition(".")
+            args["csys"] = {"ref": c.place.align, "target": None if tgt == "ASM" else (tgt if tgt in ids else f"{tgt}#1"),
+                            "target_ref": tref}
+            why = "坐标系重合约束（失败退回固定）"
+        ops.append(NativeOp("tk.asm.add_component", args, why))
+    ops.append(NativeOp("tk.model.regenerate", {"name": m}))
+    ops.append(NativeOp("tk.asm.interference", {"asm": m}, "全局实体干涉"))
+    ops.append(NativeOp("tk.model.save", {"name": m, "dir": "$out_dir"}))
+    return ops
