@@ -1501,7 +1501,7 @@ def plan_asm_section(a: ResolvedAssembly, views: list[ViewPlan]) -> dict[str, An
         return {}
     axis_pt = None
     for inst in a.instances:
-        if not inst.source.revolve:
+        if not inst.source.revolve or inst.source.threads:  # 螺钉不决定剖切面
             continue
         o, z1 = apply(inst.transform, (0.0, 0.0, 0.0)), apply(inst.transform, (0.0, 0.0, 1.0))
         if abs(z1[1] - o[1]) < 1e-6:  # 轴线垂直于 Y（主视图视向）→ 平行于主视图

@@ -356,6 +356,32 @@ def _hatch_dir(s, cid, cell, angle, step):
     s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
 
 
+def _thread_lines(s, inst, vtype, ha, va, P):
+    """外螺纹（螺钉）在轴线平行于图面的视图中：小径（≈0.85d）细实线沿螺纹长度，螺纹未到头部时画终止线（粗）。"""
+    from .ir.assembly_resolve import apply
+    ax_d = VIEW_LOOK.get(vtype, ("z", 1))[0]
+    di = "xyz".index(ax_d)
+    o = apply(inst.transform, (0.0, 0.0, 0.0))
+    zt = apply(inst.transform, (0.0, 0.0, 1.0))
+    if abs(zt[di] - o[di]) > 1e-6:
+        return  # 端视
+    xt = apply(inst.transform, (1.0, 0.0, 0.0))
+    side = (1.0, 0.0) if abs(xt[di] - o[di]) < 1e-6 else (0.0, 1.0)  # 零件坐标中平行于图面的横向
+    zs = [z for sg in inst.source.revolve for z in sg[:2]]
+    for z0, z1, d in inst.source.threads:
+        r1 = 0.85 * d / 2
+        for sg in (1, -1):
+            a = apply(inst.transform, (side[0] * r1 * sg, side[1] * r1 * sg, z0))
+            b = apply(inst.transform, (side[0] * r1 * sg, side[1] * r1 * sg, z1))
+            s.line(*P(vc(a, ha), vc(a, va)), *P(vc(b, ha), vc(b, va)), THIN)
+        for z in (z0, z1):
+            if zs and min(zs) + 1e-6 < z < max(zs) - 1e-6 and not any(abs(z - sg[0]) < 1e-6 or abs(z - sg[1]) < 1e-6
+                                                                        for sg in inst.source.revolve):
+                a = apply(inst.transform, (side[0] * d / 2, side[1] * d / 2, z))
+                b = apply(inst.transform, (-side[0] * d / 2, -side[1] * d / 2, z))
+                s.line(*P(vc(a, ha), vc(a, va)), *P(vc(b, ha), vc(b, va)), THICK)
+
+
 def _draw_asm_section(s, asm, v, sec):
     """装配图全剖主视图：被剖零件画剖面线（相邻零件方向/间隔错开）与剖面轮廓；不剖件（轴、标准件）按段画外形；
     剖切面后方零件只画未被剖面挡住的可见轮廓（剖视图不画虚线）。"""
@@ -374,10 +400,19 @@ def _draw_asm_section(s, asm, v, sec):
                 _hatch_dir(s, f"as{r['id']}_{n}", c, ang, step)
             for a_, b_ in r["edges"]:
                 s.poly([a_, b_], THICK, close=False)
+    ha, va = VIEW_AXES[v.type]
+    cx, cy = v.origin_on_sheet
+    (ulo, uhi), (wlo, whi) = vrange(asm.bbox, ha), vrange(asm.bbox, va)
+
+    def P(u, w_):
+        return cx + (u - (ulo + uhi) / 2) * v.scale, cy + (w_ - (wlo + whi) / 2) * v.scale
     for r in regs:
-        if r["state"] == "excluded":
+        if r["state"] == "excluded":  # 不剖件：白底盖住所在零件的剖面线（螺钉拧入螺孔处按螺钉画，GB/T 4459.1）
             for x0, y0, x1, y1 in r["rects"]:
-                s.rect(x0, y0, x1 - x0, y1 - y0)
+                s.face([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+            inst = next(i for i in asm.instances if i.id == r["id"])
+            if inst.source.threads:
+                _thread_lines(s, inst, v.type, ha, va, P)
     if sec.get("label"):
         cx, cy = v.origin_on_sheet
         s.text(cx, cy + v.size_mm[1] / 2 + 4, f"{sec['label']}-{sec['label']}", 5, "middle")
@@ -433,6 +468,9 @@ def _draw_asm_view(s, asm, vtype, ha, va, P, sc):
         own = [j for j, (k2, _, _) in enumerate(blocks) if k2 == k]
         occ = _occluder_rects(boxes, bi, vtype, ha, va, P, [sv and j not in own for j, sv in enumerate(solid)])
         _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ, THICK)  # 可见轮廓一律粗实线（GB/T 4457.4）
+    for inst in asm.instances:
+        if inst.source.threads:
+            _thread_lines(s, inst, vtype, ha, va, P)
 
 
 def _draw_weld_bodies(s, part, vtype, ha, va, P):

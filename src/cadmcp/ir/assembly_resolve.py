@@ -104,6 +104,7 @@ class SourceInfo:
     interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
     install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
     revolve: list[tuple[float, float, float, float]] = field(default_factory=list)  # 回转件沿零件 Z：(z0, z1, 外径, 内径)
+    threads: list[tuple[float, float, float]] = field(default_factory=list)  # 外螺纹沿零件 Z：(z0, z1, 大径)
     fits: list[dict[str, Any]] = field(default_factory=list)  # 零件：带配合公差的圆柱面 {role hole|shaft, d, tol, p0, p1(轴线段，零件坐标), name}
 
 

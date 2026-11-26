@@ -160,6 +160,8 @@ items:
     references:
       CS_Head: {origin: [0, 0, 0]}
     properties: {等级: "12.9"}
+    revolve: [[0, 6, 10, 0], [-20, 0, 6, 0]]  # 头部 dk×k（GB/T 70.1），螺杆
+    threads: [[-20, 0, 6]]  # 全螺纹 (z0, z1, 大径)
   - code: BRK-4040
     title: 型材角码 40
     category: purchased
@@ -190,6 +192,8 @@ items:
     references:
       CS_Head: {origin: [0, 0, 0]}
     properties: {等级: "8.8"}
+    revolve: [[0, 8, 13, 0], [-16, 0, 8, 0]]
+    threads: [[-16, 0, 8]]
   - code: BRG-6004
     title: 深沟球轴承 6004
     category: standard

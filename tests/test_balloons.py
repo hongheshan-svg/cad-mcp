@@ -93,3 +93,21 @@ def test_assembly_install_dims():
     svg, out = render(plan, a)
     assert "stroke-dasharray='3,1'" in svg  # 俯视图：安装板下的型材被遮挡，画细虚线
     assert out["crossings"] == []
+
+
+def test_screw_simplified_drawing(svc):
+    """装配图螺钉按 GB/T 4459.1 简化画法：头部 + 螺杆两段轮廓，螺纹小径（0.85d）细实线贯穿螺纹长度。"""
+    import re
+
+    from cadmcp.render_svg import render
+    _station(svc)
+    a = svc._get(ASSEMBLY["name"]).resolved
+    plan = svc._get(ASSEMBLY["name"] + "_DRW").resolved
+    assert not plan.asm_section  # 只有螺钉的回转轴线不触发全剖
+    svg, _ = render(plan, a)
+    L = 20 * plan.scale
+    thin = [(float(x1), float(y1), float(x2), float(y2)) for x1, y1, x2, y2 in
+            re.findall(r"<line x1='([\d.]+)' y1='([\d.]+)' x2='([\d.]+)' y2='([\d.]+)' stroke='#111' stroke-width='0.25'/>", svg)]
+    pairs = [t for t in thin if abs(t[0] - t[2]) < 1e-6 and abs(abs(t[1] - t[3]) - L) < 0.02]
+    assert len(pairs) >= 4  # 主视图 2 个螺钉 × 两条小径线
+    assert any(abs(abs(p[0] - q[0]) - 0.85 * 6 * plan.scale) < 0.02 for p in pairs for q in pairs)
