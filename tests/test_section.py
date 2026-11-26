@@ -183,3 +183,16 @@ def test_full_section_hides_holes_in_front_of_cut():
     for depth, cut in ((40, True), (12, False)):  # 前表面 y=-30，剖切面 y=0
         h = hole(depth)
         assert _hole_cut_by(sec, h, h.instances[0]) is cut
+
+
+def test_front_face_hole_cut_at_mid_depth_not_on_surface():
+    """前表面上的孔：自动剖切面取在孔深中点，不能落在零件表面上（剖了等于没剖）。"""
+    from cadmcp.section import auto_section
+    p = resolve_part(PartSpec.model_validate({
+        "name": "BK", "part_no": "BK", "title": "块", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 50},
+        "features": [{"feature": "hole", "name": "P", "face": "front", "type": "tapped", "size": "M12",
+                      "depth": 40, "thread_depth": 20, "positions": [[0, 25]]}]}))
+    sec = auto_section(p)
+    assert all(abs(d - p.bbox.ymin) > 1 for _, _, d in sec.path)
+    assert any(abs(d - (p.bbox.ymin + 20)) < 1e-6 for _, _, d in sec.path)

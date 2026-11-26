@@ -88,8 +88,9 @@ def _interesting(p) -> list[tuple[str, list[tuple[float, float]], str]]:
     for h in p.holes:
         inner = (h.cbore or h.csink or h.type == "tapped" or not h.through or h.face not in ("top", "bottom")
                  or h.tolerance)  # 配合孔（H7 等）剖开表达孔壁与倒角
-        if inner and not h.slot:
-            out.append((h.name, [(i.xyz[0], i.xyz[1]) for i in h.instances], "hole"))
+        if inner and not h.slot:  # 前/后面上的孔（孔轴垂直剖切面）：剖切位置取孔深中点，而非孔口所在的零件表面
+            out.append((h.name, [(i.xyz[0], i.xyz[1] - i.normal[1] * h.depth / 2 if i.normal[1] else i.xyz[1])
+                                 for i in h.instances], "hole"))
     for pk in p.pockets:
         if not pk["through"] and pk["face"] in ("top", "bottom"):
             u0, u1, v0, v1 = pk["profile"].bbox2d
