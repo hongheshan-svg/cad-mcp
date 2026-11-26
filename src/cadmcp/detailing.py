@@ -3081,17 +3081,36 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
     def gap(lo, hi):  # 区间 [lo, hi] 到障碍的最小净距（模型 mm；重叠为负）
         return min((max(a - hi, lo - b) for a, b in obst), default=1e9)
 
+    # 文字长于该段直径（公差文字）→ 会伸到轮廓外；此时尺寸线避开轴段中点（下方链式长度数字、上方键槽尺寸都在中点附近）
+    d_i = p.shaft_steps[i][1]
+    long_txt = text_width(_shaft_dia_label(p, i), 3.5) > shaft_text_room(p, (z0 + z1) / 2, d_i) * sc - 2
+    # 要避开的数字区：链式长度数字（段中点）、键槽长度数字（键槽中点，在轮廓上方）
+    zones = [((z0 + z1) / 2, (text_width(f"{z1 - z0:g}", 3.5) / 2 + 2.0) / sc)]
+    zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
+              for f in p.shaft_features if f["step"] == i and f["kind"] == "keyway"]
+
     def key(zs):
         z, side = zs
         span = (z - tw, z - 0.2 / sc) if side == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+        if long_txt:
+            lo_, hi_ = span
+            edge_ = min(max(a - hi_, lo_ - b) for a, b in [(z0, z0), (z1, z1)] + busy) * sc
+            return (any(not (hi_ < zc - zr or lo_ > zc + zr) for zc, zr in zones),
+                    edge_ < 2.5, abs(z - (z0 + z1) / 2), side == "right")
         line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
         return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
                 -abs(z - (z0 + z1) / 2))
+    if long_txt:  # 文字在轮廓外：尺寸线离开中点数字区（离不开的短段照常取中）
+        z, sd = min(((z, sd) for z in cands for sd in ("left", "right")), key=key)
+        if not key((z, sd))[0] and not key((z, sd))[1]:
+            span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+            return z, sd, gap(*span) * sc
+        long_txt = False
     z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
     span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
     g = gap(*span) * sc
-    if g < 0.2:  # 轮廓内放不下：文字伸到轮廓外，尺寸线取离两侧轴肩最远处（避开相邻粗段的轴肩线）
+    if g < 0.2:  # 轮廓内放不下：文字伸到轮廓外，尺寸线取轴段中点附近（避开相邻粗段的轴肩线）
         z = min(cands, key=lambda z_: abs(z_ - (z0 + z1) / 2))
         sd = "left"
     return z, sd, g
