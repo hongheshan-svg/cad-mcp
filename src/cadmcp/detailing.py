@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
@@ -102,6 +104,7 @@ class DrawingPlan:
     name: str = ""  # 图纸文件名（默认 <model>_DRW）
     missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
     layout: str = "standard"  # standard | shaft（轴线水平 + 移出断面）
+    cut_list: list[dict[str, Any]] = field(default_factory=list)  # 焊接件切割清单
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -110,7 +113,7 @@ class DrawingPlan:
 
 
 ISO_FACTOR = 0.5  # 轴测图按半比例放置（辅助视图）
-MIN_FILL = {"part": 0.28, "assembly": 0.15}  # 视图占可用区域的最低比例（装配图需给明细表留位）
+MIN_FILL = {"part": 0.28, "assembly": 0.15, "weldment": 0.2}  # 视图占可用区域的最低比例（装配图需给明细表留位）
 MIN_FEATURE_ON_PAPER = 2.0  # 最小孔在图纸上至少 2 mm
 
 
@@ -321,6 +324,21 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     if p.base_type == "shaft" and p.shaft_chamfer:
         notes.append(f"{n}. 未注倒角 C0.5。")
         n += 1
+    if p.base_type.startswith("weldment"):
+        ks = sorted({w["size"] for w in p.welds})
+        k0 = max(ks, key=lambda k: sum(1 for w in p.welds if w["size"] == k)) if ks else 3
+        notes.append(f"{n}. 焊接按 GB/T 985.1，焊丝 ER50-6；未注焊缝 K{k0:g} 连续角焊缝。")
+        notes.append(f"{n + 1}. 焊缝饱满，无夹渣、气孔、咬边、未焊透。")
+        notes.append(f"{n + 2}. 焊后清渣去飞溅，校正变形；"
+                     + ("整体去应力退火后再加工。" if p.weld_options.get("stress_relief") else "型材切口去毛刺。"))
+        n += 3
+        machined = [b["name"] for b in p.weld_bodies if b.get("machined")]
+        if machined:
+            notes.append(f"{n}. {'、'.join(machined)} 上表面焊后加工，平面度 0.1，孔位以加工面为基准。")
+            n += 1
+        if p.weld_options.get("end_caps") and p.weld_options.get("open_ends"):
+            notes.append(f"{n}. 敞口管端（{len(p.weld_options['open_ends'])} 处）装塑料堵头。")
+            n += 1
     if p.base_type == "sheet_metal" and p.bends:
         bd = p.bends[0]
         notes.append(f"{n}. 板厚 t{p.thickness:g}；未注折弯内半径 R{bd['radius']:g}；"
@@ -343,9 +361,13 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
 def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
     if p.base_type == "shaft":
         return plan_shaft_drawing(spec, p, today)
+    if p.base_type == "weldment":
+        return plan_weldment_drawing(spec, p, today)
     b = p.bbox
     min_feat = min((h.drill for h in p.holes), default=0.0)
-    sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, min_feat)
+    # 焊接件尺寸大、孔是焊后加工的少数特征：按装配图方式选图幅（比例 ≥1:5 的最小图幅）
+    kind = "weldment" if p.base_type == "weldment_body" else "part"
+    sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, 0.0 if kind == "weldment" else min_feat, kind)
     vtypes = {v.type for v in views}
     dims: list[Dim] = []
     if spec.dimensions != "none":
@@ -445,6 +467,88 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan.revisions = list(spec.revisions)
     return plan
 
+
+
+# ---------------- 焊接件图 ----------------
+def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
+    """焊接件图：通用视图 + 孔标注（复用零件规划），加杆件位置尺寸、焊缝符号、切割清单与序号。"""
+    plan = plan_part_drawing(spec, _as_body(p), today)
+    plan.layout = "weldment"
+    plan.cut_list = [dict(r) for r in p.cut_list]
+    # 相同规格的板上孔（如 4 块地脚板各 1 孔）合并为一处标注 "4×Φ14 通"
+    holes = {h.name: h for h in p.holes}
+    groups: dict[tuple[str, str], list[Dim]] = {}
+    for d in plan.dims:
+        if d.kind == "callout" and d.ref in holes:
+            h = holes[d.ref]
+            base = re.sub(r"^\d+×", "", h.callout)
+            groups.setdefault((d.view, base), []).append(d)
+    drop = set()
+    for (_, base), ds in groups.items():
+        if len(ds) > 1:
+            n = sum(len(holes[d.ref].instances) for d in ds)
+            ds[0].text = f"{n}×{base}"
+            ds[0].ref = "+".join(d.ref for d in ds)
+            drop.update(id(d) for d in ds[1:])
+    plan.dims = [d for d in plan.dims if id(d) not in drop]
+    views = [v for v in plan.views if v.type in VIEW_AXES]
+    if spec.dimensions == "none" or not views:
+        return plan
+    main = views[0]
+    ha, va = VIEW_AXES[main.type]
+    b = p.bbox
+    have = {d.ref for d in plan.dims}
+    # 杆件位置：主视图上水平杆件的顶面高度、竖直杆件的外侧位置（坐标尺寸，基准为视图左下角）
+    lo = {ha: vrange(b, ha)[0], va: vrange(b, va)[0]}
+    for body in p.weld_bodies:
+        if body["kind"] != "member":
+            continue
+        bb = Box(*body["box"])
+        for ax in (ha, va):
+            if body["axis"] == ax[-1]:
+                continue  # 杆件沿该轴：长度由切割清单给出
+            u0, u1 = vrange(bb, ax)
+            val = round(u1 - lo[ax], 3) if ax == va else round(u0 - lo[ax], 3)
+            ref = f"ord:{main.type}.{ax}={val:g}"
+            if ref in have or val <= 0:
+                continue
+            at_u = (vrange(bb, ha)[0] + vrange(bb, ha)[1]) / 2 if ax == va else u0
+            at_w = u1 if ax == va else (vrange(bb, va)[0] + vrange(bb, va)[1]) / 2
+            plan.dims.append(Dim(main.type, "ordinate", ax, val, f"{val:g}", ref, (at_u, at_w)))
+            have.add(ref)
+    for ax in (ha, va):
+        ref = f"ord:{main.type}.{ax}=0"
+        if ref not in have:
+            plan.dims.append(Dim(main.type, "ordinate", ax, 0.0, "0", ref, (lo[ha], lo[va])))
+    # 焊缝符号：每种（焊脚, 形式）在主视图上标一处代表焊缝，注明处数；其余见技术要求
+    groups: dict[tuple[float, str], list[dict[str, Any]]] = {}
+    for w in p.welds:
+        groups.setdefault((w["size"], w["type"]), []).append(w)
+    used: list[tuple[float, float]] = []
+    span = max(_extent(b, ha), _extent(b, va))
+    for (k, kind), ws in sorted(groups.items()):
+        def score(x):  # 离已标的焊缝符号尽量远，其次靠上、靠左
+            c = (vc(x["center"], ha), vc(x["center"], va))
+            far = min((math.dist(c, u) for u in used), default=span)
+            return (round(far / span * 4), c[1], -c[0])
+        w = max(ws, key=score)
+        used.append((vc(w["center"], ha), vc(w["center"], va)))
+        plan.dims.append(Dim(main.type, "weld", None, k, f"K{k:g}", f"weld:K{k:g}:{kind}",
+                             (vc(w["center"], ha), vc(w["center"], va)),
+                             {"all_around": kind == "all_around", "count": len(ws)}))
+    # 切割清单序号（主视图）
+    for r in plan.cut_list:
+        body = next(x for x in p.weld_bodies if x["name"] == r["bodies"][0])
+        bb = Box(*body["box"])
+        plan.balloons.append({"item": r["item"], "instance": body["name"],
+                              "at": ((sum(vrange(bb, ha)) / 2), (sum(vrange(bb, va)) / 2))})
+    return plan
+
+
+def _as_body(p: ResolvedPart) -> ResolvedPart:
+    """以普通零件规划焊接件视图（避免递归进入焊接件分支）。"""
+    import dataclasses
+    return dataclasses.replace(p, base_type="weldment_body")
 
 
 # ---------------- 轴类零件图 ----------------

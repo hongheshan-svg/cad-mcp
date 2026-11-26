@@ -166,7 +166,9 @@ def cad_build_frame(spec: dict[str, Any]) -> dict[str, Any]:
     """铝型材机架：给 name/part_no/title、width/depth/height（外形 mm）、profile（默认 PRF-4040）、
     levels（横梁层中心高度，默认底层+顶层）、bracket（角码，默认 BRK-4040），生成立柱+横梁装配并建模。
     返回下料清单 cut_list、型材总长、BOM（含角码/T 螺母/螺钉）。之后可用 asm:<name> 把机架装进总装，
-    或在其上加安装板（坐标原点在机架底面中心）。"""
+    或在其上加安装板（坐标原点在机架底面中心）。
+    construction="welded" 生成方管焊接机架（section 默认 SHS40x3，feet 地脚板），作为一个焊接件零件，
+    返回切割清单；之后可 cad_build_drawing 出焊接件图（焊缝符号、切割清单、焊接技术要求）。"""
     return svc().build_frame(spec)
 
 

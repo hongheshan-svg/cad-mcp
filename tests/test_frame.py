@@ -28,3 +28,16 @@ def test_frame_validation():
         frame_assembly(FrameSpec(name="x", part_no="x", width=100, depth=600, height=500))
     with pytest.raises(CadError):
         frame_assembly(FrameSpec(name="x", part_no="x", width=600, depth=600, height=500, levels=[600]))
+
+
+def test_welded_frame(svc):
+    from cadmcp.ir import DrawingSpec
+    svc.change_begin("WF")
+    r = svc.build_frame({"name": "WF1", "part_no": "WF-01", "title": "焊接机架", "width": 800, "depth": 600,
+                         "height": 900, "construction": "welded", "levels": [150, 880]})
+    assert r["rules"]["passed"] and not r["rules"]["findings"], r["rules"]
+    cut = {(c["spec"], c.get("length_mm")): c["qty"] for c in r["cut_list"]}
+    assert cut[("方管 40×40×3", 890.0)] == 4 and cut[("方管 40×40×3", 720.0)] == 4 and cut[("方管 40×40×3", 520.0)] == 4
+    assert r["summary"]["bbox_mm"] == [800, 600, 900]  # 地脚板与外形平齐
+    d = svc.build(DrawingSpec.model_validate({"model": "WF1", "title_block": {"designer": "AI"}}))
+    assert d["rules"]["passed"], d["rules"]

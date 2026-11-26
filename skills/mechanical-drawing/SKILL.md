@@ -38,6 +38,11 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 和外购件对接的孔（气缸法兰、电机止口+螺钉孔、导轨安装孔、型材端面）一律用 `mount` 特征，不要手抄孔位：
   `{"feature": "mount", "name": "Motor", "item": "SRV-60-400W", "center": [x, y]}` 自动开孔并生成 `CS_Motor`，
   装配时外购件用库里登记的接口坐标系（结果里的 frame，如 CS_Flange）对齐到 `plate.CS_Motor`。A003（装错件/对齐错）必须修，A004 提示还没用 mount。
+- 焊接件（方管/角钢/槽钢机架、底座、支架）：`base.type: "weldment"`，`members` 写型钢截面（SHS40x3、RHS60x40x3、
+  L50x5、CHS48x3、FB50x6、C10、I14）和两端面中心坐标（只能沿 X/Y/Z），`plates` 写焊接板（地脚板、安装板、封板），
+  孔写在板的 `holes` 里，安装基准板设 `machined: true`。杆件端面要贴在别的件上，不要穿入（W001）；
+  焊缝、焊脚、切割清单由平台自动算。敞口管端会报 W003：加封板或设 `end_caps: true`。
+  简单焊接机架直接用 `cad_build_frame(construction="welded")`。
 - 铝型材机架用 `cad_build_frame`（外形 + 型材 + 横梁层高），不要逐根手写组件；返回 cut_list（下料清单）。
   机架以 `asm:<name>` 装进总装；附件、紧固件只进 BOM 时用装配的 `bom_extras`。
 - 选型先于建模：气缸、伺服+丝杠、同步带模组、受力螺栓先 `cad_calc` 计算（计算书随版本归档），

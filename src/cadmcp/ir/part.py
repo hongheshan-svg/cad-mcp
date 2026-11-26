@@ -50,7 +50,57 @@ class SheetMetalBase(Strict):
     flanges: list[Flange] = []
 
 
-Base = Annotated[ExtrudeBase | ShaftBase | SheetMetalBase, Field(discriminator="type")]
+class PlateHole(Strict):
+    """焊接板上的孔：位置相对板中心，在板面内（水平板 (x, y)；立板 (横向, z)）。"""
+    name: str
+    type: Literal["simple", "clearance", "tapped", "counterbore", "countersink"] = "clearance"
+    size: str | Num
+    positions: list[Vec2] = Field(min_length=1)
+    tolerance: str | None = None
+
+
+class WeldMember(Strict):
+    """型钢杆件：start/end 为两端面中心（只支持沿 X/Y/Z 轴向）。下料长度 = |end − start|。"""
+    name: str
+    section: str = Field(description='方管 "SHS40x3"、矩形管 "RHS60x40x3"（高×宽×壁厚）、角钢 "L50x5"、'
+                                     '圆管 "CHS48x3"、扁钢 "FB50x6"、槽钢 "C10"、工字钢 "I14"')
+    start: Vec3
+    end: Vec3
+    rotate: Literal[0, 90] = Field(0, description="截面绕杆件轴转 90°（矩形管/槽钢换向）")
+
+
+class WeldPlate(Strict):
+    """焊接板（安装板、地脚板、筋板、封板）：center 为板体中心，normal 为板厚方向。"""
+    name: str
+    size: Vec2 = Field(description="板面尺寸 (a, b)：水平板 (X, Y)；normal=y 的立板 (X, Z)；normal=x 的立板 (Y, Z)")
+    thickness: Num
+    center: Vec3
+    normal: Literal["x", "y", "z"] = "z"
+    holes: list[PlateHole] = []
+    machined: bool = Field(False, description="焊后加工（安装基准面）：图上注明焊后加工与平面度")
+
+
+class WeldmentBase(Strict):
+    """焊接件：型钢杆件 + 板件焊成一体（多实体零件）。焊缝由平台按接触自动识别。"""
+    type: Literal["weldment"] = "weldment"
+    members: list[WeldMember] = []
+    plates: list[WeldPlate] = []
+    weld_size: Num | None = Field(None, description="角焊缝焊脚 K（mm）；默认按较薄件自动取")
+    end_caps: bool = Field(False, description="敞口管端加塑料堵头（否则报 W003 提醒）")
+    stress_relief: bool = False
+
+    @model_validator(mode="after")
+    def _some(self):
+        if not self.members and not self.plates:
+            raise ValueError("weldment needs members or plates")
+        names = [m.name for m in self.members] + [p.name for p in self.plates]
+        dup = {n for n in names if names.count(n) > 1}
+        if dup:
+            raise ValueError(f"duplicate weldment body names: {sorted(dup)}")
+        return self
+
+
+Base = Annotated[ExtrudeBase | ShaftBase | SheetMetalBase | WeldmentBase, Field(discriminator="type")]
 
 
 # ---------- features ----------
@@ -236,7 +286,7 @@ class PartSpec(Strict):
     part_no: str = Field(description="drawing / ERP number")
     title: str = Field(description="part name shown on drawing/BOM, e.g. '气缸安装板'")
     material: str
-    category: Literal["machined", "sheet_metal", "purchased", "standard"] = "machined"
+    category: Literal["machined", "sheet_metal", "weldment", "purchased", "standard"] = "machined"
     surface_treatment: str | None = Field(None, description="e.g. '阳极氧化黑', '镀锌'")
     parameters: dict[str, Num] = Field({}, description="driving parameters → SW global variables / Creo parameters")
     base: Base

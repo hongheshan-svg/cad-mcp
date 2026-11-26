@@ -85,3 +85,24 @@ def test_sw_executor_precision(sw_svc):
     svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
     notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
     assert any("Φ0.05 A B" in n for n in notes) and any("其余" in n for n in notes)
+
+
+def test_sw_executor_weldment(sw_svc):
+    import sys
+    sys.path.insert(0, "examples")
+    from weld_base import weld_base
+    svc, ad = sw_svc
+    svc.change_begin("WB")
+    r = svc.build(PartSpec.model_validate(weld_base()))
+    assert r["regen"]["status"] != "errors", r["regen"]  # 装饰螺纹等非关键项为警告
+    svc.build(DrawingSpec.model_validate({"model": "WB1", "title_block": {"designer": "AI"}}))
+    names = [c[0] for c in ad.sw.calls]
+    ext = [c[1] for c in ad.sw.calls if c[0] == "FeatureExtrusion3"]
+    assert names.count("InsertWeldmentFeature") == 1
+    assert len(ext) == 4 + 8 + 5 and all(a[17] is False for a in ext)  # 每个实体独立（Merge=False）
+    post = ext[0]  # P1：立柱从 z=10 起拉伸 480
+    assert post[21] == pytest.approx(0.010) and post[5] == pytest.approx(0.480)
+    cuts = [c[1] for c in ad.sw.calls if c[0] == "FeatureCut4"]
+    assert cuts and all(a[3] == FakeConstants().swEndCondBlind for a in cuts)  # 板孔不打穿到杆件
+    notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
+    assert any("K3 ◣ ○" in n for n in notes)

@@ -276,3 +276,73 @@ def test_sheet_metal_flange_holes():
     assert any(x["rule"] == "R008" and "Low" in x["target"] for x in rules.check_part(p))
     with pytest.raises(CadError):
         resolve_part(PartSpec.model_validate(dict(sm, features=[dict(sm["features"][0], face="back")])))
+
+
+def _weld(**kw):
+    import sys
+    sys.path.insert(0, "examples")
+    from weld_base import weld_base
+    spec = weld_base()
+    spec["base"].update(kw)
+    return spec
+
+
+def test_weldment_resolve_cut_list_and_welds():
+    p = resolve_part(PartSpec.model_validate(_weld()))
+    cut = {(r["spec"], r.get("length_mm")): r["qty"] for r in p.cut_list}
+    assert cut[("方管 40×40×3", 480.0)] == 4 and cut[("方管 40×40×3", 520.0)] == 4 and cut[("方管 40×40×3", 320.0)] == 4
+    assert len(p.welds) == 28 and {w["size"] for w in p.welds} == {3.0}
+    # 立柱端面焊在地脚板上：周围焊，长度 = 方管周长
+    w = next(w for w in p.welds if {w["a"], w["b"]} == {"P1", "FOOT1"})
+    assert w["type"] == "all_around" and w["length"] == 160
+    # 质量：12 根方管 + 板
+    tube = (40 * 40 - 34 * 34) * (4 * 480 + 4 * 520 + 4 * 320)
+    plates = 4 * 80 * 80 * 10 + 600 * 400 * 10
+    holes = 4 * math.pi / 4 * 14 ** 2 * 10 + 4 * math.pi / 4 * 6.8 ** 2 * 10
+    assert p.mass_kg == pytest.approx((tube + plates - holes) * 7.85e-6, rel=0.01)
+    assert not [f for f in rules.check_part(p) if f["severity"] == "error"]
+    top = next(h for h in p.holes if h.name == "TOP_M8")
+    assert top.depth == 10 and top.instances[0].xyz[2] == 500
+
+
+def test_weldment_rules():
+    spec = _weld()
+    # 立柱穿进顶板 → W001；去掉地脚板 → 管端敞口 W003；浮空板 → W004；焊脚过大 → W002
+    spec["base"]["members"][0]["end"][2] = 495
+    spec["base"]["plates"] = spec["base"]["plates"][1:] + [
+        {"name": "LOOSE", "size": [50, 50], "thickness": 5, "center": [0, 0, 250]}]
+    spec["base"]["weld_size"] = 6
+    rs = {f["rule"] for f in rules.check_part(resolve_part(PartSpec.model_validate(spec)))}
+    assert {"W001", "W002", "W003", "W004"} <= rs
+    with pytest.raises(CadError):
+        resolve_part(PartSpec.model_validate(_weld(members=[{"name": "D", "section": "SHS40x3", "start": [0, 0, 0],
+                                                             "end": [100, 0, 100]}])))
+    with pytest.raises(CadError):
+        resolve_part(PartSpec.model_validate(_weld(members=[{"name": "D", "section": "XYZ40", "start": [0, 0, 0],
+                                                             "end": [100, 0, 0]}])))
+
+
+def test_weldment_sections():
+    from cadmcp.ir.weldment import section
+    assert section("RHS60x40x3").area == pytest.approx(60 * 40 - 54 * 34)
+    assert section("L50x5").area == pytest.approx(5 * 95)
+    assert section("C10").area == pytest.approx(1275) and section("I14").h == 140
+    assert section("CHS48x3").title == "圆管 Φ48×3" and not section("SHS45x3").standard
+
+
+def test_weldment_drawing(tmp_path):
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import DrawingSpec
+    svc = CadService.from_config(None, None, str(tmp_path / "ws"))
+    svc.change_begin("WB")
+    svc.build(PartSpec.model_validate(_weld()))
+    r = svc.build(DrawingSpec.model_validate({"model": "WB1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"] and not r["rules"]["findings"], r["rules"]
+    assert (r["sheet"], r["scale"]) == ("A2", "1:4")
+    plan = svc._get("WB1_DRW").resolved
+    welds = [d for d in plan.dims if d.kind == "weld"]
+    assert sum(d.extra["count"] for d in welds) == 28
+    assert any(d.text == "4×Φ14 通" for d in plan.dims)
+    plan = plan.to_dict()
+    assert any("GB/T 985.1" in n for n in plan["notes"]) and any("焊后加工" in n for n in plan["notes"])
+    assert len(plan["cut_list"]) == 5 and len(plan["balloons"]) == 5

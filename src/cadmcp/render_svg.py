@@ -157,6 +157,70 @@ def _draw_sheet_side(s, part, vtype, ha, P):
             s.poly([P(a0, z0), P(a1, z0), P(a1, z1), P(a0, z1)], THIN)
 
 
+def _draw_weld_bodies(s, part, vtype, ha, va, P):
+    """焊接件视图：每个杆件/板件按包围盒投影；端视的管材画内壁（细实线），圆管画圆。"""
+    from .ir.resolve import Box
+    depth_axis = next(a for a in "xyz" if a not in (ha[-1], va[-1]))
+    for body in sorted(part.weld_bodies, key=lambda b: b["kind"] != "plate"):
+        bb = Box(*body["box"])
+        (u0, u1), (w0, w1) = vrange(bb, ha), vrange(bb, va)
+        x0, y0 = P(u0, w0)
+        x1, y1 = P(u1, w1)
+        sec = body.get("section")
+        if body["kind"] == "member" and body["axis"] == depth_axis and sec and sec["kind"] == "CHS":
+            r = (x1 - x0) / 2
+            s.circle((x0 + x1) / 2, (y0 + y1) / 2, r)
+            s.circle((x0 + x1) / 2, (y0 + y1) / 2, r * (1 - 2 * sec["t"] / sec["h"]), THIN)
+            continue
+        s.rect(x0, y0, x1 - x0, y1 - y0)
+        if body["kind"] == "member" and body["axis"] == depth_axis and sec and sec["hollow"]:
+            k = (x1 - x0) * sec["t"] / (bb.xmax - bb.xmin if ha[-1] == "x" else (bb.ymax - bb.ymin if ha[-1] == "y" else bb.zmax - bb.zmin))
+            s.rect(x0 + k, y0 + k, x1 - x0 - 2 * k, y1 - y0 - 2 * k, THIN)
+
+
+def _weld_symbol(s, px, py, d):
+    """GB/T 324 角焊缝符号：箭头引线 → 基准线（实线 + 虚线识别线），三角形在基准线上（箭头侧），
+    左侧焊脚 K，右侧处数；周围焊在转折处画小圆。"""
+    from .render_gdt import _tri
+    ex, ey = px + 10, py + 12
+    s.line(px, py, ex, ey, THIN)
+    a = math.atan2(py - ey, px - ex)
+    _tri(s, [(px, py), (px - 2.2 * math.cos(a - 0.3), py - 2.2 * math.sin(a - 0.3)),
+             (px - 2.2 * math.cos(a + 0.3), py - 2.2 * math.sin(a + 0.3))])
+    L = 26
+    s.line(ex, ey, ex + L, ey, THIN)
+    s.line(ex, ey - 1.2, ex + L, ey - 1.2, THIN, "1.5,1")
+    tx = ex + 9
+    s.poly([(tx, ey), (tx + 3.5, ey), (tx, ey + 3.5)], THIN)  # 角焊缝 ◣
+    s.text(ex + 1, ey + 0.8, d.text, 3)
+    if d.extra and d.extra.get("count", 1) > 1:
+        s.text(tx + 5, ey + 0.8, f"{d.extra['count']}处", 3)
+    if d.extra and d.extra.get("all_around"):
+        s.circle(ex, ey, 1.4, THIN)
+
+
+def _draw_cut_list(s, x0, y_bottom, rows) -> float:
+    """切割清单（标题栏上方，自下而上：表头在下）。返回表顶 y。"""
+    cols = [("序号", 12), ("规格", 52), ("长度/尺寸", 36), ("数量", 14), ("备注", 66)]
+    by = y_bottom
+    for r in rows:
+        size = f"L={r['length_mm']:g}" if r["kind"] == "member" else "×".join(f"{v:g}" for v in r["size_mm"])
+        note = "两端平切 90°" if r["kind"] == "member" else ("焊后加工" if r.get("machined") else "")
+        xx = x0
+        for (_, w), val in zip(cols, [r["item"], r["spec"], size, r["qty"], note]):
+            s.rect(xx, by, w, 7, THIN)
+            s.text(xx + 1.5, by + 2.2, str(val), 3)
+            xx += w
+        by += 7
+    xx = x0
+    for name, w in cols:
+        s.rect(xx, by, w, 7, THIN)
+        s.text(xx + 1.5, by + 2.2, name, 3)
+        xx += w
+    s.text(x0, by + 9, "切割清单", 3.5)
+    return by + 14
+
+
 def _draw_iso(s, cx, cy, sc, box, part, asm):
     iso = _iso_xy(cx, cy, sc, box)
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
@@ -183,13 +247,15 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
                 s.line(*iso(*ring[k], z), *iso(*ring[k], z + L), THICK)
             z += L
         return
-    boxes = [i.world_bbox for i in asm.instances] if asm is not None else [box]
+    from .ir.resolve import Box
+    boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
+        ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
     for bb in boxes:
         P = {(i, j, k): iso(bb.xmin + i * (bb.xmax - bb.xmin), bb.ymin + j * (bb.ymax - bb.ymin),
                             bb.zmin + k * (bb.zmax - bb.zmin)) for i in (0, 1) for j in (0, 1) for k in (0, 1)}
         for e1, e2 in [((0,0,0),(1,0,0)),((1,0,0),(1,1,0)),((0,0,1),(1,0,1)),((1,0,1),(1,1,1)),((0,1,1),(1,1,1)),
                        ((0,0,1),(0,1,1)),((0,0,0),(0,0,1)),((1,0,0),(1,0,1)),((1,1,0),(1,1,1))]:
-            s.line(*P[e1], *P[e2], THIN if asm is not None else THICK)
+            s.line(*P[e1], *P[e2], THIN if asm is not None or len(boxes) > 1 else THICK)
 
 
 def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = None) -> tuple[str, dict[str, Any]]:
@@ -253,6 +319,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.rect(x0, y0, x1 - x0, y1 - y0)
                 z += L
             s.line(*P(0, box.zmin - 3), *P(0, box.zmax + 3), THIN, "6,1.5,1,1.5")
+        elif part is not None and part.weld_bodies:
+            _draw_weld_bodies(s, part, v.type, ha, va, P)
         elif asm is not None:
             for inst in asm.instances:
                 (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
@@ -264,9 +332,12 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             x1, y1 = P(uhi, whi)
             s.rect(x0, y0, x1 - x0, y1 - y0)
         # 序号气泡（主视图）
-        if asm is not None and v.type == plan.views[0].type:
+        if plan.balloons and v.type == plan.views[0].type:
             anchors = []
             for b_ in plan.balloons:
+                if "at" in b_:
+                    anchors.append((b_, P(*b_["at"])))
+                    continue
                 inst = next(i for i in asm.instances if i.id == b_["instance"])
                 (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
                 anchors.append((b_, P((bu0 + bu1) / 2, (bw0 + bw1) / 2)))
@@ -340,6 +411,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     s.line(vx1 + 1, py, vx1 + 4 + (ord_v % 2) * 3, py, 0.18)
                     s.text(vx1 + 5 + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
                     ord_v += 1
+            elif d.kind == "weld":
+                _weld_symbol(s, *P(*d.at), d)
             elif d.kind in ("datum", "gtol", "roughness"):
                 from . import render_gdt
                 render_gdt.draw(s, d.kind, *P(*d.at), d.extra, d.text)
@@ -353,7 +426,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
 
     if part is not None and plan.title_block.get("surface_finish"):
         from . import render_gdt
-        render_gdt.general_roughness(s, W - 5 - 180, 5 + 56 + 14 + 5 * len(plan.notes) + 6,
+        render_gdt.general_roughness(s, W - 5 - 180, 5 + 56 + 14 + 5 * len(plan.notes) + 6
+                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0),
                                      plan.title_block["surface_finish"])
         rendered_refs.append("general_roughness")
     # 标题栏（右下）
@@ -392,6 +466,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         ny -= 5
     if plan.notes:
         rendered_refs.append("notes")
+    if plan.cut_list:
+        _draw_cut_list(s, x0, y0 + tbh + 12 + 5 * len(plan.notes), plan.cut_list)
+        rendered_refs.append("cut_list")
     # 明细表（标题栏上方）
     if plan.bom:
         by = y0 + tbh + 12 + 5 * len(plan.notes)

@@ -15,7 +15,8 @@ from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
 from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
-                   SheetMetalBase, ShaftBase, Boss)
+                   SheetMetalBase, ShaftBase, Boss, WeldmentBase)
+from .weldment import plate_hole_frame, resolve_weldment
 
 
 @dataclass
@@ -78,6 +79,7 @@ class ResolvedHole:
     slot: dict[str, float] | None = None  # {width, length(中心距), angle}
     at: float | None = None
     flat_uv: list[tuple[float, float]] | None = None  # 钣金：各孔在展开图上的位置
+    plate_box: "Box | None" = None  # 焊接件：孔所在焊接板的包围盒（孔边距按板算）
 
     def capsule(self, inst: "HoleInstance") -> tuple[tuple[float, float], tuple[float, float], float]:
         """孔在面内的形状：线段两端点 + 半径（圆孔两端点重合）。用于边距/孔距计算。"""
@@ -132,6 +134,11 @@ class ResolvedPart:
     roughness: list[dict[str, Any]] = field(default_factory=list)
     mounts: list[dict[str, Any]] = field(default_factory=list)
     flat_box: tuple[float, float, float, float] | None = None  # 展开图范围 (u0, u1, v0, v1)
+    weld_bodies: list[dict[str, Any]] = field(default_factory=list)  # 焊接件：杆件/板件
+    welds: list[dict[str, Any]] = field(default_factory=list)
+    cut_list: list[dict[str, Any]] = field(default_factory=list)
+    weld_findings: list[dict[str, Any]] = field(default_factory=list)
+    weld_options: dict[str, Any] = field(default_factory=dict)
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -150,6 +157,9 @@ class ResolvedPart:
             **({"flat_pattern_mm": [round(v, 2) for v in self.flat_pattern]} if self.flat_pattern else {}),
             **({"shaft_features": [{"name": f["name"], "callout": f["callout"]} for f in self.shaft_features]}
                if self.shaft_features else {}),
+            **({"cut_list": [{k: v for k, v in r.items() if k != "unit_area_mm2"} for r in self.cut_list],
+                "welds": {"count": len(self.welds), "total_length_mm": round(sum(w["length"] for w in self.welds)),
+                          "sizes": sorted({w["size"] for w in self.welds})}} if self.weld_bodies else {}),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -555,6 +565,15 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                           "k_factor": base.k_factor})
         flat = (fu1 - fu0, fv1 - fv0)
         flat_box = (fu0, fu1, fv0, fv1)
+    elif isinstance(base, WeldmentBase):
+        if spec.features:
+            raise CadError(SPEC_INVALID, "weldment: put holes on plates (plates[].holes), not in features",
+                           hint="焊后加工孔写在对应焊接板的 holes 里")
+        wr = resolve_weldment(base, ev)
+        bx = [b.box for b in wr.bodies]
+        box = Box(min(b[0] for b in bx), max(b[1] for b in bx), min(b[2] for b in bx), max(b[3] for b in bx),
+                  min(b[4] for b in bx), max(b[5] for b in bx))
+        volume = sum(b.volume for b in wr.bodies)
     else:  # pragma: no cover
         raise CadError(SPEC_INVALID, "unknown base type")
 
@@ -616,6 +635,23 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             mounts.append(info)
         else:
             feats.append(f)
+    if isinstance(base, WeldmentBase):
+        bodies = {b.name: b for b in wr.bodies}
+        for pl in base.plates:
+            body = bodies[pl.name]
+            face, (ou, ov) = plate_hole_frame(pl, body)
+            pbox = Box(*body.box)
+            for ph in pl.holes:
+                try:
+                    hs = Hole(name=f"{pl.name}_{ph.name}", face=face, type=ph.type, size=ph.size,
+                              tolerance=ph.tolerance, at=face_plane(face, pbox),
+                              positions=[(ou + ev(u), ov + ev(v)) for u, v in ph.positions])
+                except ValueError as e:
+                    raise CadError(SPEC_INVALID, f"plate {pl.name} hole {ph.name}: {e}") from None
+                rh = resolve_hole(hs, ev, pbox)
+                rh.plate_box = pbox
+                volume -= _hole_volume(rh)
+                holes.append(rh)
     for f in feats:
         if isinstance(f, Hole):
             section = profile.outline if (isinstance(base, (ExtrudeBase, SheetMetalBase)) and profile) else None
@@ -654,8 +690,9 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         refs["MP_End0"] = ResolvedRef("MP_End0", "plane", (0.0, 0.0, box.zmin), direction=(0.0, 0.0, -1.0), auto=True)
         refs["MP_End1"] = ResolvedRef("MP_End1", "plane", (0.0, 0.0, box.zmax), direction=(0.0, 0.0, 1.0), auto=True)
     else:
-        refs["MP_Top"] = ResolvedRef("MP_Top", "plane", (0.0, 0.0, thickness), direction=(0.0, 0.0, 1.0), auto=True)
-        refs["MP_Bottom"] = ResolvedRef("MP_Bottom", "plane", (0.0, 0.0, 0.0), direction=(0.0, 0.0, -1.0), auto=True)
+        zt, zb = (thickness, 0.0) if thickness is not None else (box.zmax, box.zmin)
+        refs["MP_Top"] = ResolvedRef("MP_Top", "plane", (0.0, 0.0, zt), direction=(0.0, 0.0, 1.0), auto=True)
+        refs["MP_Bottom"] = ResolvedRef("MP_Bottom", "plane", (0.0, 0.0, zb), direction=(0.0, 0.0, -1.0), auto=True)
     for m in mounts:
         o = face_point(m["face"], m["center"], box)
         rot = (0.0, 0.0, m["rotate"]) if m["face"] == "top" else (180.0, 0.0, -m["rotate"])
@@ -708,4 +745,8 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
         shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats,
+        **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
+            "weld_findings": wr.findings,
+            "weld_options": {"end_caps": base.end_caps, "open_ends": wr.open_ends,
+                             "stress_relief": base.stress_relief}} if isinstance(base, WeldmentBase) else {}),
     )

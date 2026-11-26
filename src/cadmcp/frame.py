@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -31,6 +31,54 @@ class FrameSpec(Strict):
     fasteners_per_bracket: list[str] = Field(["TNUT-M8-40", "SHCS-M8x16"],
                                              description="每个角码每侧用 1 套：T 型螺母 + 螺钉")
     min_beam_length: Num = 50.0
+    construction: Literal["aluminium", "welded"] = Field("aluminium", description="welded = 型钢焊接机架（单个焊接件零件）")
+    section: str = Field("SHS40x3", description="焊接机架型钢截面")
+    material: str = "Q235"
+    feet: bool = Field(True, description="焊接机架：立柱底部焊地脚板（带 Φ14 地脚螺栓孔）")
+    foot_thickness: Num = 10.0
+    surface_treatment: str = "喷砂后喷漆"
+
+
+def weld_frame_part(spec: FrameSpec) -> dict[str, Any]:
+    """焊接机架：4 根立柱 + 各层前后/左右横梁（夹在立柱之间）+ 地脚板。返回零件 spec（weldment）。"""
+    from .ir.weldment import section
+    s = section(spec.section)
+    if s.h != s.b:
+        raise CadError(SPEC_INVALID, "welded frame needs a square/round section (SHS/CHS)")
+    p = s.h
+    W, D, H = float(spec.width), float(spec.depth), float(spec.height)
+    if min(W, D) < 2 * p + float(spec.min_beam_length):
+        raise CadError(SPEC_INVALID, f"frame {W:g}×{D:g} too small for {p:g} section")
+    ft = float(spec.foot_thickness) if spec.feet else 0.0
+    levels = [float(z) for z in (spec.levels or [ft + p / 2, H - p / 2])]
+    for z in levels:
+        if not ft + p / 2 - 1e-6 <= z <= H - p / 2 + 1e-6:
+            raise CadError(SPEC_INVALID, f"level {z:g} outside post height",
+                           hint=f"层高（横梁中心）范围 {ft + p / 2:g}–{H - p / 2:g}")
+    cx, cy = W / 2 - p / 2, D / 2 - p / 2
+    corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+    members = [{"name": f"POST{i + 1}", "section": spec.section, "start": [sx * cx, sy * cy, ft], "end": [sx * cx, sy * cy, H]}
+               for i, (sx, sy) in enumerate(corners)]
+    for k, z in enumerate(levels, 1):
+        if spec.beams_x:
+            members += [{"name": f"BX{tag}{k}", "section": spec.section, "start": [-cx + p / 2, sy * cy, z],
+                         "end": [cx - p / 2, sy * cy, z]} for sy, tag in ((-1, "F"), (1, "B"))]
+        if spec.beams_y:
+            members += [{"name": f"BY{tag}{k}", "section": spec.section, "start": [sx * cx, -cy + p / 2, z],
+                         "end": [sx * cx, cy - p / 2, z]} for sx, tag in ((-1, "L"), (1, "R"))]
+    plates = []
+    if spec.feet:
+        # 地脚板外沿与机架外形平齐、向内伸出；地脚螺栓孔在立柱内侧对角（距立柱内角 15）
+        a = p + 40
+        off = a / 2 - p - 15
+        plates = [{"name": f"FOOT{i + 1}", "size": [a, a], "thickness": ft,
+                   "center": [sx * (W / 2 - a / 2), sy * (D / 2 - a / 2), ft / 2],
+                   "holes": [{"name": "H", "type": "simple", "size": 14, "positions": [[sx * off, sy * off]]}]}
+                  for i, (sx, sy) in enumerate(corners)]
+    return {"name": spec.name, "part_no": spec.part_no, "title": spec.title, "material": spec.material,
+            "category": "weldment", "surface_treatment": spec.surface_treatment,
+            "properties": {"外形": f"{W:g}×{D:g}×{H:g}"},
+            "base": {"type": "weldment", "members": members, "plates": plates, "end_caps": True}}
 
 
 def frame_assembly(spec: FrameSpec, library: Library | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:

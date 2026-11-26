@@ -55,10 +55,83 @@ def _face_sketch(face: str, box, sketch: str, at: float | None = None, uv=(None,
                     "在目标位置附近沿法向打射线选面，不依赖面 ID；面内坐标经 ModelToSketchTransform 换算")
 
 
+AXIS_PLANE = {"z": "Front Plane", "x": "Right Plane", "y": "Top Plane"}  # 草图平面法向 = 拉伸方向
+
+
+def _section_loops(body: dict) -> tuple[list[list[list[float]]], list[tuple[list[float], float]]]:
+    """杆件/板件截面（3D 点，位于过原点、法向为杆件轴的平面上）：返回 (闭合折线列表, 圆列表)。"""
+    a = body["axis"] if body["kind"] == "member" else body["normal"]
+    ia = "xyz".index(a)
+    box = body["box"]
+    if body["kind"] == "member":
+        h_ax = body["height_axis"]
+        o_ax = next(x for x in "xyz" if x not in (a, h_ax))
+    else:
+        h_ax, o_ax = [x for x in "xyz" if x != a]
+    ih, io = "xyz".index(h_ax), "xyz".index(o_ax)
+    h0, h1 = box[2 * ih], box[2 * ih + 1]
+    o0, o1 = box[2 * io], box[2 * io + 1]
+
+    def P(hv, ov):
+        pt = [0.0, 0.0, 0.0]
+        pt[ia], pt[ih], pt[io] = 0.0, hv, ov
+        return pt
+
+    def rect(a0, a1, b0, b1):
+        return [P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)]
+
+    sec = body.get("section")
+    if sec is None or sec["kind"] == "FB":
+        return [rect(h0, h1, o0, o1)], []
+    k, t = sec["kind"], sec["t"]
+    if k in ("SHS", "RHS"):
+        return [rect(h0, h1, o0, o1), rect(h0 + t, h1 - t, o0 + t, o1 - t)], []
+    if k == "CHS":
+        c = P((h0 + h1) / 2, (o0 + o1) / 2)
+        return [], [(c, sec["h"]), (c, sec["h"] - 2 * t)]
+    if k == "L":  # 角钢：内角在 (h0, o0)，两肢沿 +h、+o
+        return [[P(h0, o0), P(h1, o0), P(h1, o0 + t), P(h0 + t, o0 + t), P(h0 + t, o1), P(h0, o1)]], []
+    from ...ir.weldment import CHANNEL, IBEAM
+    if k == "C":  # 槽钢：腹板在 o0 侧，开口朝 +o
+        d, tf = CHANNEL[sec["code"]][2], CHANNEL[sec["code"]][3]
+        return [[P(h0, o0), P(h0, o1), P(h0 + tf, o1), P(h0 + tf, o0 + d), P(h1 - tf, o0 + d), P(h1 - tf, o1),
+                 P(h1, o1), P(h1, o0)]], []
+    d, tf = IBEAM[sec["code"]][2], IBEAM[sec["code"]][3]  # 工字钢
+    om = (o0 + o1) / 2
+    return [[P(h0, o0), P(h0, o1), P(h0 + tf, o1), P(h0 + tf, om + d / 2), P(h1 - tf, om + d / 2), P(h1 - tf, o1),
+             P(h1, o1), P(h1, o0), P(h1 - tf, o0), P(h1 - tf, om - d / 2), P(h0 + tf, om - d / 2), P(h0 + tf, o0)]], []
+
+
+def weldment_ops(p: ResolvedPart) -> list[NativeOp]:
+    """焊接件：多实体零件。每个杆件/板件在垂直于其轴的基准面上画截面，带起始偏移拉伸、不合并；
+    之后插入焊件特征（SW 自动生成切割清单）。焊缝以焊缝符号/技术要求表达，不建焊缝实体。"""
+    ops = [NativeOp("insert_weldment", {}, "FeatureManager.InsertWeldmentFeature：多实体 + 切割清单")]
+    for body in p.weld_bodies:
+        a = body["axis"] if body["kind"] == "member" else body["normal"]
+        ia = "xyz".index(a)
+        lo, hi = body["box"][2 * ia], body["box"][2 * ia + 1]
+        sk = f"SK_{body['name']}"
+        loops, circles = _section_loops(body)
+        ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": AXIS_PLANE[a]}))
+        for loop in loops:
+            ops.append(NativeOp("sketch_polyline_3d", {"sketch": sk, "points": loop}))
+        for c, dia in circles:
+            ops.append(NativeOp("sketch_circle_3d", {"sketch": sk, "center": c, "diameter": dia}))
+        ops.append(NativeOp("extrude_body", {"feature": body["name"], "sketch": sk, "start_offset": lo,
+                                             "depth": hi - lo},
+                            "FeatureExtrusion3 Merge=False，起始偏移到杆件端面"))
+    welds = p.welds
+    if welds:
+        ops.append(NativeOp("set_custom_properties", {"properties": {
+            "WeldCount": str(len(welds)), "WeldLength": f"{sum(w['length'] for w in welds):.0f}",
+            "WeldSizes": ",".join(f"K{k:g}" for k in sorted({w['size'] for w in welds}))}}))
+    return ops
+
+
 def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via: str = "cut") -> list[NativeOp]:
     def _end(h) -> str:
-        # 钣金翻边上的"通孔"只穿板厚：through_all 会连对面翻边一起打穿
-        if p.base_type == "sheet_metal" and h.face not in ("top", "bottom"):
+        # 钣金翻边上的"通孔"只穿板厚：through_all 会连对面翻边一起打穿；焊接板同理（不能打到下面的杆件）
+        if p.base_type == "sheet_metal" and h.face not in ("top", "bottom") or p.base_type == "weldment":
             return "blind"
         return "through_all" if h.through else "blind"
 
@@ -109,6 +182,8 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                     [0, r0, f["z0"]], [0, r1, f["z0"]], [0, r1, f["z1"]], [0, r0, f["z1"]]],
                     "centerline": [[0, 0, -5], [0, 0, p.bbox.zmax + 5]]}))
                 ops.append(NativeOp("revolve", {"feature": f["name"], "sketch": sk, "angle": 360, "cut": True}))
+    elif p.base_type == "weldment":
+        ops += weldment_ops(p)
     else:  # sheet_metal
         ops.append(NativeOp("sketch_on_plane", {"sketch": "SK_Base", "plane": "Front Plane"}))
         ops += _profile_ops(p.profile, "SK_Base")
@@ -291,6 +366,16 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref}))
+    for d in plan.dims:  # 焊缝符号：先用注释承载（P1：InsertWeldSymbol3 原生焊接符号）
+        if d.kind == "weld":
+            ex = d.extra or {}
+            text = f"{d.text} ◣{' ○' if ex.get('all_around') else ''}  {ex.get('count', 1)}处"
+            ops.append(NativeOp("leader_note", {"view": d.view, "text": text, "at_model": d.at, "ref": d.ref}))
+    if plan.cut_list:
+        ops.append(NativeOp("weldment_cut_list", {"view": plan.views[0].type, "anchor": "above_title_block",
+                                                  "rows": plan.cut_list},
+                            "IView.InsertWeldmentTable；失败时以注释输出"))
+        ops.append(NativeOp("auto_balloon", {"view": plan.views[0].type}))
     for d in plan.dims:  # 精度标注：先用注释承载（P1：InsertGtol / InsertDatumTag2 / InsertSurfaceFinishSymbol3 原生符号）
         if d.kind in ("datum", "gtol", "roughness"):
             text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]

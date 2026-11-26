@@ -22,7 +22,7 @@ MM = 0.001
 NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
-                "section_view", "shaft_dimension"}
+                "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list"}
 
 
 class OpFailed(Exception):
@@ -349,6 +349,37 @@ class SwExecutor:
             a, b = self._to_sketch(centerline[0]), self._to_sketch(centerline[1])
             sm.CreateCenterLine(a[0], a[1], 0, b[0], b[1], 0)
         return {"edges": len(sk)}
+
+    def op_sketch_circle_3d(self, sketch: str, center, diameter: float):
+        c = self._to_sketch(center)
+        if self.model.SketchManager.CreateCircleByRadius(c[0], c[1], 0, diameter / 2 * MM) is None:
+            raise OpFailed("CreateCircleByRadius failed")
+        return {}
+
+    def op_insert_weldment(self):
+        if self.model.FeatureManager.InsertWeldmentFeature() is None:
+            raise OpFailed("InsertWeldmentFeature failed")
+        return {}
+
+    def op_extrude_body(self, feature: str, sketch: str, start_offset: float, depth: float):
+        """独立实体（Merge=False）：从草图平面偏移 start_offset（可为负）开始拉伸 depth。"""
+        self._select_sketch(sketch)
+        fm = self.model.FeatureManager
+        t0 = self.c.swStartOffset if abs(start_offset) > 1e-9 else 0
+        feat = fm.FeatureExtrusion3(True, False, False, self.c.swEndCondBlind, 0, depth * MM, 0,
+                                    False, False, False, False, 0, 0, False, False, False, False,
+                                    False, True, True, t0, abs(start_offset) * MM, start_offset < 0)
+        if feat is None:
+            raise OpFailed(f"FeatureExtrusion3 (body {feature}) failed")
+        feat.Name = feature
+        self.features[feature] = feat
+        return {"feature": feature}
+
+    def op_weldment_cut_list(self, view: str, anchor: str, rows):
+        v = self.views.get(view) if hasattr(self, "views") else None
+        if v is None or v.InsertWeldmentTable(False, 0.0, 0.0, 1, "", "") is None:
+            raise OpFailed("InsertWeldmentTable failed (cut list in notes)")
+        return {"rows": len(rows)}
 
     def op_keyway_cut(self, feature: str, sketch: str, start_offset: float, depth: float, flip: bool = False):
         """从草图平面偏移 start_offset 处开始、沿法向切 depth（键槽底面 = 轴心 + d/2 - t1）。"""

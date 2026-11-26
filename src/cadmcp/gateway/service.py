@@ -452,6 +452,15 @@ class CadService:
         """型材机架：生成装配 spec 并建模，返回下料清单。"""
         from ..frame import FrameSpec, frame_assembly
         fs = FrameSpec.model_validate(spec_dict)
+        if fs.construction == "welded":
+            from ..frame import weld_frame_part
+            part = weld_frame_part(fs)
+            out = self.build(PartSpec.model_validate(part))
+            out["cut_list"] = out["summary"]["cut_list"]
+            out["total_profile_m"] = round(sum(r["length_mm"] * r["qty"] for r in out["cut_list"]
+                                               if r["kind"] == "member") / 1000, 3)
+            out["part_spec"] = part
+            return out
         asm, cut = frame_assembly(fs, self.library)
         out = self.build(AssemblySpec.model_validate(asm))
         out["cut_list"] = cut

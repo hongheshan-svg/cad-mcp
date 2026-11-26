@@ -44,12 +44,14 @@ def check_part(p: ResolvedPart) -> list[Finding]:
     for key, val in (("part_no", p.part_no), ("title", p.title), ("material", p.material)):
         if not val:
             out.append(_f("R001", "error", p.name, f"缺少 {key}", f"在 spec 中填写 {key}"))
-    if p.category in ("machined", "sheet_metal") and not p.surface_treatment:
+    if p.category in ("machined", "sheet_metal", "weldment") and not p.surface_treatment:
         out.append(_f("R001", "warning", p.name, "未指定表面处理", "填写 surface_treatment，如 '阳极氧化黑'/'镀锌'/'无'"))
 
+    out += [dict(f) for f in p.weld_findings]  # W001–W005 焊接件规则（解析时生成）
     # R002/R003 孔边距、孔是否破边
     for h in p.holes:
-        outline = face_outline(h.face, p.bbox, p.profile, h.at, extrude=p.base_type == "extrude")
+        outline = face_outline(h.face, h.plate_box or p.bbox, None if h.plate_box else p.profile, h.at,
+                               extrude=p.base_type == "extrude")
         min_wall = max(2.0, 0.5 * h.nominal)
         for inst in h.instances:
             p1, p2, rad = h.capsule(inst)
@@ -63,7 +65,7 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                               f"孔中心离边至少 {h.max_dia / 2 + min_wall:.1f} mm"))
         # R004 盲孔深度
         if not h.through:
-            extent = face_depth(h.face, p.bbox, h.at)
+            extent = face_depth(h.face, h.plate_box or p.bbox, h.at)
             if h.depth >= extent - 0.5:
                 out.append(_f("R004", "error", h.name, f"盲孔深度 {h.depth} 接近/超过料厚 {extent}",
                               "改为 depth='through' 或减小深度"))
