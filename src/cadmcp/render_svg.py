@@ -376,7 +376,7 @@ def _sub_segments(a, b, cuts):
 
 def _draw_section(s, sec, V, v, cx, cy, g=None):
     """剖视图：剖面线（45° 细实线，间距 3，GB/T 4457.5 金属材料）只画在实体剖面区，孔/型腔为空；
-    孔口处不画轮廓线；阶梯剖转折处不画线；半剖以中心线为界。"""
+    孔口处画后方可见棱线（轮廓连续）；阶梯剖转折处不画线；半剖以中心线为界。"""
     g = g or sec.geometry
     solid = [[V(q) for q in poly] for poly in g["solid"]]
     voids = [[V(q) for q in poly] for poly in g["voids"]]
@@ -393,7 +393,9 @@ def _draw_section(s, sec, V, v, cx, cy, g=None):
             + "".join(f"<path d='{path([v_])}' fill='black'/>" for v_ in voids) + "</mask></defs>"  # 逐个画：重叠空腔不因绕向相反而抵消
             f"<rect x='{x0:.2f}' y='{s.y(y1):.2f}' width='{x1 - x0:.2f}' height='{y1 - y0:.2f}' "
             f"fill='url(#h{mid})' mask='url(#m{mid})'/>")
-    openings = [(V(a), V(b)) for a, b in g["openings"]]  # 孔口/型腔口：实体轮廓上去掉
+    # 孔口/型腔口（g["openings"]）照画：剖切面后方的半个孔口/型腔后壁棱线可见，轮廓线连续（GB/T 4458.6）；
+    # 只去掉局部剖波浪线上的边（g["erase"]）与阶梯剖各段的共享边
+    openings = [(V(a), V(b)) for a, b in g.get("erase", [])]
     # 合并相邻实体（阶梯剖各段、相同高度）：共享的竖边不画
     shared = []
     for i, a in enumerate(solid):
@@ -445,7 +447,7 @@ def _draw_local(s, sec, V):
     on_break = lambda q: abs(q[hi_] - h0) <= amp + 1e-6 or abs(q[hi_] - h1) <= amp + 1e-6  # noqa: E731
     g2 = dict(g)
     # 轮廓边中落在波浪线上的（两端点都在波浪线带内且非水平）不画粗线
-    g2["openings"] = list(g["openings"]) + [
+    g2["erase"] = [
         (poly[k], poly[(k + 1) % len(poly)]) for poly in g["solid"] for k in range(len(poly))
         if on_break(poly[k]) and on_break(poly[(k + 1) % len(poly)]) and abs(poly[k][2] - poly[(k + 1) % len(poly)][2]) > 1e-9]
     _draw_section(s, sec, V, None, 0, 0, g2)

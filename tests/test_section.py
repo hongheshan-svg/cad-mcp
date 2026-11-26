@@ -146,3 +146,22 @@ def test_step_turn_inside_feature_falls_back_to_full():
               {"feature": "hole", "name": "Pin", "type": "simple", "size": 8, "tolerance": "H7", "positions": [[0, 45]]}]}
     s = sx.auto_section(resolve_part(PartSpec.model_validate(fl)))
     assert s.kind == "full" and s.path[0][2] == 0.0 and {"Bore", "Bolt"} <= set(s.features)
+
+
+def test_section_outline_continuous_across_hole_mouths():
+    """剖视图孔口处画剖切面后方可见的孔口棱线：板的上下轮廓线连续（GB/T 4458.6）。"""
+    from cadmcp.render_svg import _draw_section, _Svg
+    from cadmcp.section import auto_section, geometry
+    p = resolve_part(PartSpec.model_validate({
+        "name": "PL", "part_no": "PL", "title": "板", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 40}, "thickness": 10},
+        "features": [{"feature": "hole", "name": "B", "type": "simple", "size": 20, "tolerance": "H7",
+                      "positions": [[0, 0]]}]}))
+    sec = auto_section(p)
+    sec.geometry = geometry(p, sec)
+    s = _Svg(420, 297)
+    segs = []
+    s.line = lambda x1, y1, x2, y2, w=0.25, dash=None: segs.append((x1, y1, x2, y2))
+    _draw_section(s, sec, lambda q: (q[0], q[2]), None, 0, 0)
+    for z in (0, 10):  # 上下表面在孔口 x ∈ [-10, 10] 处有线
+        assert any(abs(a[1] - z) < 1e-6 and abs(a[3] - z) < 1e-6 and min(a[0], a[2]) < 0 < max(a[0], a[2]) for a in segs)
