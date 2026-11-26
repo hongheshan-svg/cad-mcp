@@ -36,6 +36,10 @@ class CadAdapter(ABC):
     @abstractmethod
     def info(self) -> dict[str, Any]: ...
 
+    def has_library_item(self, code: str) -> bool:
+        """本 CAD 是否有该标准件/外购件的原生模型；没有时平台会生成包络块占位零件。"""
+        return True
+
     @abstractmethod
     def capabilities(self) -> dict[str, str]: ...
 

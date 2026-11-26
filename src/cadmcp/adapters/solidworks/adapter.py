@@ -66,6 +66,9 @@ class SolidWorksAdapter(CadAdapter):
     def info(self) -> dict[str, Any]:
         return {"cad": "solidworks", "version": self.version, "revision": self.revision, "adapter": "com"}
 
+    def has_library_item(self, code: str) -> bool:
+        return bool(self.library_root) and (Path(self.library_root) / f"{code}.SLDPRT").exists()
+
     def capabilities(self) -> dict[str, str]:
         caps = {c: "partial" for c in CAPABILITIES}  # 由契约测试结果覆盖
         caps.update({"set_parameters_existing": "none", "replace_component": "none"})

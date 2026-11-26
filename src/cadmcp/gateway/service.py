@@ -221,11 +221,16 @@ class CadService:
                 deps = {c.source.split(":", 1)[1] for c in spec.components if c.source.startswith(("part:", "asm:"))}
                 files = {c.id: models[c.source.split(":", 1)[1]].file for c in spec.components
                          if c.source.startswith(("part:", "asm:"))}
+                placeholders = self._library_placeholders(t, spec, s.work, files)
                 br = t.adapter.build_assembly(spec, res, s.work, files)
                 interf = aabb_interference(res)
                 findings = [{"rule": "A001", "severity": "warning", "target": f"{i['a']}~{i['b']}",
                              "message": f"包围盒重叠 {i['overlap_mm']} mm（需精确干涉检查确认）"} for i in interf]
                 out = {"summary": res.summary(), "bom": res.bom()}
+                for code in placeholders:
+                    findings.append({"rule": "A002", "severity": "warning", "target": code,
+                                     "message": f"标准件库缺少 {code} 的原生模型，已用包络块占位（BOM 编码不变）",
+                                     "hint": "把带 CS_ 基准的模型放入节点配置的 library_root"})
             else:
                 if spec.model not in models:
                     raise CadError(DOC_NOT_FOUND, f"model {spec.model!r} not built in this session",
@@ -298,6 +303,35 @@ class CadService:
                               lp.mass_kg, lp.bbox, lp.references, model=lp.model, properties=lp.properties)
         raise CadError(CAPABILITY_UNSUPPORTED, "file: components need open_existing support (P1)",
                        hint="先把现有零件转成 spec，或等待真实 CAD 目标支持")
+
+    def _library_placeholders(self, t: Target, spec, work: Path, files: dict[str, Path]) -> list[str]:
+        """库里没有原生模型的标准件：按包络尺寸生成占位块（带同名 CS_ 基准），保证装配能建出来。"""
+        made: dict[str, Path] = {}
+        for c in spec.components:
+            if not c.source.startswith("lib:"):
+                continue
+            ref = c.source[4:]
+            code = ref.partition("?")[0]
+            if t.adapter.has_library_item(code):
+                continue
+            lp = self.library.get(ref)
+            pn = lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items())
+            if pn not in made:
+                b = lp.bbox
+                dz = -b.zmin  # 占位件坐标系 = 库坐标系沿 Z 平移，使块从 z=0 起
+                ps = PartSpec.model_validate({
+                    "name": f"PH_{pn}", "part_no": pn, "title": f"{lp.title}（占位）", "material": "AL6061-T6",
+                    "category": "purchased",
+                    "base": {"type": "extrude", "thickness": b.zmax - b.zmin,
+                             "profile": {"shape": "rect", "width": b.xmax - b.xmin, "height": b.ymax - b.ymin,
+                                         "center": [(b.xmin + b.xmax) / 2, (b.ymin + b.ymax) / 2]}},
+                    "references": [{"name": n, "origin": [r.origin[0], r.origin[1], r.origin[2] + dz],
+                                    "rotate": list(r.rotate)}
+                                   for n, r in lp.references.items() if n.startswith("CS_") and n != "CS_Origin"],
+                })
+                made[pn] = t.adapter.build_part(ps, resolve_part(ps), work).path
+            files[c.id] = made[pn]
+        return sorted(made)
 
     # ---------------- edit ----------------
     def get_model(self, name: str) -> dict[str, Any]:

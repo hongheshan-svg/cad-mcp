@@ -181,7 +181,7 @@ def compile_assembly(spec, asm, component_files: dict[str, str], library_root: s
     for inst in asm.instances:
         c = comps[inst.component]
         kind, _, ref = c.source.partition(":")
-        if kind == "lib":
+        if kind == "lib" and inst.component not in component_files:
             code, _, q = ref.partition("?")
             src = {"library": code, "query": q, "library_root": library_root, "out_name": inst.source.part_no}
         else:
