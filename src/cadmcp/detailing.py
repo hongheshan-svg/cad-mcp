@@ -1009,9 +1009,13 @@ def install_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> tuple[list[Dim],
         if len(vals) < 2:
             continue
         lo, hi = vals[0], vals[-1]
-        qa = next(q for q in w if abs(vc(q, axis) - lo) < 1e-3)
-        qb = next(q for q in w if abs(vc(q, axis) - hi) < 1e-3)
-        sa, sb = _uv_sheet(v, a.bbox, (vc(qa, ha), vc(qa, va))), _uv_sheet(v, a.bbox, (vc(qb, ha), vc(qb, va)))
+        # 两端各取最靠近尺寸线（上方/右侧）的孔，且同排/同列：CAD 生成水平/竖直尺寸而不是斜向对齐尺寸
+        sh = [_uv_sheet(v, a.bbox, (vc(q, ha), vc(q, va))) for q in w]
+        k = 1 if orient == "h" else 0
+
+        def pick(val):
+            return max((s_ for q, s_ in zip(w, sh) if abs(vc(q, axis) - val) < 1e-3), key=lambda s_: s_[k])
+        sa, sb = pick(lo), pick(hi)
         if orient == "h":  # 孔圆周上远离尺寸线一侧的点：CAD 选到圆，按圆心标注
             pts = [(round(sa[0], 2), round(sa[1] + r, 2)), (round(sb[0], 2), round(sb[1] + r, 2))]
             pos = (round((sa[0] + sb[0]) / 2, 2), round(max(y0, y1) + 10, 2))
