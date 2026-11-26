@@ -86,6 +86,9 @@ def _text_w(s: str, size: float) -> float:
     return sum(size if ord(ch) > 0x2E80 else 0.6 * size for ch in s)
 
 
+HIDDEN = "3,1"  # 细虚线：不可见轮廓
+
+
 def _iso_xy(cx, cy, sc, box):
     sx, sy, sz = box.size
 
@@ -421,8 +424,30 @@ def _draw_cut_list(s, x0, y_bottom, rows, out_rows=None) -> float:
     return by + 7
 
 
+def _iso_top_features(s, iso, part, ztop):
+    """轴测图上补画顶面可见的孔口与型腔（俯视可见面）；底面特征被遮挡不画。"""
+    for h in part.holes:
+        if not (h.face == "top" or (h.through and h.face == "bottom")):
+            continue
+        r = (h.max_dia if h.face == "top" else h.drill) / 2
+        for i in h.instances:
+            x0, y0 = i.xyz[0], i.xyz[1]
+            ring = [(x0 + r * math.cos(2 * math.pi * k / 36), y0 + r * math.sin(2 * math.pi * k / 36)) for k in range(36)]
+            s.poly([iso(x, y, ztop) for x, y in ring], THICK)
+    for pk in part.pockets:
+        if not (pk["face"] == "top" or (pk.get("through") and pk["face"] == "bottom")):
+            continue
+        pts = pk["profile"].outline
+        s.poly([iso(x, y, ztop) for x, y in pts], THICK)
+        if pk["face"] == "top" and not pk.get("through") and pk["profile"].shape != "circle":
+            zb = ztop - pk["depth"]
+            s.poly([iso(x, y, zb) for x, y in pts], THIN)
+
+
 def _draw_iso(s, cx, cy, sc, box, part, asm):
     iso = _iso_xy(cx, cy, sc, box)
+    if part is not None and part.base_type not in ("shaft",) and not part.weld_bodies:
+        _iso_top_features(s, iso, part, box.zmax)
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
         pts = part.profile.outline
         z0, z1 = 0.0, part.thickness
@@ -514,8 +539,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             else:
                 s.poly([V((x, y, 0.0)) for x, y in pr.outline])
             for pk in part.pockets:
-                if pk["face"] in ("top", "bottom"):
-                    s.poly([V((x, y, 0.0)) for x, y in pk["profile"].outline], THIN)
+                if pk["face"] in ("top", "bottom"):  # 背面的盲型腔不可见：细虚线
+                    hid = pk["face"] != v.type and not pk.get("through")
+                    s.poly([V((x, y, 0.0)) for x, y in pk["profile"].outline], THIN, dash=HIDDEN if hid else None)
         elif part is not None and part.base_type == "sheet_metal" and v.type in ("front", "back", "left", "right"):
             _draw_sheet_side(s, part, v.type, ha, P)
         elif part is not None and part.base_type == "shaft" and v.type in ("front", "back", "left", "right"):
@@ -575,8 +601,14 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         for h in ([] if part is None else part.holes):
             if FACE_AXIS[h.face] != FACE_AXIS.get(v.type):
                 continue
+            hid = HIDDEN if (h.face != v.type and not h.through) else None  # 背面盲孔不可见：细虚线
             for inst in h.instances:
                 c = V(inst.xyz)
+                if hid:
+                    s.circle(*c, h.drill / 2 * sc, THIN, hid)
+                    s.line(c[0] - h.drill * 0.7 * sc, c[1], c[0] + h.drill * 0.7 * sc, c[1], 0.18, "4,1,1,1")
+                    s.line(c[0], c[1] - h.drill * 0.7 * sc, c[0], c[1] + h.drill * 0.7 * sc, 0.18, "4,1,1,1")
+                    continue
                 if h.slot:
                     p1, p2, rad = h.capsule(inst)
                     a_ = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
@@ -590,7 +622,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.circle(*c, h.drill / 2 * sc)
                 if h.type == "tapped":
                     s.circle(*c, h.nominal / 2 * sc, THIN, "1,0.8")
-                if h.cbore or h.csink:
+                if (h.cbore or h.csink) and h.face == v.type:  # 沉孔口只在孔口一侧可见
                     s.circle(*c, h.max_dia / 2 * sc, THIN)
                 s.line(c[0] - h.max_dia * 0.7 * sc, c[1], c[0] + h.max_dia * 0.7 * sc, c[1], 0.18, "4,1,1,1")
                 s.line(c[0], c[1] - h.max_dia * 0.7 * sc, c[0], c[1] + h.max_dia * 0.7 * sc, 0.18, "4,1,1,1")
