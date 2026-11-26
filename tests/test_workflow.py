@@ -105,3 +105,16 @@ def test_sw_compile_plan():
     assert '"pitch" = 160' in gv
     ext = next(o for o in ops if o.op == "extrude_boss")
     assert ext.args["depth_equation"] == '"T"'
+
+
+def test_sw_sheet_flange_hole_is_blind():
+    from cadmcp.adapters.solidworks.compile import compile_part
+    from cadmcp.ir.resolve import resolve_part
+    sm = {"name": "U", "part_no": "U", "title": "U", "material": "SPCC", "category": "sheet_metal", "surface_treatment": "镀锌",
+          "base": {"type": "sheet_metal", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 2,
+                   "flanges": [{"edge": "front", "length": 30}, {"edge": "back", "length": 30}]},
+          "features": [{"feature": "hole", "name": "F", "type": "clearance", "size": "M5", "face": "front",
+                        "positions": [[0, 18]]}]}
+    spec = PartSpec.model_validate(sm)
+    cut = next(o for o in compile_part(spec, resolve_part(spec)) if o.op == "extrude_cut" and o.args["feature"] == "F")
+    assert cut.args["end"] == "blind" and cut.args["depth"] == 2

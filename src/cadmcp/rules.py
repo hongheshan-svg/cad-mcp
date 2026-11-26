@@ -102,6 +102,15 @@ def check_part(p: ResolvedPart) -> list[Finding]:
         for bend in p.bends:
             limit = 2 * p.thickness + bend["radius"]
             for h in p.holes:
+                if h.face == bend["edge"]:  # 翻边上的孔：孔边到底板内表面 ≥ 2t + r
+                    for inst in h.instances:
+                        hgt = inst.xyz[2] if bend["direction"] == "up" else p.thickness - inst.xyz[2]
+                        d = hgt - p.thickness - h.max_dia / 2
+                        if d < limit:
+                            out.append(_f("R008", "warning", f"{h.name}[{inst.index}]",
+                                          f"翻边孔离折弯 {d:.2f} mm < 2t+r={limit:.2f} mm，折弯会拉变形",
+                                          "提高孔位或先折弯后加工"))
+                    continue
                 if h.face not in ("top", "bottom"):
                     continue
                 for inst in h.instances:

@@ -56,6 +56,12 @@ def _face_sketch(face: str, box, sketch: str, at: float | None = None, uv=(None,
 
 
 def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via: str = "cut") -> list[NativeOp]:
+    def _end(h) -> str:
+        # 钣金翻边上的"通孔"只穿板厚：through_all 会连对面翻边一起打穿
+        if p.base_type == "sheet_metal" and h.face not in ("top", "bottom"):
+            return "blind"
+        return "through_all" if h.through else "blind"
+
     ops: list[NativeOp] = [
         NativeOp("new_document", {"kind": "part", "template": template}),
         NativeOp("set_units", {"system": "MMGS"}),
@@ -136,14 +142,14 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                 a, b, _ = h.capsule(inst)
                 ops.append(NativeOp("sketch_slot_uv", {"sketch": sk, "end1": a, "end2": b, "width": h.slot["width"]}))
             ops.append(NativeOp("extrude_cut", {"feature": h.name, "sketch": sk,
-                                                "end": "through_all" if h.through else "blind", "depth": h.depth}))
+                                                "end": _end(h), "depth": h.depth}))
             continue
         if holes_via == "cut":
             # 稳妥路径：拉伸切除生成孔（几何一定正确）；孔标注由出图方案以注释写入
             ops.append(_face_sketch(h.face, p.bbox, sk, h.at, uv0))
             ops.append(NativeOp("sketch_circles", {"sketch": sk, "points": [i.xyz for i in h.instances], "diameter": h.drill}))
             ops.append(NativeOp("extrude_cut", {"feature": h.name, "sketch": sk,
-                                                "end": "through_all" if h.through else "blind", "depth": h.depth}))
+                                                "end": _end(h), "depth": h.depth}))
             if h.cbore or h.csink:
                 d2, dep2 = (h.cbore if h.cbore else (h.csink, (h.csink - h.drill) / 2))
                 ops.append(_face_sketch(h.face, p.bbox, sk + "_CB", h.at, uv0))
@@ -160,7 +166,7 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
         ops.append(NativeOp("hole_wizard", {
             "feature": h.name, "position_sketch": sk, "generic_type": HOLE_TYPE[h.type],
             "standard": "GB", "size": h.size_label if h.type != "simple" else None,
-            "diameter": h.drill, "end": "through_all" if h.through else "blind", "depth": h.depth,
+            "diameter": h.drill, "end": _end(h), "depth": h.depth,
             "thread_depth": h.thread_depth, "cbore": h.cbore, "csink": h.csink, "tolerance": h.tolerance,
         }, "预选草图点后调用 HoleWizard5，一次生成整组孔，孔标注可直接导入工程图"))
     for f in p.finishes:

@@ -111,11 +111,8 @@ def _draw_flat(s, cx, cy, sc, part, plan, refs):
         else:
             s.line(*F(bd["flat_pos"], fv0), *F(bd["flat_pos"], fv1), THIN, "8,1.5,1,1.5,1,1.5")
     for h in part.holes:
-        if h.face not in ("top", "bottom"):
-            continue
-        for inst in h.instances:
-            c = F(inst.xyz[0], inst.xyz[1])
-            s.circle(*c, h.drill / 2 * sc)
+        for u, v in (h.flat_uv or []):
+            s.circle(*F(u, v), h.drill / 2 * sc)
     for d in plan.dims:
         if d.view != "flat_pattern":
             continue

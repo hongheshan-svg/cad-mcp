@@ -26,6 +26,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
   - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
   - 轴类图纸自动采用：主视图轴线水平、键槽朝前、每个键槽一个移出断面图（标 bN9 与 d-t1）、链式轴段长度 + 总长。
+- 钣金：`base.type: "sheet_metal"`，`profile` 为底板外形，`flanges` 写翻边所在边、外形高度、方向；
+  翻边上的孔写 `face: "front"` 等（坐标为 (x, z)，z 为距底板外表面的高度），展开位置由平台计算。
+  出图加 `{"type": "flat_pattern"}` 视图；展开尺寸按 K 因子计算，技术要求会注明。孔离折弯 < 2t+r 会报 R008。
 - 精度要求（有配合、定位、运动的零件必须写，不要只靠"未注公差"）：
   - `datums`：基准，如 `{"name": "A", "target": "face:bottom"}`、`{"name": "A", "target": "step:0"}`。
   - `tolerances`：几何公差，`type` 取 flatness/parallelism/perpendicularity/position/coaxiality/circular_runout 等，

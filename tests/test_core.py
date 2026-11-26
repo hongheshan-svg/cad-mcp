@@ -255,3 +255,24 @@ def test_sheet_metal_drawing(tmp_path):
     assert texts.count("上折 90° R2") == 2 and "120.0" in texts
     notes = svc.get_model("SMB_DRW")["plan"]["notes"]
     assert any("板厚 t2" in n and "K=0.44" in n for n in notes)
+
+
+def test_sheet_metal_flange_holes():
+    sm = {"name": "SM2", "part_no": "SM-02", "title": "U 形支架", "material": "SPCC", "category": "sheet_metal",
+          "surface_treatment": "镀锌", "base": {"type": "sheet_metal", "profile": {"shape": "rect", "width": 120, "height": 80},
+                                               "thickness": 2, "flanges": [{"edge": "front", "length": 40}]},
+          "features": [{"feature": "hole", "name": "F", "type": "clearance", "size": "M5", "face": "front",
+                        "positions": [[-40, 25], [40, 25]]},
+                       {"feature": "hole", "name": "Low", "type": "clearance", "size": "M5", "face": "front",
+                        "positions": [[0, 8]]}]}
+    p = resolve_part(PartSpec.model_validate(sm))
+    f = next(h for h in p.holes if h.name == "F")
+    assert f.depth == 2
+    ba = math.pi / 2 * (2 + 0.44 * 2)
+    # 展开：距底板外形边 d = 2·OSSB − BA − h = 8 − BA − 25
+    assert f.flat_uv[0][1] == pytest.approx(-40 + 8 - ba - 25, abs=0.01)
+    # 展开边界 fv0 = v0 − (L − 2·OSSB + BA)；孔在边界内
+    assert p.flat_box[2] < f.flat_uv[0][1]
+    assert any(x["rule"] == "R008" and "Low" in x["target"] for x in rules.check_part(p))
+    with pytest.raises(CadError):
+        resolve_part(PartSpec.model_validate(dict(sm, features=[dict(sm["features"][0], face="back")])))

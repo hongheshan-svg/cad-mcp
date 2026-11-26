@@ -77,6 +77,7 @@ class ResolvedHole:
     circular: dict[str, float] | None = None  # {center_u, center_v, pcd, count, start_angle}
     slot: dict[str, float] | None = None  # {width, length(中心距), angle}
     at: float | None = None
+    flat_uv: list[tuple[float, float]] | None = None  # 钣金：各孔在展开图上的位置
 
     def capsule(self, inst: "HoleInstance") -> tuple[tuple[float, float], tuple[float, float], float]:
         """孔在面内的形状：线段两端点 + 半径（圆孔两端点重合）。用于边距/孔距计算。"""
@@ -439,6 +440,33 @@ def resolve_hole(h: Hole, ev, box: Box, section: list[tuple[float, float]] | Non
                         cbore, csink, h.tolerance, insts, callout, circ, slot, at)
 
 
+def _sheet_hole(rh: ResolvedHole, bends: list[dict[str, Any]], t: float, box: Box) -> None:
+    """钣金孔：翻边上的通孔只穿板厚；计算展开图位置（外形尺寸法：距虚拟尖角 z 处 → 展开坐标）。"""
+    by_edge = {b["edge"]: b for b in bends}
+    if rh.face in ("top", "bottom"):
+        rh.flat_uv = [(i.xyz[0], i.xyz[1]) for i in rh.instances]
+        return
+    b = by_edge.get(rh.face)
+    if b is None:
+        raise CadError(SPEC_INVALID, f"hole {rh.name}: sheet metal has no flange on {rh.face}",
+                       hint=f"翻边所在边：{sorted(by_edge)}")
+    if rh.through:
+        rh.depth = t
+    ossb = (b["radius"] + t) * math.tan(math.radians(b["angle"]) / 2)
+    ba = b["bend_allowance"]
+    flat = []
+    for i in rh.instances:
+        x, y, z = i.xyz
+        h = z if b["direction"] == "up" else t - z  # 距底板外表面的高度
+        if h < t + b["radius"]:
+            raise CadError(SPEC_INVALID, f"hole {rh.name}: position z={z:g} is inside the bend zone",
+                           hint=f"翻边孔中心高度需 ≥ {t + b['radius'] + rh.max_dia / 2:g}")
+        d = 2 * ossb - ba - h  # 相对底板外形边线的展开偏移
+        flat.append({"front": (x, box.ymin + d), "back": (x, box.ymax - d),
+                     "left": (box.xmin + d, y), "right": (box.xmax - d, y)}[rh.face])
+    rh.flat_uv = flat
+
+
 def _hole_volume(h: ResolvedHole) -> float:
     n = len(h.instances)
     if h.slot:
@@ -592,6 +620,8 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         if isinstance(f, Hole):
             section = profile.outline if (isinstance(base, (ExtrudeBase, SheetMetalBase)) and profile) else None
             rh = resolve_hole(f, ev, box, section if isinstance(base, ExtrudeBase) else None)
+            if isinstance(base, SheetMetalBase):
+                _sheet_hole(rh, bends, thickness, box)
             volume -= _hole_volume(rh)
             holes.append(rh)
         elif isinstance(f, Pocket):
