@@ -704,7 +704,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     continue
                 s.circle(*c, h.drill / 2 * sc)
                 if h.type == "tapped":
-                    s.circle(*c, h.nominal / 2 * sc, THIN, "1,0.8")
+                    rr = h.nominal / 2 * sc  # 内螺纹大径：约 3/4 圈细实线圆弧（GB/T 4459.1），缺口在右上象限
+                    s.poly([(c[0] + rr * math.cos(math.radians(a_)), c[1] + rr * math.sin(math.radians(a_)))
+                            for a_ in range(100, 351, 10)], THIN, close=False)
                 if (h.cbore or h.csink) and h.face == v.type:  # 沉孔口只在孔口一侧可见
                     s.circle(*c, h.max_dia / 2 * sc, THIN)
                 s.line(c[0] - h.max_dia * 0.7 * sc, c[1], c[0] + h.max_dia * 0.7 * sc, c[1], 0.18, "4,1,1,1")
