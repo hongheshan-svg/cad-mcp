@@ -9,6 +9,9 @@ J-Link/CREOSON 不能直接创建草图特征。从零建模采用"起始件 + U
 """
 from __future__ import annotations
 
+import math
+
+from ...errors import CAPABILITY_UNSUPPORTED, CadError
 from ...ir.part import PartSpec
 from ...ir.resolve import ResolvedPart
 from ..native import NativeOp
@@ -52,4 +55,240 @@ def compile_part(spec: PartSpec, p: ResolvedPart) -> list[NativeOp]:
     ops.append(NativeOp("ext.cadmcp_feature_status", {}, "读取失败特征（CREOSON 原生无此命令）"))
     ops.append(NativeOp("creoson.file_massprops", {}))
     ops.append(NativeOp("creoson.file_save", {}))
+    return ops
+
+
+# ---------------------------------------------------------------------------------------------
+# TOOLKIT 路径（cadmcp_tk，协议见 docs/CREO_TOOLKIT.md §3.2）：ResolvedPart → tk.<cmd> 计划
+# 草绘平面约定：TOP u=+X v=+Y 法向+Z；FRONT u=+X v=+Z 法向-Y；RIGHT u=+Y v=+Z 法向+X；
+# 平面 offset 沿该平面法向计（FRONT 的 offset = -y）。
+# ---------------------------------------------------------------------------------------------
+# 面 → (草绘平面, 偏移符号, 切除"沿材料内部"方向相对平面法向)；面内坐标 (u,v) 与 ir.resolve.face_point 一致
+FACE_SKETCH = {"top": ("TOP", 1, "reverse"), "bottom": ("TOP", 1, "normal"),
+               "front": ("FRONT", -1, "reverse"), "back": ("FRONT", -1, "normal"),
+               "left": ("RIGHT", 1, "normal"), "right": ("RIGHT", 1, "reverse")}
+_PLANE_OF_AXIS = {"z": ("TOP", 1), "y": ("FRONT", -1), "x": ("RIGHT", 1)}
+
+
+def _line(a, b) -> dict:
+    return {"type": "line", "p1": [round(a[0], 6), round(a[1], 6)], "p2": [round(b[0], 6), round(b[1], 6)]}
+
+
+def _arc(c, r, a0, a1) -> dict:
+    return {"type": "arc", "center": [round(c[0], 6), round(c[1], 6)], "r": round(r, 6),
+            "a0": round(a0, 6), "a1": round(a1, 6)}
+
+
+def _circle(c, r) -> dict:
+    return {"type": "circle", "center": [round(c[0], 6), round(c[1], 6)], "r": round(r, 6)}
+
+
+def capsule_entities(a, b, r) -> list[dict]:
+    """a、b 为两端圆心，r 为端圆半径；a==b 退化成圆。"""
+    if math.dist(a, b) < 1e-9:
+        return [_circle(a, r)]
+    th = math.atan2(b[1] - a[1], b[0] - a[0])
+    n = (-math.sin(th) * r, math.cos(th) * r)
+    d = math.degrees(th)
+    return [_line((a[0] + n[0], a[1] + n[1]), (b[0] + n[0], b[1] + n[1])),
+            _arc(b, r, d - 90, d + 90),
+            _line((b[0] - n[0], b[1] - n[1]), (a[0] - n[0], a[1] - n[1])),
+            _arc(a, r, d + 90, d + 270)]
+
+
+def profile_entities(pr) -> list[dict]:
+    """ResolvedProfile → 2D 实体列表（草绘面内 u,v，mm）。"""
+    d = pr.data
+    if pr.shape == "circle":
+        return [_circle(d["center"], d["diameter"] / 2)]
+    if pr.shape == "slot":
+        a = math.radians(d["angle"])
+        hx, hy = (d["length"] - d["width"]) / 2 * math.cos(a), (d["length"] - d["width"]) / 2 * math.sin(a)
+        cx, cy = d["center"]
+        return capsule_entities((cx - hx, cy - hy), (cx + hx, cy + hy), d["width"] / 2)
+    if pr.shape == "rect":
+        (cx, cy), w, h, r = d["center"], d["width"], d["height"], d["corner_radius"]
+        x0, x1, y0, y1 = cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
+        if r <= 1e-9:
+            pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            return [_line(pts[i], pts[(i + 1) % 4]) for i in range(4)]
+        ents = [_line((x0 + r, y0), (x1 - r, y0)), _arc((x1 - r, y0 + r), r, 270, 360),
+                _line((x1, y0 + r), (x1, y1 - r)), _arc((x1 - r, y1 - r), r, 0, 90),
+                _line((x1 - r, y1), (x0 + r, y1)), _arc((x0 + r, y1 - r), r, 90, 180),
+                _line((x0, y1 - r), (x0, y0 + r)), _arc((x0 + r, y0 + r), r, 180, 270)]
+        return [e for e in ents if e["type"] != "line" or math.dist(e["p1"], e["p2"]) > 1e-9]
+    pts = d["points"]
+    return [_line(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+
+
+def entity_mid(e: dict) -> tuple[float, float]:
+    """实体上的中点（用来在 TOOLKIT 里点选边）。"""
+    if e["type"] == "line":
+        return ((e["p1"][0] + e["p2"][0]) / 2, (e["p1"][1] + e["p2"][1]) / 2)
+    if e["type"] == "arc":
+        m = math.radians((e["a0"] + e["a1"]) / 2)
+        return (e["center"][0] + e["r"] * math.cos(m), e["center"][1] + e["r"] * math.sin(m))
+    return (e["center"][0] + e["r"], e["center"][1])
+
+
+def edge_points(rule: str, p: ResolvedPart) -> list[list[float]]:
+    """倒角/圆角的边中点（模型坐标）。规则同 SW 执行器：
+    outer_vertical = 顶面外环各尖角处的竖直棱（取棱中点）；top_outer / bottom_outer = 顶/底面外环各条边（取边中点）。"""
+    t = p.thickness or 0.0
+    pr = p.profile
+    if pr is None:
+        return []
+    if rule == "outer_vertical":
+        if pr.shape == "polygon":
+            corners = list(pr.data["points"])
+        elif pr.shape == "rect" and pr.data["corner_radius"] <= 1e-9:
+            corners = pr.outline
+        else:
+            return []  # 圆/槽/圆角矩形的竖直面相切连接，没有尖角棱
+        return [[round(u, 6), round(v, 6), round(t / 2, 6)] for u, v in corners]
+    z = t if rule == "top_outer" else 0.0
+    return [[round(m[0], 6), round(m[1], 6), z] for m in (entity_mid(e) for e in profile_entities(pr))]
+
+
+def _rot(rx: float, ry: float, rz: float):
+    """R = Rz·Ry·Rx（度），返回 3×3 矩阵。"""
+    a, b, c = (math.radians(v) for v in (rx, ry, rz))
+    cx, sx, cy, sy, cz, sz = math.cos(a), math.sin(a), math.cos(b), math.sin(b), math.cos(c), math.sin(c)
+    return [[cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+            [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+            [-sy, cy * sx, cy * cx]]
+
+
+def _face_plane(p: ResolvedPart, face: str, at: float | None) -> tuple[dict, str]:
+    from ...ir.resolve import face_plane
+    ref, sign, into = FACE_SKETCH[face]
+    return {"ref": ref, "offset": round(sign * face_plane(face, p.bbox, at), 6)}, into
+
+
+def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> list[NativeOp]:
+    """ResolvedPart → TOOLKIT 命令计划（op 名 `tk.<cmd>`，args 即协议 args）。
+    钣金/焊接件首期不支持。`$out_dir` 在执行时替换为输出目录。"""
+    if p.base_type not in ("extrude", "shaft"):
+        raise CadError(CAPABILITY_UNSUPPORTED,
+                       f"Creo TOOLKIT 首期只支持拉伸件和轴类，暂不支持 {p.base_type}（钣金/焊接件）",
+                       hint="见 docs/CREO_TOOLKIT.md；钣金与焊接件请在 SolidWorks 目标上建模")
+    m = spec.name
+    ops: list[NativeOp] = [NativeOp("tk.model.new_part", {"name": m, "start_part": start_part},
+                                    "start_part 为空则建空零件并设 mmNs")]
+
+    def feat(cmd: str, feature: str, why: str = "", **args) -> None:
+        ops.append(NativeOp(f"tk.{cmd}", {"model": m, "feature": feature, **args}, why))
+
+    def param(k: str, v, typ: str) -> None:
+        ops.append(NativeOp("tk.model.param_set", {"name": m, "param": k, "value": v, "type": typ}))
+
+    for k, v in {"PART_NO": p.part_no, "TITLE": p.title, "MATERIAL": p.material,
+                 "SURFACE_TREATMENT": p.surface_treatment or "", "CATEGORY": p.category}.items():
+        param(k, v, "string")
+    for k, v in p.properties.items():
+        param(k.upper(), v, "string")
+    for k, v in p.parameters.items():
+        param(k.upper(), v, "double")
+
+    if p.base_type == "extrude":
+        feat("feat.extrude", "Base", plane={"ref": "TOP", "offset": 0}, entities=profile_entities(p.profile),
+             depth=p.thickness, direction="normal", op="add", through_all=False)
+    else:  # 轴类：轴线 = 模型 Z；FRONT 面上 (u=X, v=Z) 画半截面，绕 u=0 的中心线旋转
+        c = p.shaft_chamfer
+        steps = p.shaft_steps
+        total = sum(L for L, _ in steps)
+        r0 = steps[0][1] / 2
+        pts = [(0.0, 0.0)] + ([(r0 - c, 0.0), (r0, c)] if c > 0 else [(r0, 0.0)])
+        z = 0.0
+        for i, (L, d) in enumerate(steps):
+            z += L
+            r = d / 2
+            if i + 1 < len(steps):
+                pts += [(r, z), (steps[i + 1][1] / 2, z)]
+            elif c > 0:
+                pts += [(r, z - c), (r - c, z)]
+            else:
+                pts.append((r, z))
+        pts.append((0.0, total))
+        ents = [_line(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        ents = [e for e in ents if math.dist(e["p1"], e["p2"]) > 1e-9]
+        axis = {"p1": [0, 0], "p2": [0, total]}
+        feat("feat.revolve", "Base", "半截面含两端倒角", plane={"ref": "FRONT", "offset": 0}, entities=ents,
+             axis=axis, angle=360, op="add")
+        for f in p.shaft_features:
+            if f["kind"] == "keyway":
+                ang = round(f["angle"]) % 360
+                if ang not in (0, 90, 180, 270):
+                    raise CadError(CAPABILITY_UNSUPPORTED, f"keyway {f['name']}: angle must be a multiple of 90 in v0")
+                hw = f["width"] / 2
+                ents = capsule_entities((0, f["z0"] + hw), (0, f["z1"] - hw), hw)
+                o = f["d"] / 2 - f["depth"]  # 草绘面离轴线的距离，向外切到轴表面以外
+                # 0°:+X（RIGHT 法向）；180°:-X；90°:+Y（FRONT 法向为 -Y，故反向）；270°:-Y
+                plane, dire = {0: ({"ref": "RIGHT", "offset": o}, "normal"),
+                               180: ({"ref": "RIGHT", "offset": -o}, "reverse"),
+                               90: ({"ref": "FRONT", "offset": -o}, "reverse"),
+                               270: ({"ref": "FRONT", "offset": o}, "normal")}[ang]
+                feat("feat.extrude", f["name"], "键槽：草绘面在槽底，向外切穿轴表面", plane=plane, entities=ents,
+                     depth=f["depth"] + 1, direction=dire, op="cut", through_all=False)
+            else:
+                ra, rb = f["d2"] / 2, f["d"] / 2 + 1
+                ents = [_line((ra, f["z0"]), (rb, f["z0"])), _line((rb, f["z0"]), (rb, f["z1"])),
+                        _line((rb, f["z1"]), (ra, f["z1"])), _line((ra, f["z1"]), (ra, f["z0"]))]
+                feat("feat.revolve", f["name"], plane={"ref": "FRONT", "offset": 0}, entities=ents,
+                     axis=axis, angle=360, op="cut")
+
+    for b in p.bosses:
+        feat("feat.extrude", b["name"], plane={"ref": "TOP", "offset": b["z0"]}, entities=profile_entities(b["profile"]),
+             depth=b["height"], direction="normal", op="add", through_all=False)
+    for pk in p.pockets:
+        plane, into = _face_plane(p, pk["face"], pk.get("at"))
+        feat("feat.extrude", pk["name"], plane=plane, entities=profile_entities(pk["profile"]), depth=pk["depth"],
+             direction=into, op="cut", through_all=bool(pk["through"]))
+    for h in p.holes:
+        if h.slot:  # 腰型孔：草绘面上画胶囊并切除
+            plane, into = _face_plane(p, h.face, h.at)
+            ents = []
+            for inst in h.instances:
+                a, b, r = h.capsule(inst)
+                ents += capsule_entities(a, b, r)
+            feat("feat.extrude", h.name, plane=plane, entities=ents, depth=h.depth, direction=into, op="cut",
+                 through_all=bool(h.through))
+            continue
+        feat("feat.hole", h.name, face=h.face, points=[[round(c, 6) for c in i.xyz] for i in h.instances],
+             diameter=h.drill, depth=h.depth, through=bool(h.through),
+             cbore=[h.cbore[0], h.cbore[1]] if h.cbore else None, csink=h.csink, drill_point=not h.through)
+        if h.type == "tapped":
+            feat("feat.cosmetic_thread", h.name + "_THR", "装饰螺纹（失败不影响几何）", hole_feature=h.name,
+                 major_diameter=h.nominal, length=h.thread_depth or h.depth)
+    for f in p.finishes:
+        pts = edge_points(f["edges"], p)
+        if not pts:
+            continue  # 没有可选的边（如圆形外形的竖直棱）
+        if f["type"] == "fillet":
+            feat("feat.round", f["name"], edges=pts, radius=f["size"])
+        else:
+            feat("feat.chamfer", f["name"], edges=pts, distance=f["size"])
+    ext = max(p.bbox.size)
+    for r in p.references.values():
+        if r.name == "CS_Origin":
+            continue  # 默认坐标系已存在
+        if r.kind == "csys":
+            R = _rot(*r.rotate)
+            feat("datum.csys", r.name, origin=list(r.origin), x_dir=[round(R[i][0], 9) for i in range(3)],
+                 y_dir=[round(R[i][1], 9) for i in range(3)])
+        elif r.kind == "plane":
+            d = r.direction or (0, 0, 1)
+            ax = next((a for i, a in enumerate("xyz") if abs(abs(d[i]) - 1) < 1e-9), None)
+            if ax is None:
+                raise CadError(CAPABILITY_UNSUPPORTED, f"datum plane {r.name}: only axis-aligned planes supported")
+            ref, sign = _PLANE_OF_AXIS[ax]
+            feat("datum.plane", r.name, ref=ref, offset=round(sign * r.origin["xyz".index(ax)], 6))
+        elif r.kind == "axis":
+            d = r.direction or (0, 0, 1)
+            feat("datum.axis", r.name, p1=list(r.origin), p2=[round(r.origin[i] + d[i] * ext, 6) for i in range(3)])
+        else:
+            feat("datum.point", r.name, at=list(r.origin))
+    ops.append(NativeOp("tk.model.regenerate", {"name": m}))
+    ops.append(NativeOp("tk.model.feature_status", {"name": m}))
+    ops.append(NativeOp("tk.model.save", {"name": m, "dir": "$out_dir"}))
     return ops

@@ -504,6 +504,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
+        ordinate_dim_sheet(plan, p)
     return plan
 
 
@@ -1213,6 +1214,38 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
             else:
                 continue
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": pos, "orient": orient}
+
+
+def ordinate_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """坐标尺寸的图纸坐标（mm），与 render_svg 的坐标尺寸带一致，供 CAD 原生坐标尺寸选边：
+    extra["sheet_pts"] = [基准轮廓边上一点（横向取左边线、纵向取下边线），被标注要素边上一点（孔取圆周最近点）]，
+    extra["sheet_pos"] = 数字位置（横向在视图下方、纵向在视图右侧，奇偶错开），extra["orient"] = h | v。"""
+    for v in plan.views:
+        if v.type not in VIEW_AXES:
+            continue
+        ha, va = VIEW_AXES[v.type]
+        (ulo, uhi), (wlo, whi) = vrange(p.bbox, ha), vrange(p.bbox, va)
+        (x0, y0), (x1, y1) = _uv_sheet(v, p.bbox, (ulo, wlo)), _uv_sheet(v, p.bbox, (uhi, whi))
+        mid = _uv_sheet(v, p.bbox, ((ulo + uhi) / 2, (wlo + whi) / 2))
+        n_h = n_v = 0
+        for d in plan.dims:
+            if d.view != v.type or d.kind != "ordinate" or d.at is None:
+                continue
+            px, py = _uv_sheet(v, p.bbox, d.at)
+            r = next((h.max_dia / 2 * v.scale for h in getattr(p, "holes", []) for i in h.instances
+                      if abs(vc(i.xyz, ha) - d.at[0]) < 1e-6 and abs(vc(i.xyz, va) - d.at[1]) < 1e-6), 0.0)
+            if d.axis == ha:
+                pts = [(x0, mid[1]), (px, py + r)]  # 圆周最上点；r=0 时要素点本身就在边上
+                pos, orient = (px, y0 - 6.5 - (n_h % 2) * 3), "h"
+                n_h += 1
+            elif d.axis == va:
+                pts = [(mid[0], y0), (px + r, py)]
+                pos, orient = (x1 + 5 + (n_v % 2) * 3, py), "v"
+                n_v += 1
+            else:
+                continue
+            d.extra = {**(d.extra or {}), "sheet_pts": [(round(a, 2), round(b, 2)) for a, b in pts],
+                       "sheet_pos": (round(pos[0], 2), round(pos[1], 2)), "orient": orient}
 
 
 def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:

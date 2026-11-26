@@ -43,8 +43,10 @@ def view_name(vtype: str) -> str:
 
 
 def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = None, sheet_unit_scale: float = 1.0,
-                    view_map: dict[str, str] | None = None) -> list[NativeOp]:
-    """DrawingPlan → 操作计划。op 名 `creoson.<creopyson 方法>` / `ext.<扩展命令>` / `warn`（仅提示）。
+                    view_map: dict[str, str] | None = None, toolkit: bool = False) -> list[NativeOp]:
+    """DrawingPlan → 操作计划。op 名 `creoson.<creopyson 方法>` / `ext.<扩展命令>` / `tk.<cadmcp_tk 命令>` / `warn`（仅提示）。
+    toolkit=True：视图仍由 CREOSON 建，细节（尺寸/注释/符号/表格/剖视/球标）逐项走 cadmcp_tk（docs/CREO_TOOLKIT.md §3.3）；
+    否则走粗粒度 CREOSON 扩展 ext.cadmcp_*。
     args 中的 "$drawing" / "$out_dir" 在执行时替换为 drawing_create 返回的图纸名 / 输出目录。"""
     templates = templates or {}
     vm = {**CREO_VIEW, **(view_map or {})}
@@ -72,7 +74,8 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
         ops.append(NativeOp("warn", {"message": f"投影角 {plan.projection}：需模板 projection_type 与之一致，creopyson 无法设置"}))
 
     front = next((v for v in plan.views if v.type == "front"), None)
-    replaced = {s.view for s in plan.sections if s.kind != "local"}  # 由剖视图替代的视图（经扩展生成）
+    # 由剖视图替代的视图：扩展路径整体由扩展生成；TOOLKIT 路径先照常建投影视图，再由 drw.section 设为剖视
+    replaced = set() if toolkit else {s.view for s in plan.sections if s.kind != "local"}
     for v in plan.views:
         if v.type in ("section", "flat_pattern") or v.type in replaced:
             continue
@@ -85,6 +88,13 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
                 "model_view": vm[v.type], "point": _pt(v.origin_on_sheet, k), "drawing": "$drawing",
                 "view": view_name(v.type), "sheet": 1, "model": model,
                 "scale": v.scale * (0.5 if v.type == "iso" else 1)}, f"{v.type} 一般视图"))
+    if toolkit:
+        ops += tk_detail_ops(plan)
+        ops.append(NativeOp("creoson.drawing_list_views", {"drawing": "$drawing"}, "回读视图名供 check_drawing 核对"))
+        ops.append(NativeOp("creoson.file_save", {"file_": "$drawing"}, "保存 .drw"))
+        ops.append(NativeOp("creoson.interface_export_pdf", {"file_": "$drawing", "dirname": "$out_dir",
+                                                             "filename": f"{plan.name or Path(model).stem}.pdf"}, "导出 PDF"))
+        return ops
     fv = next((v for v in plan.views if v.type == "flat_pattern"), None)
     if fv is not None:
         ops.append(NativeOp("ext.cadmcp_flat_pattern_view", {
@@ -155,11 +165,175 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     return ops
 
 
+TITLE_W, TITLE_H = 180, 56  # 标题栏（与 render_svg 一致）
+BOM_COLS = [("序号", 12), ("图号/编码", 44), ("名称", 54), ("数量", 14), ("材料/规格", 56)]
+CUT_COLS = [("序号", 12), ("规格", 52), ("长度/尺寸", 36), ("数量", 14), ("备注", 66)]
+HOLE_COLS = [("孔号", 14), ("X", 22), ("Y", 22), ("规格", 122)]
+
+
+def _xy(p) -> list[float]:
+    return [round(float(p[0]), 3), round(float(p[1]), 3)]
+
+
+def _plain_number(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _cols(cols) -> list[dict[str, Any]]:
+    return [{"title": n, "width": w} for n, w in cols]
+
+
+def _rows(rows) -> list[list[str]]:
+    return [["" if v is None else (f"{v:g}" if isinstance(v, float) else str(v)) for v in r] for r in rows]
+
+
+def tk_detail_ops(plan) -> list[NativeOp]:
+    """DrawingPlan → 逐项 `tk.drw.*`。坐标全部是规划层已算好的图纸坐标（mm，左下角原点），与 SVG 预览一致：
+    尺寸 sheet_pts/sheet_pos/orient，引线标注 extra["label"]，精度符号 sheet_at/sheet_pos，孔表 hole_table_box，
+    修订表 revision_table_origin，球标 anchor/pos。缺坐标的项不发命令，汇总成一条 warn。"""
+    from ...detailing import REV_COLUMNS, revision_rows, revision_table_origin
+    ops: list[NativeOp] = []
+    D = "$drawing"
+    skipped: dict[str, int] = {}
+
+    def skip(what: str) -> None:
+        skipped[what] = skipped.get(what, 0) + 1
+
+    # 剖视：先由 CREOSON 建好被替代的投影视图，这里设为 2D 剖视（首期 full/half；step/local 服务端报未实现）
+    for s in plan.sections:
+        if s.kind == "local":
+            skip("局部剖（TOOLKIT 首期未实现）")
+            continue
+        ops.append(NativeOp("tk.drw.section", {
+            "drawing": D, "parent": view_name(s.parent), "replaces": view_name(s.view), "label": s.label,
+            "kind": s.kind, "cut_points": [list(p) for p in s.cut_points],
+            "center": _xy(next((v.origin_on_sheet for v in plan.views if v.type == s.view), (0, 0)))},
+            "剖截面 + 视图设为 2D 剖视"))
+    for v in plan.views:
+        if v.type == "section":
+            skip("移出断面图")
+        elif v.type == "flat_pattern":
+            skip("钣金展开图")
+
+    for d in plan.dims:
+        ex = d.extra or {}
+        vw = view_name(d.view)
+        if d.kind in ("linear", "diameter", "ordinate") and ex.get("sheet_pts"):
+            p1, p2 = ex["sheet_pts"]
+            args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",
+                    "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
+            if d.kind == "diameter" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
+                args["text"] = d.text
+            ops.append(NativeOp("tk.drw.dim", args, "坐标尺寸：基准边 + 要素边" if d.kind == "ordinate"
+                                else "两条轮廓边上的点 → 线性尺寸"))
+        elif d.kind in ("callout", "radius", "diameter"):
+            lb = ex.get("label")
+            if not lb:
+                skip(f"{d.kind} 标注（无引线布置）")
+                continue
+            ops.append(NativeOp("tk.drw.note", {"drawing": D, "view": vw, "text": d.text, "at": _xy(lb["text_at"]),
+                                                "leader_to": _xy(lb["anchor"])}, "孔/圆角/倒角引线标注"))
+        elif d.kind in ("linear", "ordinate"):
+            skip("坐标/定位尺寸（规划层未给图纸坐标）")
+        elif d.kind in ("tag", "origin"):
+            if "sheet_at" not in ex:
+                skip("孔号")
+                continue
+            ops.append(NativeOp("tk.drw.note", {"drawing": D, "text": d.text, "at": _xy(ex["sheet_at"]),
+                                                "height": 2.5}, "孔号 / 坐标原点"))
+        elif d.kind in ("datum", "gtol", "roughness", "weld"):
+            if "sheet_at" not in ex or "sheet_pos" not in ex:
+                skip(f"{d.kind} 符号（无图纸坐标）")
+                continue
+            at, pos = _xy(ex["sheet_at"]), _xy(ex["sheet_pos"])
+            if d.kind == "datum":
+                ops.append(NativeOp("tk.drw.datum", {"drawing": D, "view": vw, "at": at, "pos": pos, "label": d.text}))
+            elif d.kind == "gtol":
+                sym, zone, *datums = ex.get("cells", ["", "", ""])
+                try:
+                    value = float(str(zone).lstrip("Φ"))
+                except ValueError:
+                    skip("几何公差（公差值无法解析）")
+                    continue
+                ops.append(NativeOp("tk.drw.gtol", {
+                    "drawing": D, "view": vw, "at": None if ex.get("attach") == "callout" else at, "pos": pos,
+                    "type": d.ref.split(":")[1].split("@")[0], "value": value, "diameter": str(zone).startswith("Φ"),
+                    "datums": [x for x in datums[:3] if x]}))
+            elif d.kind == "roughness":
+                ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": at, "pos": pos,
+                                                              "ra": d.value, "removal": "required"}))
+            else:  # 焊缝：TOOLKIT 无通用焊缝符号接口，用带引线注释
+                text = (f"{d.text}{'/' + d.text if ex.get('both_sides') else ''} ◣{' ○' if ex.get('all_around') else ''}"
+                        f"  {ex.get('count', 1)}处  {ex.get('process', '')}").strip()
+                ops.append(NativeOp("tk.drw.note", {"drawing": D, "view": vw, "text": text, "at": pos, "leader_to": at},
+                                    "焊缝：带引线注释"))
+
+    W, _ = plan.sheet_size
+    x0, y0 = W - 5 - TITLE_W, 5.0
+    if plan.hole_table and plan.hole_table_box:
+        bx0, by0, *_ = plan.hole_table_box
+        ops.append(NativeOp("tk.drw.table", {
+            "drawing": D, "origin": _xy((bx0, by0)), "columns": _cols(HOLE_COLS), "row_height": 5,
+            "rows": _rows([[r["tag"], r["x"], r["y"], r["size"]] for r in plan.hole_table]), "header_bottom": False},
+            "孔表（位置同 SVG 预览）"))
+    texts = list(plan.notes)
+    if texts:  # 技术要求：首行在上，文字块左下角
+        ops.append(NativeOp("tk.drw.note", {"drawing": D, "text": "\n".join(texts), "at": [x0, y0 + TITLE_H + 11]},
+                            "技术要求"))
+    above = y0 + TITLE_H + 12 + 5 * len(texts)  # 标题栏上方表格的底边（同 render_svg）
+    sf = plan.title_block.get("surface_finish")
+    if sf and plan.model_kind == "part":
+        hb = plan.hole_table_box
+        y = hb[3] + 4 if hb and hb[0] > W / 2 else (y0 + TITLE_H + 14 + 5 * len(texts) + 6
+                                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0))
+        ops.append(NativeOp("tk.drw.note", {"drawing": D, "at": [x0, y + 1],
+                                            "text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)"},
+                            "其余表面粗糙度"))
+    if plan.cut_list:
+        rows = []
+        for r in sorted(plan.cut_list, key=lambda r: r["item"]):
+            size = f"L={r['length_mm']:g}" if r.get("kind") == "member" else "×".join(f"{v:g}" for v in r.get("size_mm", []))
+            note = "两端平切 90°" if r.get("kind") == "member" else ("焊后加工" if r.get("machined") else "")
+            rows.append([r["item"], r.get("spec", ""), size, r.get("qty", ""), note])
+        ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": [x0, above], "columns": _cols(CUT_COLS),
+                                             "rows": _rows(rows), "row_height": 7, "header_bottom": True},
+                            "切割清单（GB/T 10609.2 表头在下）"))
+    if plan.bom:
+        rows = [[r["item"], r["part_no"], r["title"], r["qty"], r.get("material") or r.get("spec", "")]
+                for r in sorted(plan.bom, key=lambda r: r["item"])]
+        ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": [x0, above], "columns": _cols(BOM_COLS),
+                                             "rows": _rows(rows), "row_height": 7, "header_bottom": True},
+                            "明细表（GB/T 10609.2 表头在下，序号自下而上）"))
+    if plan.revisions:
+        rows = [[r.get("rev", ""), r.get("description", ""), r.get("date", ""), r.get("by", "")]
+                for r in revision_rows(plan)][::-1]  # SVG：最新在最下行、表头在上
+        ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": _xy(revision_table_origin(plan)),
+                                             "columns": _cols(REV_COLUMNS), "rows": _rows(rows), "row_height": 7,
+                                             "header_bottom": False}, "更改记录（标题栏左侧）"))
+    if plan.balloons and plan.model_kind == "assembly":
+        main = view_name(plan.views[0].type)
+        for b in plan.balloons:
+            if "pos" not in b:
+                skip("球标")
+                continue
+            ops.append(NativeOp("tk.drw.balloon", {"drawing": D, "view": main, "component": [b["instance"]],
+                                                   "item": str(b["item"]), "at": _xy(b["anchor"]), "pos": _xy(b["pos"])}))
+    if skipped:
+        ops.append(NativeOp("warn", {"message": "TOOLKIT 出图未生成：" + "；".join(f"{k} ×{n}" for k, n in skipped.items())}))
+    ops.append(NativeOp("tk.drw.readback", {"drawing": D}, "回读尺寸/注释/表格/符号数"))
+    return ops
+
+
 class CreoDrawingExecutor:
     """逐 op 调 creopyson Client；oplog 格式与 SW 执行器一致 {i, op, args, ok, error}。"""
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, tk: Any = None):
         self.c = client
+        self.tk = tk  # ToolkitClient；tk.* op 需要
         self.log: list[dict[str, Any]] = []
         self.warnings: list[str] = []
         self.readback: dict[str, Any] = {}
@@ -175,6 +349,10 @@ class CreoDrawingExecutor:
             return {k: self._sub(x) for k, x in v.items()}
         return v
 
+    def _drawing_name(self) -> str:
+        d = self.drawing or ""
+        return d[:-4] if d.lower().endswith(".drw") else d
+
     def _call(self, op: NativeOp) -> Any:
         args = {k: self._sub(v) for k, v in op.args.items()}
         if op.op == "warn":
@@ -188,6 +366,12 @@ class CreoDrawingExecutor:
             elif "drawing" in args:
                 args["drawing"] = args["drawing"] or self.drawing
             return getattr(self.c, fn)(**args)
+        if kind == "tk":  # cadmcp_tk（TOOLKIT 异步程序）
+            if self.tk is None:
+                raise RuntimeError("cadmcp_tk 未配置（config.yaml 中 creo 目标加 toolkit: {host, port}）")
+            if args.get("drawing") is None or args.get("drawing") == self.drawing:
+                args["drawing"] = self._drawing_name()
+            return self.tk.call(fn, **args)
         if kind == "ext":  # CREOSON 自定义命令：command=cadmcp, function=<name>
             # creopyson Client._creoson_post(command, function, data=None, key_data=None)（0.7.8 源码核对）
             return self.c._creoson_post("cadmcp", fn.removeprefix("cadmcp_"), args)
@@ -205,12 +389,16 @@ class CreoDrawingExecutor:
                 if op.op == "creoson.drawing_create":
                     self.drawing = res if isinstance(res, str) and res else (
                         op.args.get("drawing") or Path(op.args["model"]).stem)
+                elif op.op == "tk.drw.readback" and isinstance(res, dict):
+                    self.readback.update({k: res[k] for k in ("dims", "notes", "symbols", "tables") if k in res})
                 elif op.op == "creoson.drawing_list_views":
                     self.readback["views"] = [v if isinstance(v, str) else str(v.get("view", v)) for v in (res or [])]
             except Exception as e:  # noqa: BLE001
                 rec.update(ok=False, error=f"{type(e).__name__}: {e}", trace=traceback.format_exc(limit=3))
                 if op.op.startswith("ext."):
                     self.warnings.append(f"{op.op} 失败（CREOSON 扩展 cadmcp 未部署？）：{e}")
+                elif op.op.startswith("tk."):
+                    self.warnings.append(f"{op.op} 失败：{e}")
                 critical = op.op.startswith("creoson.") and op.op.partition(".")[2] not in NON_CRITICAL
                 if critical:
                     status = "errors"

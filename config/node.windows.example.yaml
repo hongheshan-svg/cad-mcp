@@ -26,6 +26,9 @@ workers:
     cad: creo
     version: "10.0"
     creoson: { host: localhost, port: 9056 }
+    # Creo TOOLKIT 服务（creo_toolkit/README.md）：配置后从零建模与出图细节走 cadmcp_tk
+    toolkit: { host: 127.0.0.1, port: 9057, timeout: 60 }
+    # templates: { drawing_A3: a3_gb.drw, drawing_A4: a4_gb.drw }
   - id: mock-sw2024              # 对照：不依赖 CAD 的模拟目标
     adapter: mock
     cad: solidworks

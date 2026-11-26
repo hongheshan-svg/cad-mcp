@@ -1,8 +1,8 @@
 """Creo 适配器：Creopyson → CREOSON（J-Link）。
 
 已实现（CREOSON 原生能力）：连接与版本设定、打开、参数读写、再生、质量属性、另存、导出。
-从零建模：需要"起始件 + UDF 库 + CREOSON 扩展命令 cadmcp_udf_place"（见 compile.py）——
-在 UDF 库就绪前，build_* 如实返回 CAPABILITY_UNSUPPORTED。
+从零建模与出图细节：配置 toolkit: {host, port} 后走 cadmcp_tk（Creo TOOLKIT 异步程序，docs/CREO_TOOLKIT.md）；
+未配置时 build_part 如实返回 CAPABILITY_UNSUPPORTED，出图细节退回 CREOSON 扩展 ext.cadmcp_*。
 ⚠ 尚未在实机验证，见 docs/WINDOWS_TEST.md。
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 
 from ...errors import CAPABILITY_UNSUPPORTED, NATIVE_ERROR, TARGET_UNAVAILABLE, CadError
 from ..base import CAPABILITIES, BuildResult, CadAdapter
-from .compile import compile_part
+from .compile import compile_part, compile_part_tk
 from .edit import CreoEditor
 
 
@@ -26,11 +26,12 @@ def creo_kind(path: Path) -> str:
 
 class CreoAdapter(CadAdapter):
     cad = "creo"
+    tk: Any = None  # ToolkitClient（配置 toolkit 时）
 
     def __init__(self, version: str, host: str = "localhost", port: int = 9056, start_part: str = "",
                  udf_dir: str = "", library_root: str = "", home: str | None = None,
                  templates: dict[str, str] | None = None, sheet_unit_scale: float = 1.0,
-                 view_map: dict[str, str] | None = None):
+                 view_map: dict[str, str] | None = None, toolkit: dict[str, Any] | None = None):
         try:
             import creopyson  # type: ignore[import-not-found]
         except ImportError:
@@ -40,6 +41,10 @@ class CreoAdapter(CadAdapter):
         self.start_part, self.udf_dir, self.library_root = start_part, udf_dir, library_root
         self.templates, self.sheet_unit_scale, self.view_map = templates or {}, sheet_unit_scale, view_map or {}  # 出图用
         self.c = creopyson.Client(ip_adress=host, port=port)
+        self.tk = None
+        if toolkit:  # 首次使用时才连接；连不上报 TARGET_UNAVAILABLE 并给启动提示
+            from .toolkit import ToolkitClient
+            self.tk = ToolkitClient(**toolkit)
         self.editor = CreoEditor(self.c)
         try:
             self.c.connect()
@@ -54,13 +59,15 @@ class CreoAdapter(CadAdapter):
                            hint="启动 Creo 后重试（或用 creoson 的 creo_start）")
 
     def info(self) -> dict[str, Any]:
-        return {"cad": "creo", "version": self.version, "adapter": "creoson"}
+        return {"cad": "creo", "version": self.version, "adapter": "creoson+toolkit" if self.tk else "creoson"}
 
     def capabilities(self) -> dict[str, str]:
         caps = {c: "none" for c in CAPABILITIES}
         caps.update({"open_existing": "full", "set_parameters_existing": "full", "mass_properties": "full",
                      "export.step": "partial", "export.pdf": "partial", "build_drawing": "partial"})
-        if self.start_part and self.udf_dir:
+        if self.tk is not None:
+            caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial"})
+        elif self.start_part and self.udf_dir:
             caps.update({"build_part.extrude": "partial", "build_part.shaft": "partial"})
         return caps
 
@@ -120,18 +127,38 @@ class CreoAdapter(CadAdapter):
         self.c.file_erase()  # 不带 file_：清出会话中所有模型（回滚前释放）
 
     def build_part(self, spec, resolved, out_dir: Path) -> BuildResult:
+        if self.tk is not None:
+            return self._build_part_tk(spec, resolved, out_dir)
         plan = compile_part(spec, resolved)
         raise CadError(CAPABILITY_UNSUPPORTED,
                        f"Creo 从零建模需要 UDF 库与 CREOSON 扩展（计划已编译 {len(plan)} 步）",
                        hint="首期 Creo 侧先做：打开现有模型 → 改参数 → 再生 → 出 BOM；或确认是否有 TOOLKIT 授权")
+
+    def _build_part_tk(self, spec, resolved, out_dir: Path) -> BuildResult:
+        from .toolkit import run_tk_ops
+        ops = compile_part_tk(spec, resolved, self.start_part)
+        res = run_tk_ops(self.tk, ops, out_dir, spec.name)
+        oplog = str(out_dir / f"{spec.name}.oplog.json")
+        rb = res["readback"]
+        regen = rb.get("regen") or {}
+        if res["status"] == "errors":
+            failed = [r for r in res["log"] if not r["ok"]]
+            where = failed[-1]["op"] if failed else "model.regenerate"
+            raise CadError(NATIVE_ERROR, f"Creo TOOLKIT build {spec.name} failed at {where}",
+                           hint=f"查看 {oplog}；再生失败的特征：{regen.get('failed', [])}",
+                           native_code=failed[-1]["error"] if failed else str(regen.get("failed")))
+        path = Path(rb["path"]) if rb.get("path") else out_dir / f"{spec.name.lower()}.prt"
+        return BuildResult(path, {"status": res["status"], "errors": [], "warnings": res["warnings"], "oplog": oplog},
+                           {}, extra={"features": rb.get("features", [])})
 
     def build_assembly(self, spec, resolved, out_dir, component_files) -> BuildResult:
         raise CadError(CAPABILITY_UNSUPPORTED, "Creo assembly build: P2（file_assemble + Csys 约束）")
 
     def build_drawing(self, plan, model_file, out_dir, model) -> BuildResult:
         from .drawing import CreoDrawingExecutor, compile_drawing
-        ops = compile_drawing(plan, str(model_file), self.templates, self.sheet_unit_scale, self.view_map)
-        ex = CreoDrawingExecutor(self.c)
+        ops = compile_drawing(plan, str(model_file), self.templates, self.sheet_unit_scale, self.view_map,
+                              toolkit=self.tk is not None)
+        ex = CreoDrawingExecutor(self.c, self.tk)
         self.c.creo_cd(str(out_dir))  # 图纸保存到输出目录
         res = ex.run(ops, out_dir, plan.name)
         oplog = str(out_dir / f"{plan.name}.oplog.json")
@@ -140,7 +167,9 @@ class CreoAdapter(CadAdapter):
             raise CadError(NATIVE_ERROR, f"Creo drawing {plan.name} failed at op {failed[-1]['op']}",
                            hint=f"查看 {oplog}；模板/CREOSON 连接是否正常", native_code=failed[-1]["error"])
         regen = {"status": res["status"], "errors": [], "warnings": ex.warnings, "oplog": oplog}
-        rendered = {"views": ex.readback["views"]} if "views" in ex.readback else {}
+        rendered = {k: ex.readback[k] for k in ("views",) if k in ex.readback}
+        if "dims" in ex.readback:  # TOOLKIT 回读
+            rendered["dim_count"] = ex.readback["dims"]
         drw = ex.drawing or plan.name
         return BuildResult(out_dir / (drw if drw.lower().endswith(".drw") else drw + ".drw"), regen, extra={"rendered": rendered})
 

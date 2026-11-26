@@ -313,3 +313,18 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
 3. 打开 `<name>.oplog.json`：逐条看 ok/error；`creoson.*` 关键步骤失败会中止并报 NATIVE_ERROR，把 oplog 发回。
 4. 保存路径：本实现 `creo_cd(out_dir)` 后保存；确认 .drw 落在 out_dir（Creo 可能生成 `.drw.N` 版本号文件）。
 5. `rendered.views` 只含 `drawing_list_views` 回读到的视图名；尺寸/注释数量未回读（无 API），D005 因此不会触发。
+
+## Creo TOOLKIT（cadmcp_tk：从零建模 + 出图细节）
+
+编译、运行与核对顺序见 `creo_toolkit/README.md`，协议见 `docs/CREO_TOOLKIT.md`。creo 目标配置加
+`toolkit: {host: 127.0.0.1, port: 9057}` 后：
+- `build_part`：`compile_part_tk` → `tk.model.new_part` → 参数 → `tk.feat.*` / `tk.datum.*` → 再生 → 特征状态 → 保存；
+  oplog 中每步的 args 就是发给 cadmcp_tk 的原始请求，可直接用 `ToolkitClient().call(cmd, **args)` 单步重放。
+- `build_drawing`：视图仍由 CREOSON 建（被剖视替代的视图也先建成投影视图），细节逐项 `tk.drw.*`；
+  坐标全部来自规划层（与 SVG 预览一致），对照 `<name>.svg` 检查位置。
+
+### 验收
+1. PLATE_PRECISION：零件建出 Base + Pin 孔；工程图有总体尺寸、6 个坐标尺寸、孔标注、基准 A/B、3 个公差框格、2 个粗糙度、技术要求。
+2. SHAFT：旋转体 + 2 个键槽 + 挡圈槽；主视图直径尺寸带 Φ 和公差带。
+3. GRID（`tests/test_hole_table.py`）：孔表位置与 SVG 一致，孔号注释在孔旁。
+4. 坐标映射：在 Creo 中查看 TOP 面草绘的矩形是否与 IR 的 X/Y 一致、FRONT 命名视图是否从 −Y 看（Z 向上）。

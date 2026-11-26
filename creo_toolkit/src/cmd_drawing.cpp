@@ -289,6 +289,8 @@ json cmd_drw_dim(const json& a) {
             Pt p2 = arg_pt2(a, "p2");
             sels[nsel++] = pick_edge_at(d, view, p2);
         }
+        // ordinate：p1 = 基准轮廓边，p2 = 被标注要素边（孔为圆周点）。首期按线性尺寸（基线式）创建；
+        // TODO(实机核对): 改成真正的坐标尺寸——先建基线尺寸，再用坐标尺寸接口（或 ProDimensionToOrdinate 类函数）转换。
         // TODO(实机核对): ProDrawingDimensionCreate 真实签名（疑为 drawing, sels[], attachments[], senses[], orient, location, &dim）；
         //   ProDimAttachment / ProDimSense 取值。diameter/radius 仅 1 个选择（圆弧/圆边）；
         //   linear 的端点型附着（PRO_DIM_ATTACH_END1/END2/MIDDLE）需按边方向实机调试。
@@ -522,7 +524,10 @@ json cmd_drw_section(const json& a) {
     std::vector<std::array<double, 3>> cp;
     for (const auto& pt : a["cut_points"]) {
         if (!pt.is_array() || pt.size() < 2) throw CmdError("BAD_ARGS", "cut_points 元素须为 [x,y(,z)]");
-        cp.push_back({pt[0].get<double>(), pt[1].get<double>(), pt.size() > 2 ? pt[2].get<double>() : 0.0});
+        // 协议给 IR 坐标（Z 向上）；与 cmd_model.cpp 一致映射为 Creo 坐标 (x, z, −y)。
+        // 剖切平面 = 过 p0→p1、含 IR Z 轴（Creo Y 轴）方向的竖直面。
+        double x = pt[0].get<double>(), y = pt[1].get<double>(), z = pt.size() > 2 ? pt[2].get<double>() : 0.0;
+        cp.push_back({x, z, -y});
     }
 
     // 取视图所属模型
