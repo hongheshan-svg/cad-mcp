@@ -24,7 +24,7 @@ NON_CRITICAL = {"check_body_extent", "probe_gdt_constants", "datum_tag", "gtol",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table"}
+                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks"}
 
 
 class OpFailed(Exception):
@@ -1101,6 +1101,19 @@ class SwExecutor:
             raise OpFailed("flat pattern view failed")
         self.views["flat_pattern"] = v
         return {}
+
+    def op_center_marks(self, view: str, types: int = 5, connection: int = 0):
+        """孔/槽中心符号（GB：孔画十字中心线）：IView.AutoInsertCenterMarks2，尺寸、间隙、延长线用文档设置。
+        types 为 swAutoInsertCenterMarkTypes_e 位掩码（孔 1 | 槽 4；不含圆角 2，免得外形圆角也加中心符号）。
+        TODO 实机核对：枚举取值与 2022/2024/2026 的参数语义。"""
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        self.model.ActivateView(v.Name)
+        ok = v.AutoInsertCenterMarks2(types, connection, True, True, True, 0.0, 0.0, False, False, 0.0)
+        if not ok:
+            raise OpFailed(f"{view}: AutoInsertCenterMarks2 返回 False")
+        return {"view": view}
 
     def op_auto_dimension(self, view: str, scheme: str, origin: str):
         v = self.views[view]

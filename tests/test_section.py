@@ -245,3 +245,22 @@ def test_cut_line_extension_is_sheet_based():
     for scale in (5.0, 1.0, 0.5):
         pts = cut_line(p, sec, scale)
         assert abs(pts[0][0] - (-10 - 6 / scale)) < 1e-9 and abs(pts[-1][0] - (10 + 6 / scale)) < 1e-9
+
+
+def test_sw_center_marks_after_section_views():
+    """SW 工程图：每个正投影视图插入孔/槽中心符号；剖视图替代的视图在剖视图建好之后插入。"""
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate({
+        "name": "CM", "part_no": "CM", "title": "板", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 10},
+        "features": [{"feature": "hole", "name": "P", "type": "simple", "size": 8, "tolerance": "H7", "positions": [[0, 0]]}]}))
+    plan = plan_part_drawing(DrawingSpec(model="CM"), p)
+    ops = compile_drawing(plan, "CM.SLDPRT")
+    names = [o.op for o in ops]
+    cm = [o.args["view"] for o in ops if o.op == "center_marks"]
+    assert "top" in cm and "front" in cm and "iso" not in cm
+    if "section_cut" in names or "section_view" in names:
+        last_sec = max(i for i, n in enumerate(names) if n in ("section_cut", "section_view"))
+        assert names.index("center_marks") > last_sec

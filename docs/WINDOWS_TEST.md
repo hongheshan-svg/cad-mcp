@@ -404,3 +404,12 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
 2. 剖截面为空 → `cmd_drw_removed_section` 的 flip / SIDE_2 取反；`section_only=false` → 查 `ProDrawingView2DSectionAreaSet` 返回码。
 3. d−t 尺寸：Creo 对圆边默认附着圆心，文字覆盖显示正确数值，但尺寸界线需实机确认是否到圆的远端。
 
+
+## 孔中心符号 / 剖视图孔壁粗糙度 / 折弯线定位（本轮新增，TODO(实机核对)）
+- `op_center_marks`：每个正投影视图调 `IView.AutoInsertCenterMarks2(types=5, connection=0, …, UseDocumentDefaults=True)`。
+  核对：`swAutoInsertCenterMarkTypes_e` 是否为位掩码（孔 1 / 圆角 2 / 槽 4）；外形 R 圆角不应出现中心符号；
+  剖视图（全剖/阶梯剖）中被剖孔的轴线是否由 SW 自动生成，若没有，记下 oplog 并截图。
+  分布圆（细点画线圆）目前只在预览中画；SW 原生需要 `connection` 取"圆形连接线"对应的枚举值，请在 API 帮助里查
+  `swCenterMarkConnectionLine_e` 后告诉我们。
+- 孔壁粗糙度：大孔被剖开时 `surface_finish` 的 `sheet_at` 落在剖视图孔壁上，检查符号是否附着到孔壁边线、方向朝孔内。
+- 钣金展开图：`overall_dimension` 的 `flat_bend0/1` 一端选外轮廓边、一端选折弯线，检查能否选中折弯线（草图线）。

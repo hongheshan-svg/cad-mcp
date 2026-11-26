@@ -457,6 +457,10 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                            "center": v.origin_on_sheet, "scale": v.scale * (0.5 if v.type == "iso" else 1),
                                            "rotate_deg": angle, "display": "hidden_removed" if v.type == "iso" else "hidden_visible"}))
     ops += section_ops(plan)
+    for v in plan.views:  # 孔/槽中心符号（中心线）：每个正投影视图自动插入（剖视图建好后，替代视图同名）
+        if v.type != "iso" and plan.model_kind == "part" and plan.layout != "shaft":
+            ops.append(NativeOp("center_marks", {"view": v.type, "types": 5, "connection": 0},
+                                "IView.AutoInsertCenterMarks2：孔、槽中心线"))
     # 尺寸：有孔坐标的视图用 SW 自动坐标标注（左下角为基准），其余视图只标总体尺寸
     ordinate_views = sorted({d.view for d in plan.dims if d.kind == "ordinate"})
     for vt in ordinate_views:
