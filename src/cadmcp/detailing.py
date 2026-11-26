@@ -1159,6 +1159,38 @@ def _seg_box(p1, p2, b) -> bool:
     return any(_seg_cross(p1, p2, corners[i], corners[(i + 1) % 4]) for i in range(4))
 
 
+def _ra_box(x, y, nx, ny, text):
+    """侧向表面结构符号（render_gdt.roughness）的占位框：引出 8 mm 后画 √ 与 Ra 值。"""
+    sx, sy = x + nx * 8, y + ny * 8 + (0 if ny >= 0 else -9)
+    return (min(x, sx - 3), min(y, sy - 1), max(x, sx + 7 + len(text) * 2.0), max(y, sy + 9))
+
+
+def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part) -> None:
+    """孔的表面结构默认在孔左侧；标注排完后选边：不被任何引线穿过、不压已放标注文字的一侧（左侧优先）。"""
+    if part is None:
+        return
+    for d in plan.dims:
+        if d.kind != "roughness" or not d.ref.startswith("ra:hole:") or d.at is None or d.view not in vmap:
+            continue
+        name = d.ref[len("ra:hole:"):]
+        h = next((h for h in part.holes if h.name == name), None)
+        if h is None or tuple(d.extra.get("normal", ())) != (-1, 0):
+            continue
+        lbs = [(d2.extra or {})["label"] for d2 in plan.dims if d2.view == d.view and (d2.extra or {}).get("label")]
+        v = vmap[d.view]
+
+        def bad(at_, nx):
+            x, y = _uv_sheet(v, bbox, at_)
+            rb = _ra_box(x, y, nx, 0, d.text)
+            n = sum(1 for lb in lbs if _seg_box(lb["anchor"], lb["elbow"], rb))
+            n += sum(1 for lb in lbs if _box_hit(rb, (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 1,
+                                                       max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + LABEL_H)) > 0)
+            return n
+        at2 = (d.at[0] + h.max_dia, d.at[1])
+        if bad(d.at, -1) and bad(at2, 1) < bad(d.at, -1):
+            d.at, d.extra = at2, {**d.extra, "normal": (1, 0)}
+
+
 def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, float, float]] | None = None,
                  part: ResolvedPart | None = None) -> None:
     """引出标注排布（孔标注/半径/型腔/倒角等）：对每个标注在 8 个方向 × 5 个距离中选位置，
@@ -1186,9 +1218,15 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         if v.label:
             hard.append((cx - 10, cy + h / 2 + 2, cx + 10, cy + h / 2 + 9))
     for d in plan.dims:  # 精度符号大致占位
-        if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap:
+        if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap \
+                and (d.extra or {}).get("attach") != "callout" \
+                and not d.ref.startswith("ra:hole:"):  # 挂在孔标注下的框格随标注摆放（below 计入）；孔的 Ra 排完后选边
             x, y = _uv_sheet(vmap[d.view], bbox, d.at)
-            hard.append((x - 4, y - 14, x + 26, y + 2) if d.kind != "datum" else (x - 5, y - 14, x + 5, y + 2))
+            nx, ny = (d.extra or {}).get("normal", (0, 1))
+            if d.kind == "roughness" and (nx, ny) != (0, 1):  # 同 render_gdt.roughness：引出 8 mm 后画符号
+                hard.append(_ra_box(x, y, nx, ny, d.text))
+            else:
+                hard.append((x - 4, y - 14, x + 26, y + 2) if d.kind != "datum" else (x - 5, y - 14, x + 5, y + 2))
     for s in plan.sections:  # 局部剖区域（剖面线 + 波浪线）：文字不得压在上面
         if s.kind == "local":
             loc = local_section_sheet(plan, s)
@@ -1241,6 +1279,10 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
     leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
     labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
               and not (plan.layout == "shaft" and d.kind == "diameter")]
+    for d in labels:  # 各标注的引出点：别的标注文字不得压上（否则其引线无处可走）；自身引线从 1.5 mm 外起算，不受影响
+        if d.at is not None:
+            x, y = _uv_sheet(vmap[d.view], bbox, d.at)
+            hard.append((x - 1.2, y - 1.2, x + 1.2, y + 1.2))
     for d in sorted(labels, key=lambda d: -_tw(d.text)):  # 长的先放
         v = vmap[d.view]
         cx, cy = v.origin_on_sheet
@@ -1274,6 +1316,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
                                                  "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
                                                  "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
+    _flip_hole_roughness(plan, vmap, bbox, part)
 
 
 def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below: float = 0.0):
@@ -1288,10 +1331,11 @@ def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below: f
             if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
                 cost += 5000
             cost += sum(1000 for hb in hard if _box_hit(box, hb) > 0)
-            cost += sum(40 for sb in soft if _box_hit(box, sb) > 0)
+            cost += sum(120 for sb in soft if _box_hit(box, sb) > 0)
             cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
             cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
-            cost += sum(300 for hb in hard if _seg_box((ax, ay), (ex, ey), hb))
+            sx_, sy_ = ax + 1.5 * math.cos(math.radians(ang)), ay + 1.5 * math.sin(math.radians(ang))  # 锚点本身可能落在别的框内
+            cost += sum(300 for hb in hard if _seg_box((sx_, sy_), (ex, ey), hb))
             if best is None or cost < best[0]:
                 best = (cost, ex, ey, dirn, box, at_, ax, ay)
     return best
@@ -1690,6 +1734,10 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         c = rendered["collisions"]
         f("D009", "warning", f"{len(c)} 处标注文字重叠，如 {c[0][0]!r} 与 {c[0][1]!r}",
           "减少视图（views）、指定更大图幅（sheet）或调整孔位标注")
+    if rendered is not None and rendered.get("crossings"):
+        c = rendered["crossings"]
+        f("D022", "warning", f"{len(c)} 处引线/尺寸线穿过标注文字，如 {c[0]!r}",
+          "调整孔位标注或指定更大图幅（sheet）；人工核对")
     if plan.model_kind == "part" and not any(d.kind == "linear" for d in plan.dims):
         f("D006", "error", "缺少总体尺寸")
     if plan.model_kind == "assembly" and not plan.bom:

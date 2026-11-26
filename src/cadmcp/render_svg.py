@@ -25,6 +25,7 @@ class _Svg:
         self.W, self.H = W, H
         self.parts: list[str] = []
         self.texts: list[tuple[str, tuple[float, float, float, float]]] = []
+        self.leaders: list[tuple[float, float, float, float]] = []  # 细实线（引线/尺寸线/界线），查穿字
 
     def collisions(self) -> list[tuple[str, str]]:
         """文字框两两重叠（重叠面积 > 较小框的 15%）。"""
@@ -41,11 +42,26 @@ class _Svg:
                         out.append((sa, sb))
         return out
 
+    def crossings(self, pad: float = 0.4) -> list[str]:
+        """细实线穿过文字（文字框内缩 pad 后与线段相交）：引线/尺寸线压字，GB/T 4458.4 不允许。"""
+        out = []
+        for s_, (x0, y0, x1, y1) in self.texts:
+            bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x1 - pad, y1 - pad
+            if bx1 <= bx0 or by1 <= by0:
+                continue
+            for (ax, ay, cx, cy) in self.leaders:
+                if _seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1):
+                    out.append(s_)
+                    break
+        return out
+
     def y(self, y: float) -> float:
         return self.H - y
 
     def line(self, x1, y1, x2, y2, w=THIN, dash=None):
         d = f" stroke-dasharray='{dash}'" if dash else ""
+        if w < THIN and not dash:
+            self.leaders.append((x1, y1, x2, y2))
         self.parts.append(f"<line x1='{x1:.2f}' y1='{self.y(y1):.2f}' x2='{x2:.2f}' y2='{self.y(y2):.2f}' "
                           f"stroke='{STROKE}' stroke-width='{w}'{d}/>")
 
@@ -77,6 +93,25 @@ class _Svg:
         return (f"<svg xmlns='http://www.w3.org/2000/svg' width='{self.W}mm' height='{self.H}mm' "
                 f"viewBox='0 0 {self.W} {self.H}'><rect width='100%' height='100%' fill='white'/>"
                 + "".join(self.parts) + "</svg>")
+
+
+def _seg_hits_box(x1, y1, x2, y2, bx0, by0, bx1, by1) -> bool:
+    """线段与轴对齐矩形相交（Liang–Barsky 裁剪）。"""
+    dx, dy = x2 - x1, y2 - y1
+    t0, t1 = 0.0, 1.0
+    for p_, q_ in ((-dx, x1 - bx0), (dx, bx1 - x1), (-dy, y1 - by0), (dy, by1 - y1)):
+        if p_ == 0:
+            if q_ < 0:
+                return False
+            continue
+        r = q_ / p_
+        if p_ < 0:
+            t0 = max(t0, r)
+        else:
+            t1 = min(t1, r)
+        if t0 > t1:
+            return False
+    return True
 
 
 FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", "right": "x"}
@@ -819,7 +854,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(xx + 1.5, by + 2.2, str(val), 3)
                 xx += w
             bom_rows.append((r["item"], r["part_no"], r["qty"]))
-    out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions()}
+    out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions(), "crossings": s.crossings()}
     if asm is not None:
         out.update(bom_rows=bom_rows, balloon_items=balloon_items)
     if plan.hole_table:
