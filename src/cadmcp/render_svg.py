@@ -356,7 +356,39 @@ def _hatch_dir(s, cid, cell, angle, step):
     s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
 
 
-def _thread_lines(s, inst, vtype, ha, va, P):
+def _encloser_rects(boxes, i, ax, ha, va, P, solid):
+    """在视向上把 boxes[i] 整个包住的实体块（螺钉拧入板内：板在螺杆前后都有材料）的投影矩形。"""
+    bb = boxes[i]
+    lo, hi = getattr(bb, ax + "min"), getattr(bb, ax + "max")
+    out = []
+    for j, ob in enumerate(boxes):
+        if j == i or not solid[j]:
+            continue
+        if getattr(ob, ax + "min") < lo - 1e-6 and getattr(ob, ax + "max") > hi + 1e-6:
+            (u0, u1), (w0, w1) = vrange(ob, ha), vrange(ob, va)
+            (x0, y0), (x1, y1) = P(u0, w0), P(u1, w1)
+            out.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+    return out
+
+
+def _seg_hidden(s, a, b, occ, w, dash_hidden=True):
+    """水平/竖直线段按遮挡画：可见段线宽 w，被挡段细虚线（dash_hidden=False 时省略）。"""
+    if occ is None:
+        if w == THIN:
+            s.line(*a, *b, THIN)
+        else:
+            s.poly([a, b], w, close=False)
+        return
+    for t0, t1, hid in _split_hidden(a, b, occ):
+        pa = (a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0)
+        pb = (a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1)
+        if not hid:
+            _seg_hidden(s, pa, pb, None, w)
+        elif dash_hidden:
+            s.line(*pa, *pb, THIN, dash=HIDDEN)
+
+
+def _thread_lines(s, inst, vtype, ha, va, P, occ=None):
     """外螺纹（螺钉）在轴线平行于图面的视图中：小径（≈0.85d）细实线沿螺纹长度，螺纹未到头部时画终止线（粗）。"""
     from .ir.assembly_resolve import apply
     ax_d = VIEW_LOOK.get(vtype, ("z", 1))[0]
@@ -373,13 +405,13 @@ def _thread_lines(s, inst, vtype, ha, va, P):
         for sg in (1, -1):
             a = apply(inst.transform, (side[0] * r1 * sg, side[1] * r1 * sg, z0))
             b = apply(inst.transform, (side[0] * r1 * sg, side[1] * r1 * sg, z1))
-            s.line(*P(vc(a, ha), vc(a, va)), *P(vc(b, ha), vc(b, va)), THIN)
+            _seg_hidden(s, P(vc(a, ha), vc(a, va)), P(vc(b, ha), vc(b, va)), occ, THIN, dash_hidden=False)
         for z in (z0, z1):
             if zs and min(zs) + 1e-6 < z < max(zs) - 1e-6 and not any(abs(z - sg[0]) < 1e-6 or abs(z - sg[1]) < 1e-6
                                                                         for sg in inst.source.revolve):
                 a = apply(inst.transform, (side[0] * d / 2, side[1] * d / 2, z))
                 b = apply(inst.transform, (-side[0] * d / 2, -side[1] * d / 2, z))
-                s.line(*P(vc(a, ha), vc(a, va)), *P(vc(b, ha), vc(b, va)), THICK)
+                _seg_hidden(s, P(vc(a, ha), vc(a, va)), P(vc(b, ha), vc(b, va)), occ, THICK)
 
 
 def _draw_asm_section(s, asm, v, sec):
@@ -467,10 +499,14 @@ def _draw_asm_view(s, asm, vtype, ha, va, P, sc):
         x1, y1 = P(bu1, bw1)
         own = [j for j, (k2, _, _) in enumerate(blocks) if k2 == k]
         occ = _occluder_rects(boxes, bi, vtype, ha, va, P, [sv and j not in own for j, sv in enumerate(solid)])
+        if not solid[bi]:
+            occ += _encloser_rects(boxes, bi, ax_d, ha, va, P, solid)
         _rect_hidden(s, min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), occ, THICK)  # 可见轮廓一律粗实线（GB/T 4457.4）
-    for inst in asm.instances:
+    for k, inst in enumerate(asm.instances):
         if inst.source.threads:
-            _thread_lines(s, inst, vtype, ha, va, P)
+            bi = next(j for j, (k2, _, _) in enumerate(blocks) if k2 == k)
+            occ = _occluder_rects(boxes, bi, vtype, ha, va, P, solid) + _encloser_rects(boxes, bi, ax_d, ha, va, P, solid)
+            _thread_lines(s, inst, vtype, ha, va, P, occ)
 
 
 def _draw_weld_bodies(s, part, vtype, ha, va, P):
