@@ -778,6 +778,30 @@ class SwExecutor:
     def op_overall_dimension(self, view: str, axis: str, value: float):
         raise OpFailed("overall dimension on non-ordinate views: P1（需按视图轮廓选边）")
 
+    def op_section_cut(self, view: str, parent: str, label: str, kind: str, points, center):
+        """父视图中画剖切折线（图纸坐标），选中后生成剖视图并放到 center；剖视图登记为 view（后续尺寸/注释挂在它上面）。"""
+        pv = self.views.get(parent)
+        if pv is None:
+            raise OpFailed(f"parent view {parent} not on sheet")
+        self.model.ActivateView(pv.Name)
+        sm = self.model.SketchManager
+        segs = []
+        for a, b in zip(points, points[1:]):
+            seg = sm.CreateLine(a[0] * MM, a[1] * MM, 0, b[0] * MM, b[1] * MM, 0)
+            if seg is None:
+                raise OpFailed("cut line CreateLine failed")
+            segs.append(seg)
+        self.model.ClearSelection2(True)
+        for sg in segs:
+            sg.Select4(True, None)
+        opts = self._k("swCreateSectionView_DisplaySurfaceCut", 0) * 0
+        sv = self.model.CreateSectionViewAt5(center[0] * MM, center[1] * MM, 0, label, opts, None, 0)
+        if sv is None:
+            raise OpFailed(f"CreateSectionViewAt5 failed（{kind}；阶梯剖需折线首尾在零件外）")
+        self.views[view] = sv
+        self.readback.setdefault("sections", []).append(label)
+        return {"name": sv.Name, "segments": len(segs)}
+
     def op_section_view(self, label: str, parent: str, z: float, center):
         raise OpFailed("section view: P1 实机实现（在主视图画垂直剖切线 + CreateSectionViewAt5，移出放置）")
 

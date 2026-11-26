@@ -162,3 +162,11 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
    oplog 中 weld_symbol 返回 native=false 时记录 fallback 原因。常见原因是符号代码不对：在 SW 里手工插一个角焊缝符号，
    用宏读 `WeldSymbol.GetText(True, …)` 得到代码，写到节点配置 `templates.weld_fillet_symbol`。
 3. 切割清单表表头在下，长度/数量与预览一致；rules 中没有 D013/D014。
+
+### 剖视图（D015 / D016）
+建 `examples/motor_plate.py` 并出图（默认 sections=auto → 主视图阶梯剖 A-A），核对：
+1. 俯视图上的剖切折线位置与预览 SVG 一致（oplog 中 section_cut 的 points 为图纸坐标 mm）。
+   如果线画到了别处，记录：激活视图后 SketchManager.CreateLine 用的是图纸坐标还是视图坐标。
+2. A-A 剖视图位于原主视图位置、投射方向正确（从前向后看）；方向反了记录下来（需加 ChangeDirection 选项）。
+3. 阶梯剖转折处没有分界线；沉孔、螺纹孔、盲孔、型腔都剖到；剖面线为 45°。
+4. 再试 `sections: [{"kind": "half", "through": ["Pilot"]}]`：SW 能否用 L 形线生成半剖；不行记录报错。

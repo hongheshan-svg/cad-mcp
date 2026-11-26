@@ -348,6 +348,24 @@ def _match_keys(row) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
+def section_ops(plan) -> list[NativeOp]:
+    """剖视图：在父视图（俯视图）上按剖切路径画折线 → CreateSectionViewAt5，放到被替代视图的位置。
+    折线点为图纸坐标（mm），由与预览相同的视图投影算出。"""
+    from types import SimpleNamespace
+
+    from ...detailing import _project
+    ops = []
+    for s in plan.sections:
+        parent = next(v for v in plan.views if v.type == s.parent)
+        target = next(v for v in plan.views if v.type == s.view)
+        pts = [_project(parent, SimpleNamespace(bbox=s.bbox), q) for q in s.cut_points]
+        ops.append(NativeOp("section_cut", {
+            "view": s.view, "parent": s.parent, "label": s.label, "kind": s.kind,
+            "points": [[round(x, 3), round(y, 3)] for x, y in pts], "center": target.origin_on_sheet},
+            "父视图中画剖切折线并选中 → IDrawingDoc.CreateSectionViewAt5（阶梯剖用折线；半剖用 L 形线）"))
+    return ops
+
+
 def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | None = None,
                     model_features: list | None = None) -> list[NativeOp]:
     sheet_templates = sheet_templates or {}
@@ -374,10 +392,13 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                  "z": (f["z0"] + f["z1"]) / 2 if f else 0.0,
                                                  "center": v.origin_on_sheet}, "移出断面图（剖切线垂直轴线）"))
             continue
+        if any(s.view == v.type for s in plan.sections):
+            continue  # 由剖视图替代（在父视图之后生成）
         name, angle = SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front" else SW_VIEW[v.type]
         ops.append(NativeOp("model_view", {"view": v.type, "sw_view": name, "model": model_file,
                                            "center": v.origin_on_sheet, "scale": v.scale * (0.5 if v.type == "iso" else 1),
                                            "rotate_deg": angle, "display": "hidden_removed" if v.type == "iso" else "hidden_visible"}))
+    ops += section_ops(plan)
     # 尺寸：有孔坐标的视图用 SW 自动坐标标注（左下角为基准），其余视图只标总体尺寸
     ordinate_views = sorted({d.view for d in plan.dims if d.kind == "ordinate"})
     for vt in ordinate_views:

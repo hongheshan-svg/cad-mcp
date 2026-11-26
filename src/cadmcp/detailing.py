@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
+from .errors import SPEC_INVALID, CadError
 from .ir.assembly_resolve import ResolvedAssembly
 from .ir.drawing import DrawingSpec
 from .ir.resolve import Box, ResolvedPart
@@ -99,6 +100,8 @@ class DrawingPlan:
     title_block: dict[str, str]
     bom: list[dict[str, Any]] = field(default_factory=list)
     balloons: list[dict[str, Any]] = field(default_factory=list)
+    sections: list[Any] = field(default_factory=list)  # section.SectionPlan（剖视图）
+    section_skipped: bool = False  # 有内部结构但 sections="none"
     revisions: list[dict[str, str]] = field(default_factory=list)
     flat_pattern: tuple[float, float] | None = None
     name: str = ""  # 图纸文件名（默认 <model>_DRW）
@@ -474,11 +477,43 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                        flat_pattern=p.flat_pattern)
     plan.missing_views = sorted(missing_views)
     plan.revisions = list(spec.revisions)
+    _plan_sections(plan, spec, p)
     return plan
 
 
 
 # ---------------- 焊接件图 ----------------
+def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:
+    """剖视图：auto 时有内部结构就把主视图画成全剖/阶梯剖；逐个指定时按指定。剖视图替代原视图位置并标 X-X。"""
+    from . import section as sx
+    if p.base_type != "extrude" or p.profile is None:
+        return
+    vt = {v.type for v in plan.views}
+    if spec.sections == "none":
+        plan.section_skipped = sx.needs_section(p)
+        return
+    secs = []
+    if spec.sections == "auto":
+        if {"front", "top"} <= vt:
+            s = sx.auto_section(p)
+            if s:
+                secs.append(s)
+    else:
+        for i, sp in enumerate(spec.sections):
+            if sp.view not in vt or "top" not in vt:
+                raise CadError(SPEC_INVALID, f"section {i}: drawing needs views {sp.view!r} and 'top'",
+                               hint="剖切线画在俯视图上，剖视图替代主视图/左视图；在 views 中加入它们")
+            secs.append(sx.explicit_section(p, sp, sp.label or "ABCDEFGH"[i]))
+    for s in secs:
+        s.geometry = sx.geometry(p, s)
+        s.cut_points = sx.cut_line(p, s)
+        s.bbox = p.bbox
+        for v in plan.views:
+            if v.type == s.view:
+                v.label = f"{s.label}-{s.label}"
+    plan.sections = secs
+
+
 def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
     """焊接件图：通用视图 + 孔标注（复用零件规划），加杆件位置尺寸、焊缝符号、切割清单与序号。"""
     plan = plan_part_drawing(spec, _as_body(p), today)
@@ -866,6 +901,14 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         out += check_bom_association(plan, rendered)
     if rendered is not None and plan.layout == "weldment":
         out += check_weldment_drawing(plan, rendered)
+    if plan.section_skipped:
+        f("D015", "warning", "零件有沉孔/螺纹孔/盲孔/型腔等内部结构，主视图未剖开，只能靠虚线和标注表达",
+          "sections 用 auto 或指定剖切位置")
+    if rendered is not None and ("dim_refs" in rendered or "sections" in rendered):
+        done = set(rendered.get("sections", [])) | {r[8:] for r in rendered.get("dim_refs", []) if r.startswith("section:")}
+        for sec in plan.sections:
+            if sec.label not in done:
+                f("D016", "error", f"剖视图 {sec.label}-{sec.label} 未生成", "查看 oplog 中 section_cut 的失败原因")
     if plan.model_kind == "part" and not any("公差" in n for n in plan.notes):
         f("D008", "warning", "缺少未注公差说明")
     return out

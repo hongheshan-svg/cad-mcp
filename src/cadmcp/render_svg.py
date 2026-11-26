@@ -212,6 +212,127 @@ def _weld_symbol(s, px, py, d):
         s.circle(ex, ey, 1.4, THIN)
 
 
+def _sub_segments(a, b, cuts):
+    """线段 a-b 去掉与之共线的若干开口段，返回剩余小段。"""
+    L = math.dist(a, b)
+    if L < 1e-9:
+        return []
+    ux, uy = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+    holes = []
+    for c, d in cuts:
+        off = [abs((q[0] - a[0]) * uy - (q[1] - a[1]) * ux) for q in (c, d)]
+        if max(off) > 0.05:
+            continue
+        t0, t1 = sorted(((q[0] - a[0]) * ux + (q[1] - a[1]) * uy) for q in (c, d))
+        if t1 > 0 and t0 < L:
+            holes.append((max(t0, 0), min(t1, L)))
+    holes.sort()
+    out, t = [], 0.0
+    for t0, t1 in holes:
+        if t0 > t + 1e-6:
+            out.append((t, t0))
+        t = max(t, t1)
+    if t < L - 1e-6:
+        out.append((t, L))
+    return [((a[0] + ux * s0, a[1] + uy * s0), (a[0] + ux * s1, a[1] + uy * s1)) for s0, s1 in out]
+
+
+def _draw_section(s, sec, V, v, cx, cy):
+    """剖视图：剖面线（45° 细实线，间距 3，GB/T 4457.5 金属材料）只画在实体剖面区，孔/型腔为空；
+    孔口处不画轮廓线；阶梯剖转折处不画线；半剖以中心线为界。"""
+    g = sec.geometry
+    solid = [[V(q) for q in poly] for poly in g["solid"]]
+    voids = [[V(q) for q in poly] for poly in g["voids"]]
+    mid = f"sec{sec.label}{id(sec) % 10000}"
+    allpts = [q for poly in solid for q in poly]
+    if allpts:
+        x0, x1 = min(q[0] for q in allpts), max(q[0] for q in allpts)
+        y0, y1 = min(q[1] for q in allpts), max(q[1] for q in allpts)
+        path = lambda polys: " ".join("M " + " L ".join(f"{q[0]:.2f},{s.y(q[1]):.2f}" for q in pl) + " Z" for pl in polys)  # noqa: E731
+        s.parts.append(
+            f"<defs><pattern id='h{mid}' patternUnits='userSpaceOnUse' width='3' height='3' patternTransform='rotate(45)'>"
+            f"<line x1='0' y1='0' x2='0' y2='3' stroke='{STROKE}' stroke-width='0.18'/></pattern>"
+            f"<mask id='m{mid}'><path d='{path(solid)}' fill='white'/>"
+            + (f"<path d='{path(voids)}' fill='black'/>" if voids else "") + "</mask></defs>"
+            f"<rect x='{x0:.2f}' y='{s.y(y1):.2f}' width='{x1 - x0:.2f}' height='{y1 - y0:.2f}' "
+            f"fill='url(#h{mid})' mask='url(#m{mid})'/>")
+    openings = [(V(a), V(b)) for a, b in g["openings"]]  # 孔口/型腔口：实体轮廓上去掉
+    # 合并相邻实体（阶梯剖各段、相同高度）：共享的竖边不画
+    shared = []
+    for i, a in enumerate(solid):
+        for b in solid[i + 1:]:
+            for k in range(len(a)):
+                p1, p2 = a[k], a[(k + 1) % len(a)]
+                for m in range(len(b)):
+                    q1, q2 = b[m], b[(m + 1) % len(b)]
+                    if (math.dist(p1, q2) < 0.05 and math.dist(p2, q1) < 0.05) or \
+                       (math.dist(p1, q1) < 0.05 and math.dist(p2, q2) < 0.05):
+                        shared.append((p1, p2))
+    half_x = V((sec.half_from, 0, 0) if sec.view == "front" else (0, sec.half_from, 0))[0] if sec.half_from is not None else None
+    for poly in solid:
+        for k in range(len(poly)):
+            a, b = poly[k], poly[(k + 1) % len(poly)]
+            if any(math.dist(a, c) < 0.05 and math.dist(b, d) < 0.05 or math.dist(a, d) < 0.05 and math.dist(b, c) < 0.05
+                   for c, d in shared):
+                continue
+            if half_x is not None and abs(a[0] - half_x) < 0.05 and abs(b[0] - half_x) < 0.05:
+                continue
+            for c, d in _sub_segments(a, b, openings + shared):
+                s.line(*c, *d, THICK)
+    for pl in g["edges"]:
+        s.poly([V(q) for q in pl], THICK, close=False)
+    for seg in g["thin"]:
+        s.line(*V(seg[0]), *V(seg[1]), THIN)
+    for seg in g["thick"]:
+        s.line(*V(seg[0]), *V(seg[1]), THICK)
+    for seg in g["axes"]:
+        s.line(*V(seg[0]), *V(seg[1]), 0.18, "4,1,1,1")
+    for pl in g["outline"]:  # 半剖：未剖的一半画外形（开口：中心线一侧不画）
+        s.poly([V(q) for q in pl], THICK, close=False)
+    if half_x is not None and allpts:
+        s.line(half_x, y0 - 3, half_x, y1 + 3, 0.18, "4,1,1,1")
+    s.text(cx, cy + v.size_mm[1] / 2 + 5, f"{sec.label}-{sec.label}", 5, "middle")
+
+
+def _draw_cut_line(s, sec, part, V):
+    """剖切符号（GB/T 4458.6）：起止和转折处画粗短画，起止处画箭头表示投射方向，并注字母。"""
+    from .section import AX, FRAME
+    pts = [V(q) for q in sec.cut_points]
+    da = FRAME[sec.view][1]
+    q0 = sec.cut_points[0]
+    q1 = list(q0)
+    q1[AX[da]] += 1.0
+    d0, d1 = V(q0), V(tuple(q1))
+    n = math.dist(d0, d1) or 1
+    dx, dy = (d1[0] - d0[0]) / n, (d1[1] - d0[1]) / n  # 投射方向（图纸上）
+    W = 0.7
+
+    def stroke(a, b, length=5):
+        L = math.dist(a, b) or 1
+        return (a, (a[0] + (b[0] - a[0]) / L * length, a[1] + (b[1] - a[1]) / L * length))
+
+    ends = [stroke(pts[0], pts[1]), stroke(pts[-1], pts[-2])]
+    for a, b in ends:
+        s.line(*a, *b, W)
+        s.line(*a, a[0] + dx * 6, a[1] + dy * 6, THIN)
+        s.parts.append(_arrow_head(s, (a[0] + dx * 6, a[1] + dy * 6), (dx, dy)))
+        s.text(a[0] + dx * 9 - 1.5, a[1] + dy * 9 - 1.5, sec.label, 5, "middle")
+    for i in range(1, len(pts) - 1, 2):  # 阶梯转折：每个转角画 L 形粗短画（两臂各 4），转角外侧注字母
+        a, b = pts[i], pts[i + 1]
+        for corner, along, other in ((a, pts[i - 1], b), (b, pts[i + 2], a)):
+            s.line(*stroke(corner, along, 4)[1], *corner, W)
+            s.line(*corner, *stroke(corner, other, 4)[1], W)
+        s.text(a[0] - 3 * dx - 2.5, a[1] - 3 * dy - 1, sec.label, 3.5, "middle")
+
+
+def _arrow_head(s, tip, d):
+    x, y = tip
+    bx, by = x - d[0] * 2.5, y - d[1] * 2.5
+    px, py = -d[1] * 0.8, d[0] * 0.8
+    pts = [(x, y), (bx + px, by + py), (bx - px, by - py)]
+    return f"<polygon points='{' '.join(f'{a:.2f},{s.y(b):.2f}' for a, b in pts)}' fill='{STROKE}'/>"
+
+
 def _draw_cut_list(s, x0, y_bottom, rows, out_rows=None) -> float:
     """切割清单（标题栏上方，GB/T 10609.2：表头在下，序号自下而上）。返回表顶 y。"""
     cols = [("序号", 12), ("规格", 52), ("长度/尺寸", 36), ("数量", 14), ("备注", 66)]
@@ -318,7 +439,11 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         def V(p3, ha=ha, va=va, P=P):
             return P(vc(p3, ha), vc(p3, va))
 
-        if part is not None and v.type in ("top", "bottom") and part.profile is not None:
+        sec = next((x for x in plan.sections if x.view == v.type), None)
+        if sec is not None:
+            _draw_section(s, sec, V, v, cx, cy)
+            rendered_refs.append(f"section:{sec.label}")
+        elif part is not None and v.type in ("top", "bottom") and part.profile is not None:
             pr = part.profile
             if pr.shape == "circle":
                 c3 = (*pr.data["center"], 0.0)
@@ -407,6 +532,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.line(c[0] - h.max_dia * 0.7 * sc, c[1], c[0] + h.max_dia * 0.7 * sc, c[1], 0.18, "4,1,1,1")
                 s.line(c[0], c[1] - h.max_dia * 0.7 * sc, c[0], c[1] + h.max_dia * 0.7 * sc, 0.18, "4,1,1,1")
 
+        for sec_ in plan.sections:
+            if sec_.parent == v.type and part is not None:
+                _draw_cut_line(s, sec_, part, V)
         # 尺寸
         vx0, vy0 = P(ulo, wlo)
         vx1, vy1 = P(uhi, whi)
