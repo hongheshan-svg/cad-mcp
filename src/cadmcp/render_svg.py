@@ -26,6 +26,7 @@ class _Svg:
         self.parts: list[str] = []
         self.texts: list[tuple[str, tuple[float, float, float, float]]] = []
         self.leaders: list[tuple[float, float, float, float]] = []  # 细实线（引线/尺寸线/界线），查穿字
+        self.outlines: list[tuple[float, float, float, float]] = []  # 粗实线（可见轮廓），查压字
 
     def collisions(self) -> list[tuple[str, str]]:
         """文字框两两重叠（重叠面积 > 较小框的 15%）。"""
@@ -49,7 +50,7 @@ class _Svg:
             bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x1 - pad, y1 - pad
             if bx1 <= bx0 or by1 <= by0:
                 continue
-            for (ax, ay, cx, cy) in self.leaders:
+            for (ax, ay, cx, cy) in self.leaders + self.outlines:
                 if _seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1):
                     out.append(s_)
                     break
@@ -66,6 +67,9 @@ class _Svg:
                           f"stroke='{STROKE}' stroke-width='{w}'{d}/>")
 
     def poly(self, pts, w=THICK, close=True, dash=None):
+        if w >= THICK and not dash:
+            ring = list(pts) + ([pts[0]] if close else [])
+            self.outlines += [(a[0], a[1], b[0], b[1]) for a, b in zip(ring, ring[1:])]
         d = " ".join(f"{x:.2f},{self.y(y):.2f}" for x, y in pts)
         tag = "polygon" if close else "polyline"
         da = f" stroke-dasharray='{dash}'" if dash else ""
@@ -393,7 +397,9 @@ def _draw_cut_line(s, sec, part, V):
         s.line(*a, *b, W)
         s.line(*a, a[0] + dx * 6, a[1] + dy * 6, THIN)
         s.parts.append(_arrow_head(s, (a[0] + dx * 6, a[1] + dy * 6), (dx, dy)))
-        s.text(a[0] + dx * 9 - 1.5, a[1] + dy * 9 - 1.5, sec.label, 5, "middle")
+        L = math.dist(a, b) or 1
+        ox, oy = (a[0] - b[0]) / L, (a[1] - b[1]) / L  # 沿剖切线朝外：字母在箭头外侧，不压视图轮廓
+        s.text(a[0] + dx * 9 + ox * 2.5, a[1] + dy * 9 + oy * 2.5 - 1.5, sec.label, 5, "middle")
     for i in range(1, len(pts) - 1, 2):  # 阶梯转折：每个转角画 L 形粗短画（两臂各 4），转角外侧注字母
         a, b = pts[i], pts[i + 1]
         for corner, along, other in ((a, pts[i - 1], b), (b, pts[i + 2], a)):
@@ -769,8 +775,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.line(px, py, px, py + 8, THIN)
                 s.parts.append(_arrow_head(s, (px + 8, py), (1, 0)))
                 s.parts.append(_arrow_head(s, (px, py + 8), (0, 1)))
-                s.text(px + 9, py - 1, "X", 2.5)
-                s.text(px - 1, py + 9, "Y", 2.5)
+                s.text(px + 9, py - 3, "X", 2.5)  # 轴向箭头沿视图边线：字母放在边线外侧
+                s.text(px - 3, py + 9, "Y", 2.5)
                 s.text(px - 9, py - 4, d.text, 2.5)
             elif d.kind in ("callout", "radius", "diameter") and d.extra and "label" in d.extra:
                 lb = d.extra["label"]
