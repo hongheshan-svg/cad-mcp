@@ -81,6 +81,11 @@ class _Svg:
         da = f" stroke-dasharray='{dash}'" if dash else ""
         self.parts.append(f"<{tag} points='{d}' fill='none' stroke='{STROKE}' stroke-width='{w}'{da}/>")
 
+    def face(self, pts, w=THICK):
+        """白色填充的多边形（轴测图画家算法消隐用）：轮廓不进 outlines（被后画的面遮住的部分并不可见）。"""
+        d = " ".join(f"{x:.2f},{self.y(y):.2f}" for x, y in pts)
+        self.parts.append(f"<polygon points='{d}' fill='white' stroke='{STROKE}' stroke-width='{w}' stroke-linejoin='round'/>")
+
     def rect(self, x, y, w, h, sw=THICK):
         self.poly([(x, y), (x + w, y), (x + w, y + h), (x, y + h)], sw)
 
@@ -784,8 +789,37 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     from .ir.resolve import Box
     boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
         ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
+    if asm is None and len(boxes) > 1:  # 焊接件：杆件/板互不相交 → 画家算法消隐（白色填充可见面，由远及近）
+        for bb in _painter_order(boxes):
+            _iso_box_faces(s, iso, bb)
+        return
     for bb in boxes:
         _iso_box(s, iso, bb, THIN if asm is not None or len(boxes) > 1 else THICK)
+
+
+def _painter_order(boxes):
+    """互不相交的轴向长方体按远→近排序（观察者在 −X、−Y、+Z）：A 在某轴上整体位于 B 的远侧则先画 A。"""
+    def behind(a, b):
+        return a.xmin >= b.xmax - 1e-9 or a.ymin >= b.ymax - 1e-9 or a.zmax <= b.zmin + 1e-9
+
+    def key(b):
+        return -(b.xmin + b.xmax) / 2 - (b.ymin + b.ymax) / 2 + (b.zmin + b.zmax) / 2
+    left = sorted(boxes, key=key)
+    out = []
+    while left:  # 每次取一个"没有别的盒子必须排在它前面"的，平局按中心深度
+        pick = next((a for a in left if not any(behind(b, a) and not behind(a, b) for b in left if b is not a)), left[0])
+        out.append(pick)
+        left.remove(pick)
+    return out
+
+
+def _iso_box_faces(s, iso, bb):
+    """长方体的三个可见面（−X、−Y、+Z）：白色填充遮住后面的线，粗实线轮廓。"""
+    def P(i, j, k):
+        return iso(bb.xmin + i * (bb.xmax - bb.xmin), bb.ymin + j * (bb.ymax - bb.ymin), bb.zmin + k * (bb.zmax - bb.zmin))
+    for f in ([(0, 0, 0), (0, 1, 0), (0, 1, 1), (0, 0, 1)], [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)],
+              [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]):
+        s.face([P(*q) for q in f])
 
 
 def _iso_box(s, iso, bb, w):

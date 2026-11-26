@@ -127,3 +127,13 @@ def test_iso_hidden_lines():
     sq = [(0, 0), (1, 0), (1, 1), (0, 1)]
     assert _clip_convex((-1, 0.5), (2, 0.5), sq) == ((0, 0.5), (1, 0.5))
     assert _clip_convex((-1, 2), (2, 2), sq) is None
+
+
+def test_painter_order():
+    from cadmcp.ir.resolve import Box
+    from cadmcp.render_svg import _painter_order
+    top = Box(0, 10, 0, 10, 10, 11)    # 顶板（近：+Z）
+    leg = Box(0, 1, 0, 1, 0, 10)       # 腿在顶板下方 → 先画
+    far = Box(9, 10, 9, 10, 0, 10)     # 远角的腿（+X+Y 远）
+    order = _painter_order([top, leg, far])
+    assert order.index(leg) < order.index(top) and order.index(far) < order.index(leg)
