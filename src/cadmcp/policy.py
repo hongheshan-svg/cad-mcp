@@ -9,6 +9,12 @@ import yaml
 from .errors import POLICY_DENIED, CadError
 
 
+def _mode(m: str) -> str:
+    if m not in ("update", "report", "frozen"):
+        raise CadError(POLICY_DENIED, f"dependents mode must be update/report/frozen, got {m!r}")
+    return m
+
+
 @dataclass
 class Policy:
     workspace_root: Path
@@ -21,6 +27,9 @@ class Policy:
     mass_tolerance: float = 0.03
     writeback_allow: list[Path] = field(default_factory=list)  # 允许把发布结果回写的原位置（共享盘/PDM 检出目录）
     max_import_dependents: int = 10000  # 修改共用件时自动纳入的引用文件上限
+    # 修改共用件时对引用文件的处理，按目录区分（最长路径匹配）：update 跟着改 / report 只报告 / frozen 已定版（拒绝直接改）
+    dependents_mode: str = "update"
+    dependents_rules: list[tuple[Path, str]] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path | None, workspace_root: str | Path | None = None) -> "Policy":
@@ -36,6 +45,8 @@ class Policy:
             mass_tolerance=float(data.get("mass_tolerance", 0.03)),
             writeback_allow=[Path(p).resolve() for p in data.get("writeback_allow", [])],
             max_import_dependents=int(data.get("max_import_dependents", 10000)),
+            dependents_mode=_mode(data.get("dependents_mode", "update")),
+            dependents_rules=[(Path(r["dir"]).resolve(), _mode(r["mode"])) for r in data.get("dependents_rules", [])],
         )
 
     @staticmethod
@@ -47,6 +58,14 @@ class Policy:
         if not self._under(p, self.read_allow + [self.workspace_root, self.release_root]):
             raise CadError(POLICY_DENIED, f"reading {p} is not allowed",
                            hint="路径需在 policy.read_allow 中（设计库/PDM 检出目录）")
+
+    def dependents_mode_for(self, p: Path) -> str:
+        p = p.resolve()
+        best = None
+        for d, mode in self.dependents_rules:
+            if (p == d or d in p.parents) and (best is None or len(d.parts) > len(best[0].parts)):
+                best = (d, mode)
+        return best[1] if best else self.dependents_mode
 
     def check_writeback(self, p: Path) -> None:
         if not self._under(p, self.writeback_allow):

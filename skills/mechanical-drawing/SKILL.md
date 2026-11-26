@@ -43,6 +43,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   孔写在板的 `holes` 里，安装基准板设 `machined: true`。杆件端面要贴在别的件上，不要穿入（W001）；
   焊缝、焊脚、切割清单由平台自动算。敞口管端会报 W003：加封板或设 `end_caps: true`。
   简单焊接机架直接用 `cad_build_frame(construction="welded")`。
+- 修改共用件：先 `cad_edit_existing(dry_run=true)` 看 `dependents`。E017（已定版目录引用）→ 用 `save_as="新文件名"`
+  另存为新图号再改，`set_property` 改图号，再在本项目装配里 `replace_component` 换成新件；
+  E018（只报告目录）→ 修改照常进行，但要把受影响文件清单告诉用户，由相关项目负责人复核。
 - 铸件（轴承座、底座、箱体类，批量大或形状复杂时）：spec 写**加工后的零件**，`category: "casting"`，材料用
   HT200/HT250/QT450-10/ZG270-500/ZL102/ZL104，加 `casting: {process: sand|investment|die, machined_faces: [...]}`。
   平台自动生成毛坯件（图号加 -M：加工面加余量、大孔铸小、小孔铸后钻）并在出零件图时一起出毛坯图。

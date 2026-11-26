@@ -8,4 +8,8 @@ writeback_allow:                 # 允许把发布结果回写的原位置（默
   - "D:/designs"
 native_call_enabled: false
 mass_tolerance: 0.03             # CAD 实测质量与 spec 估算偏差阈值
+dependents_mode: update          # 修改共用件时引用文件默认处理：update 跟着改 / report 只报告 / frozen 拒绝直接改
+dependents_rules:                # 按目录区分（最长路径匹配）
+  - {dir: "D:/designs/已定版", mode: frozen}     # 定版项目：必须另存新图号（save_as）再改
+  - {dir: "D:/designs/在制", mode: report}       # 只报告受影响文件，不改写
 max_import_dependents: 10000       # 修改共用件时自动纳入的引用文件上限；超过则要求走 PDM 变更流程

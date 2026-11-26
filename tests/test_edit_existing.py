@@ -203,3 +203,46 @@ def test_many_dependents_scale(svc, tmp_path):
     svc.policy.max_import_dependents = 1000  # 超过上限：拒绝
     r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 14}])
     assert not r["applied"] and "上限 1000" in r["error"]
+
+
+def _two_projects(svc, tmp_path):
+    from legacy import HDR
+    designs = tmp_path / "designs"
+    old = write_legacy(designs / "OLD")
+    for proj in ("RELEASED", "WIP"):
+        d = designs / proj
+        d.mkdir()
+        a = {**HDR, "kind": "assembly", "name": f"M_{proj}", "native": {
+            "references": [str((old / "Bracket.mprt").resolve())], "components": [], "mates": []}}
+        (d / f"M_{proj}.masm").write_text(json.dumps(a), encoding="utf-8")
+    svc.policy.read_allow.append(designs.resolve())
+    return designs, old
+
+
+def test_dependents_mode_frozen_and_save_as(svc, tmp_path):
+    designs, old = _two_projects(svc, tmp_path)
+    svc.policy.dependents_rules = [((designs / "RELEASED").resolve(), "frozen"), ((designs / "WIP").resolve(), "report")]
+    assert svc.policy.dependents_mode_for(designs / "RELEASED" / "x.masm") == "frozen"
+    assert svc.policy.dependents_mode_for(designs / "OLD" / "x.masm") == "update"
+    svc.change_begin("OLD", sources=[str(old / "Bracket.mprt")])
+    ed = [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}]
+    r = svc.edit_existing("Bracket.mprt", ed)
+    assert not r["applied"] and {f["rule"] for f in r["findings"]} >= {"E017", "E018"}
+    assert r["dependents"]["frozen"]["by_folder"] == {"RELEASED": 1}
+    before = (old / "Bracket.mprt").read_text(encoding="utf-8")
+    r = svc.edit_existing("Bracket.mprt", ed, save_as="Bracket-B.mprt")
+    assert r["applied"] and r["saved_as"] == "Bracket-B.mprt" and not r.get("imported_count")
+    assert (old / "Bracket.mprt").read_text(encoding="utf-8") == before
+    with pytest.raises(CadError):
+        svc.edit_existing("Bracket.mprt", ed, save_as="Bracket-B.mprt")  # 已存在
+
+
+def test_dependents_mode_report_only(svc, tmp_path):
+    designs, old = _two_projects(svc, tmp_path)
+    svc.policy.dependents_rules = [((designs / "RELEASED").resolve(), "report")]
+    svc.change_begin("OLD", sources=[str(old / "Bracket.mprt")])
+    r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
+    assert r["applied"] and any(f["rule"] == "E018" for f in r["findings"])
+    files = [x["file"] for x in r["refreshed"]]
+    assert any("WIP/M_WIP.masm" in f for f in files) and not any("RELEASED" in f for f in files)
+    assert r["dependents"]["report"]["count"] == 1

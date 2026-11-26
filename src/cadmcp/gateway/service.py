@@ -641,8 +641,12 @@ class CadService:
                 **({"notes": notes} if notes else {}),
                 **({"hint": "修改时这些文件会自动复制进工作区一起更新和检查"} if outside else {})}
 
-    def edit_existing(self, file: str, edits: list[dict[str, Any]], dry_run: bool = False) -> dict[str, Any]:
-        """修改工作区中的现有模型：校验 → 执行并重建 → 对比 → 更新引用它的装配/工程图。"""
+    def edit_existing(self, file: str, edits: list[dict[str, Any]], dry_run: bool = False,
+                      save_as: str | None = None) -> dict[str, Any]:
+        """修改工作区中的现有模型：校验 → 执行并重建 → 对比 → 更新引用它的装配/工程图。
+        save_as：另存为新文件（新图号）再改，原件与引用它的文件都不受影响。"""
+        import shutil
+
         from ..edit import check_edits, describe, diff, parse_edits
         s = self._session()
         p = self._work_file(file)
@@ -657,24 +661,49 @@ class CadService:
                 parsed[i], fs = self._resolve_replacement(t, e, before)
                 extra += fs
         findings = check_edits(before, parsed) + extra
-        summ = rules.summarize(findings)
-        if not summ["passed"] or dry_run:
-            return {"ok": summ["passed"], "applied": False, "file": rel, "findings": findings,
-                    **({"hint": "修正 error 后重试；dry_run=false 才会执行"} if not summ["passed"] else {})}
-        # 全部检查：共享盘上引用它的装配/工程图（含间接引用）自动纳入工作区，一起更新与检查
-        imported: list[str] = []
-        orig = s.source_paths.get(rel)
+        # 引用文件：按目录规则分为 update（纳入并更新）/ report（只报告）/ frozen（已定版：拒绝直接改）
+        orig = None if save_as else s.source_paths.get(rel)
+        groups: dict[str, list[Path]] = {"update": [], "report": [], "frozen": []}
         if orig:
             with t.lock:
                 users, notes = self._external_users(t, [Path(orig)])
             findings += notes
-            known = {Path(v).resolve() for v in s.source_paths.values()}
-            outside = [u for u in users if u not in known]
+            for u in users:
+                groups[self.policy.dependents_mode_for(u)].append(u)
             if len(users) > self.policy.max_import_dependents:
                 return {"ok": False, "applied": False, "file": rel, "findings": findings,
                         "error": f"{len(users)} 个文件引用了它（上限 {self.policy.max_import_dependents}）",
                         "hint": "这是大范围共用件：建议走 PDM 变更流程；或调高 policy.max_import_dependents"}
-            imported = self._import_users(outside)
+            if groups["frozen"]:
+                findings.append({"rule": "E017", "severity": "error", "target": rel,
+                                 "message": f"{len(groups['frozen'])} 个已定版文件引用此零件（"
+                                            + "、".join(f"{k} {v}" for k, v in self._by_folder(groups["frozen"]).items())
+                                            + "），直接修改会改变已定版图纸",
+                                 "hint": "用 save_as 另存为新图号后修改，再在本项目装配中 replace_component 换成新件"})
+            if groups["report"]:
+                findings.append({"rule": "E018", "severity": "warning", "target": rel,
+                                 "message": f"{len(groups['report'])} 个引用文件按策略只报告、不更新（"
+                                            + "、".join(f"{k} {v}" for k, v in self._by_folder(groups["report"]).items())
+                                            + "）；回写后它们打开时会读到新零件，未经检查",
+                                 "hint": "通知相关项目负责人复核；或用 save_as 另存新图号"})
+        summ = rules.summarize(findings)
+        dep = {k: {"count": len(v), "by_folder": self._by_folder(v), "files": [str(x) for x in v[:50]]}
+               for k, v in groups.items() if v}
+        if not summ["passed"] or dry_run:
+            return {"ok": summ["passed"], "applied": False, "file": rel, "findings": findings,
+                    **({"dependents": dep} if dep else {}),
+                    **({"hint": "修正 error 后重试；dry_run=false 才会执行"} if not summ["passed"] else {})}
+        if save_as:
+            np_ = (s.work / save_as).resolve()
+            if s.work.resolve() not in np_.parents or np_.suffix.lower() != p.suffix.lower():
+                raise CadError(SPEC_INVALID, f"save_as {save_as!r}: must be a {p.suffix} file name inside the workspace")
+            if np_.exists():
+                raise CadError(SPEC_INVALID, f"save_as {save_as!r} already exists", hint="换一个新文件名（新图号）")
+            np_.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, np_)
+            p, rel = np_, np_.relative_to(s.work).as_posix()
+        known = {Path(v).resolve() for v in s.source_paths.values()}
+        imported = self._import_users([u for u in groups["update"] if u not in known])
         n = s.checkpoint(f"before edit {rel}")
         with t.lock:
             res = t.adapter.apply_edits(p, parsed)
@@ -719,8 +748,12 @@ class CadService:
                "imported_by_folder": self._by_folder([Path(s.source_paths[x]) for x in imported]), "findings": findings, "description": describe(rel, d), "checkpoint": n}
         s.edits.append(rec)
         s.log("edit_existing", {"file": rel, "edits": edits}, {"diff": d, "refreshed": [r["file"] for r in refreshed]})
+        if save_as:
+            rec["saved_as"] = rel
         return {"ok": True, "applied": True, **{k: v for k, v in rec.items() if k != "checkpoint"},
-                "rollback_to": n, "rules": rules.summarize(findings)}
+                "rollback_to": n, "rules": rules.summarize(findings), **({"dependents": dep} if dep else {}),
+                **({"hint": f"已另存为 {rel}：用 set_property 改图号，并在需要的装配中 replace_component 换成新件"}
+                   if save_as else {})}
 
     def _resolve_replacement(self, t: Target, e, before: dict[str, Any]):
         """替换件来源 → 文件；库件没有原生模型时生成包络占位件；比对安装接口与配合基准。"""

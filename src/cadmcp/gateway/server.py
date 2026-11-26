@@ -184,7 +184,8 @@ def cad_inspect_existing(file: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=WR)
 @safe
-def cad_edit_existing(file: str, edits: list[dict[str, Any]], dry_run: bool = False) -> dict[str, Any]:
+def cad_edit_existing(file: str, edits: list[dict[str, Any]], dry_run: bool = False,
+                      save_as: str | None = None) -> dict[str, Any]:
     """修改现有模型。edits 为指令列表：
     {"op":"set_dimension","name":"D1@凸台-拉伸1","value":20} / {"op":"set_variable","name":"pitch","value":180} /
     {"op":"suppress","feature":"圆角1","suppressed":true} / {"op":"set_property","name":"Description","value":"..."} /
@@ -192,8 +193,10 @@ def cad_edit_existing(file: str, edits: list[dict[str, Any]], dry_run: bool = Fa
     {"op":"replace_component","instance":"CYL-1","source":"lib:CYL-SC40x50"}（装配换件，比对安装接口与配合基准）。
     先校验（名称存在、方程式驱动的尺寸要改变量、变化幅度）；dry_run=true 只校验。执行后重建，出错不保存；
     成功则返回改前改后对比（尺寸/质量/包围盒），并自动更新引用它的装配和工程图、检查悬空标注。
-    每次修改前自动建检查点（rollback_to）。发布后可用 cad_change_writeback 回写原位置。"""
-    return svc().edit_existing(file, edits, dry_run)
+    每次修改前自动建检查点（rollback_to）。发布后可用 cad_change_writeback 回写原位置。
+    共用件：引用它的文件按 policy 目录规则 update（一起更新）/ report（只报告，E018）/ frozen（已定版，E017 拒绝）；
+    save_as="新文件名" 另存为新图号再改，原件和其他项目都不受影响。"""
+    return svc().edit_existing(file, edits, dry_run, save_as)
 
 
 @mcp.tool(annotations=DW)

@@ -140,3 +140,7 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 3. 第 3 步的对照记录、3b 的修改记录与 oplog
 4. SolidWorks 语言版本（中文/英文）、SP 号；Creo 维护版本号（如 10.0.2.0）
 5. 公司 GB 图框模板文件（`.drwdot`）、材料库名称——用于下一轮把图纸做成公司标准样式
+
+### 共用件按目录区分（policy.dependents_rules）
+在 policy 中把一个测试项目目录设为 `frozen`、另一个设为 `report`，修改它们共同引用的零件：
+应返回 E017 拒绝；改用 `save_as` 后原件和两个项目文件均不变（核对文件修改时间）。
