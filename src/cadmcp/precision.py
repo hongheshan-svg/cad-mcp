@@ -74,10 +74,39 @@ def runout(d: float, grade: int) -> float:
     return _RUNOUT[grade][i] / 1000
 
 
+# 板块类定位销孔/精密孔（IT ≤ 7）对 A|B|C 的位置度（经验值，非标准表）
+PIN_HOLE_POSITION = 0.03
+
+
+def auto_plate_precision(spec: PartSpec) -> PartSpec:
+    """板块类：有配合孔（公差带 IT ≤ 7，如销孔 H7）且用户未写基准/几何公差时，底面为 A、左侧面 B、前侧面 C，
+    配合孔注对 A|B|C 的位置度 Φ0.03（经验值）；配合孔按公差等级补 Ra。"""
+    from .ir.part import Hole
+    fit_holes = []
+    for f in spec.features:
+        if isinstance(f, Hole) and f.tolerance:
+            m = re.fullmatch(r"([A-Z]{1,2})(\d{1,2})", f.tolerance.strip())
+            if m and int(m.group(2)) <= 7:
+                fit_holes.append((f, int(m.group(2))))
+    if not fit_holes:
+        return spec
+    datums, tols, rough = list(spec.datums), list(spec.tolerances), list(spec.roughness)
+    if not datums and not tols:
+        datums = [Datum(name="A", target="face:bottom"), Datum(name="B", target="face:left"),
+                  Datum(name="C", target="face:front")]
+        for f, _ in fit_holes:
+            tols.append(GeoTol(type="position", value=PIN_HOLE_POSITION, target=f"hole:{f.name}", datums=["A", "B", "C"]))
+    have = {r.target for r in rough}
+    for f, it in fit_holes:
+        if f"hole:{f.name}" not in have and it in IT_GRADE_RA:
+            rough.append(Roughness(target=f"hole:{f.name}", ra=IT_GRADE_RA[it]))
+    return spec.model_copy(update={"datums": datums, "tolerances": tols, "roughness": rough})
+
+
 def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
     """返回补全后的 spec（不改原对象）。ev：表达式求值（轴段长度/直径可能是参数表达式）。"""
     if not isinstance(spec.base, ShaftBase):
-        return spec
+        return auto_plate_precision(spec) if getattr(spec.base, "type", "") == "extrude" else spec
     steps = [(s.tolerance, float(ev(s.diameter))) for s in spec.base.steps]
     gears = {f.step for f in spec.features if isinstance(f, ShaftGear)}
     fits = {i: g for i, (t, _) in enumerate(steps) if (g := _grade(t)) and g[1] <= 7}

@@ -188,3 +188,5 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   S008 IT≤6 磨削面靠轴肩无越程槽/轴肩圆角（info）；S009 螺纹车到轴肩无退刀槽（warning）；S010 键槽段无配合公差（warning）。
   出图前把 warning 处理掉或在回复里说明理由。
 - 技术要求缺省写"未注几何公差按 GB/T 1184-K"（焊接件、钣金除外）；DrawingSpec `general_geometric_tolerance` 改等级或设 null 不写。
+- 板块类设 `auto_precision: true`：有配合孔（公差带 IT ≤ 7，如销孔 H7）且没写基准/公差时，底面 A、左面 B、前面 C，
+  配合孔注 ⌖ Φ0.03 A B C（经验值；装配精度要求不同就自己写）并按公差等级补孔 Ra。

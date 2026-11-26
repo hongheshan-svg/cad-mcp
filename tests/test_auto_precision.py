@@ -41,3 +41,20 @@ def test_user_tolerances_kept():
 
 def test_off_by_default():
     assert resolve_part(PartSpec.model_validate(GS)).datums == []
+
+
+def test_plate_auto_precision():
+    """板块类：配合孔（H7）→ 底面 A、左面 B、前面 C，孔位置度 Φ0.03 A|B|C + Ra；无配合孔不动。"""
+    from test_core import PLATE_PRECISION as PP
+    sp = {k: v for k, v in PP.items() if k not in ("datums", "tolerances", "roughness")}
+    p = resolve_part(PartSpec.model_validate({**sp, "auto_precision": True}))
+    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "face:bottom"), ("B", "face:left"), ("C", "face:front")]
+    assert [(g["type"], g["target"], g["zone"], g["datums"]) for g in p.geotols] == \
+        [("position", "hole:Pin", "Φ0.03", ["A", "B", "C"])]
+    assert [(r["target"], r["ra"]) for r in p.roughness] == [("hole:Pin", 1.6)]
+    plan = plan_part_drawing(DrawingSpec(model="PP"), p)
+    assert not render(plan, p)[1]["crossings"]
+    p2 = resolve_part(PartSpec.model_validate({**PP, "auto_precision": True}))  # 用户已写：不改
+    assert len(p2.datums) == 2
+    plain = {**sp, "features": [{**sp["features"][0], "tolerance": None}], "auto_precision": True}
+    assert resolve_part(PartSpec.model_validate(plain)).datums == []
