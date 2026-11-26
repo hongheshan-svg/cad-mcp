@@ -105,7 +105,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 |------|------|
 | 目标 | `cad_list_targets` `cad_select_target` `cad_get_capabilities` |
 | 变更会话 | `cad_change_begin` `cad_change_status` `cad_checkpoint` `cad_change_rollback` `cad_change_commit` |
-| 建模 | `cad_build_part` `cad_build_assembly` `cad_build_drawing` `cad_set_parameters` |
+| 建模 | `cad_build_part` `cad_build_assembly` `cad_build_frame` `cad_build_drawing` `cad_set_parameters` |
 | 读取 | `cad_get_model` `cad_search_library` `cad_open_existing` |
 | 选型计算 | `cad_calc`（气缸、伺服+丝杠、同步带、螺栓组，输出计算书） |
 | 校验与输出 | `cad_validate` `cad_check_interference` `cad_export_bom` `cad_export` |
@@ -118,7 +118,8 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 |------|---------|
 | 板/块/L 形件（外形、螺纹孔/过孔/沉孔/销孔/腰型孔、型腔、凸台、倒角圆角，含内侧面特征） | 斜孔、螺纹轴端 |
 | 阶梯轴（键槽、挡圈槽、退刀槽、端部倒角、配合公差，自动出断面图） | 焊接件、铸件 |
-| 简单钣金（直边折弯、展开尺寸） | 复杂曲面 |
+| 钣金（直边折弯、翻边孔、展开图含折弯线与说明） | 复杂曲面 |
+| 铝型材机架（立柱+多层横梁、下料清单、角码紧固件） | 焊接机架 |
 | 标准件/外购件装配、BOM | Creo 从零建模（需 UDF 库或 TOOLKIT 授权） |
 | 基准、几何公差、表面粗糙度（含配合面粗糙度检查） | SolidWorks 原生公差框格（当前以注释输出） |
 

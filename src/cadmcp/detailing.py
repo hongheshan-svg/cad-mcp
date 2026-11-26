@@ -523,7 +523,7 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                                     f"{_extent(a.bbox, axis):g}", f"overall_{axis}"))
                     done.add(axis)
     bom = a.bom() if spec.bom_table else []
-    balloons = [{"item": r["item"], "instance": r["instances"][0]} for r in bom] if spec.balloons else []
+    balloons = [{"item": r["item"], "instance": r["instances"][0]} for r in bom if r["instances"]] if spec.balloons else []
     notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
     notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, 3)]
     tb = {"name": a.title, "part_no": a.part_no, "material": "", "scale": scale_label(scale),

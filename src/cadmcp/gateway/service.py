@@ -428,6 +428,17 @@ class CadService:
         dest = s.commit(revision, gates, report)
         return {"ok": True, "release": str(dest), "gates": gates}
 
+    def build_frame(self, spec_dict: dict[str, Any]) -> dict[str, Any]:
+        """型材机架：生成装配 spec 并建模，返回下料清单。"""
+        from ..frame import FrameSpec, frame_assembly
+        fs = FrameSpec.model_validate(spec_dict)
+        asm, cut = frame_assembly(fs, self.library)
+        out = self.build(AssemblySpec.model_validate(asm))
+        out["cut_list"] = cut
+        out["total_profile_m"] = round(sum(c["length_mm"] * c["qty"] for c in cut) / 1000, 3)
+        out["assembly_spec"] = asm
+        return out
+
     def calc(self, kind: str, params: dict[str, Any]) -> dict[str, Any]:
         """选型计算；有变更会话时把计算书写入工作区（随发布一起归档）。"""
         from .. import calc as calc_mod

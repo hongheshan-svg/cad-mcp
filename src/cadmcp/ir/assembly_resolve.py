@@ -108,17 +108,27 @@ class ResolvedAssembly:
     bbox: Box
     mass_kg: float
     properties: dict[str, str]
+    extras: list[tuple[SourceInfo, int, str]] = field(default_factory=list)
 
     def bom(self) -> list[dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
-        for inst in self.instances:
-            s = inst.source
+
+        def row(s: SourceInfo) -> dict[str, Any]:
             key = s.part_no or s.source
             if key not in rows:
                 rows[key] = {"part_no": s.part_no, "title": s.title, "spec": s.model or "", "material": s.material or "",
                              "kind": s.kind, "qty": 0, "unit_mass_kg": round(s.mass_kg, 4), "instances": []}
-            rows[key]["qty"] += 1
-            rows[key]["instances"].append(inst.id)
+            return rows[key]
+
+        for inst in self.instances:
+            r = row(inst.source)
+            r["qty"] += 1
+            r["instances"].append(inst.id)
+        for s, qty, note in self.extras:
+            r = row(s)
+            r["qty"] += qty
+            if note:
+                r["note"] = note
         order = {"assembly": 0, "part": 1, "purchased": 2, "standard": 3}
         out = sorted(rows.values(), key=lambda r: (order.get(r["kind"], 9), r["part_no"]))
         for i, r in enumerate(out, 1):
@@ -191,8 +201,14 @@ def resolve_assembly(spec: AssemblySpec, source_info: Callable[[str], SourceInfo
     boxes = [i.world_bbox for i in instances]
     bb = Box(min(b.xmin for b in boxes), max(b.xmax for b in boxes), min(b.ymin for b in boxes),
              max(b.ymax for b in boxes), min(b.zmin for b in boxes), max(b.zmax for b in boxes))
+    extras = []
+    for e in spec.bom_extras:
+        if not e.source.startswith("lib:"):
+            raise CadError(SPEC_INVALID, f"bom_extras {e.source}: only lib: sources")
+        extras.append((source_info(e.source), int(round(ev(e.qty))), e.note))
     return ResolvedAssembly(spec.name, spec.part_no, spec.title, params, instances, bb,
-                            sum(i.source.mass_kg for i in instances), dict(spec.properties))
+                            sum(i.source.mass_kg for i in instances) + sum(s.mass_kg * q for s, q, _ in extras),
+                            dict(spec.properties), extras)
 
 
 def aabb_interference(asm: ResolvedAssembly, tol: float = 0.01) -> list[dict[str, Any]]:

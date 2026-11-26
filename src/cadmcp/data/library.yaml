@@ -128,3 +128,33 @@ items:
     references:
       CS_Head: {origin: [0, 0, 0]}
     properties: {等级: "12.9"}
+  - code: BRK-4040
+    title: 型材角码 40
+    category: purchased
+    vendor: generic
+    model: "4040角码"
+    mass_kg: 0.05
+    bbox: [0, 38, 0, 38, 0, 35]
+    references:
+      CS_Corner: {origin: [0, 0, 0]}
+    properties: {规格: "40系列 压铸角码"}
+  - code: TNUT-M8-40
+    title: T 型螺母 M8（40 系列）
+    category: standard
+    vendor: generic
+    model: M8-40
+    mass_kg: 0.006
+    bbox: [-8, 8, -5, 5, 0, 6]
+    references:
+      CS_Origin: {origin: [0, 0, 0]}
+    properties: {}
+  - code: SHCS-M8x16
+    title: 内六角圆柱头螺钉 M8×16
+    category: standard
+    vendor: GB/T 70.1
+    model: M8x16
+    mass_kg: 0.011
+    bbox: [-6.5, 6.5, -6.5, 6.5, -16, 8]
+    references:
+      CS_Head: {origin: [0, 0, 0]}
+    properties: {等级: "8.8"}

@@ -38,6 +38,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 和外购件对接的孔（气缸法兰、电机止口+螺钉孔、导轨安装孔、型材端面）一律用 `mount` 特征，不要手抄孔位：
   `{"feature": "mount", "name": "Motor", "item": "SRV-60-400W", "center": [x, y]}` 自动开孔并生成 `CS_Motor`，
   装配时外购件用库里登记的接口坐标系（结果里的 frame，如 CS_Flange）对齐到 `plate.CS_Motor`。A003（装错件/对齐错）必须修，A004 提示还没用 mount。
+- 铝型材机架用 `cad_build_frame`（外形 + 型材 + 横梁层高），不要逐根手写组件；返回 cut_list（下料清单）。
+  机架以 `asm:<name>` 装进总装；附件、紧固件只进 BOM 时用装配的 `bom_extras`。
 - 选型先于建模：气缸、伺服+丝杠、同步带模组、受力螺栓先 `cad_calc` 计算（计算书随版本归档），
   按 `selection` 选库里的型号（`library_matches`），按缸径/法兰定安装板孔位；`warnings` 必须向用户说明。
 - 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。

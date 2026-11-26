@@ -35,6 +35,13 @@ class ComponentSpec(Strict):
         return self
 
 
+class BomExtra(Strict):
+    """不建模、只进明细表的件（角码、T 型螺母、螺钉、扎带…）。"""
+    source: str = Field(description='"lib:<code>"')
+    qty: Num
+    note: str = ""
+
+
 class AssemblySpec(Strict):
     kind: Literal["assembly"] = "assembly"
     name: str
@@ -43,6 +50,7 @@ class AssemblySpec(Strict):
     parameters: dict[str, Num] = {}
     components: list[ComponentSpec] = Field(min_length=1)
     properties: dict[str, str] = {}
+    bom_extras: list[BomExtra] = Field([], description="只进 BOM 不建模的紧固件/附件")
 
     @model_validator(mode="after")
     def _ids(self):

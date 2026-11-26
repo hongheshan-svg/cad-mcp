@@ -161,6 +161,16 @@ def cad_get_model(name: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=WR)
 @safe
+def cad_build_frame(spec: dict[str, Any]) -> dict[str, Any]:
+    """铝型材机架：给 name/part_no/title、width/depth/height（外形 mm）、profile（默认 PRF-4040）、
+    levels（横梁层中心高度，默认底层+顶层）、bracket（角码，默认 BRK-4040），生成立柱+横梁装配并建模。
+    返回下料清单 cut_list、型材总长、BOM（含角码/T 螺母/螺钉）。之后可用 asm:<name> 把机架装进总装，
+    或在其上加安装板（坐标原点在机架底面中心）。"""
+    return svc().build_frame(spec)
+
+
+@mcp.tool(annotations=WR)
+@safe
 def cad_calc(kind: Literal["cylinder", "screw_drive", "belt_drive", "bolt"], params: dict[str, Any]) -> dict[str, Any]:
     """选型计算，返回带公式过程的计算书与推荐型号（有变更会话时计算书存入工作区并随版本发布）。
     cylinder: load_kg 或 force_N, orientation horizontal|vertical, stroke_mm, pressure_MPa=0.5, direction push|pull
