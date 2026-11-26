@@ -875,7 +875,7 @@ def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> N
             s.label = f"局部{n_local}"
             s.wave_amp = 1.0 / next(v.scale for v in plan.views if v.type == s.view)
         s.geometry = sx.geometry(p, s)
-        s.cut_points = sx.cut_line(p, s)
+        s.cut_points = sx.cut_line(p, s, next((v.scale for v in plan.views if v.type == s.parent), 1.0))
         s.bbox = p.bbox
         for v in plan.views:
             if v.type == s.view and s.kind != "local":

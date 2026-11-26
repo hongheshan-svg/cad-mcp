@@ -509,9 +509,8 @@ def _draw_cut_line(s, sec, part, V):
         s.line(*a, *b, W)
         s.line(*a, a[0] + dx * 6, a[1] + dy * 6, THIN)
         s.parts.append(_arrow_head(s, (a[0] + dx * 6, a[1] + dy * 6), (dx, dy)))
-        L = math.dist(a, b) or 1
-        ox, oy = (a[0] - b[0]) / L, (a[1] - b[1]) / L  # 沿剖切线朝外：字母在箭头外侧，不压视图轮廓
-        s.text(a[0] + dx * 9 + ox * 2.5, a[1] + dy * 9 + oy * 2.5 - 1.5, sec.label, 5, "middle")
+        # 字母在箭头外端、与粗短画外端对齐（剖切线已伸出轮廓 6 mm，字母不压视图轮廓，也不外扩到总体尺寸线上）
+        s.text(a[0] + dx * 9, a[1] + dy * 9 - 1.5, sec.label, 5, "middle")
     for i in range(1, len(pts) - 1, 2):  # 阶梯转折：每个转角画 L 形粗短画（两臂各 4），转角外侧注字母
         a, b = pts[i], pts[i + 1]
         for corner, along, other in ((a, pts[i - 1], b), (b, pts[i + 2], a)):

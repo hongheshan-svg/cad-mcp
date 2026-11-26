@@ -429,16 +429,18 @@ def _local_breaks(out: dict[str, list], sec: SectionPlan, view: str, zlo: float,
     out["region"] = [w0 + w1[::-1]]
 
 
-def cut_line(p, sec: SectionPlan) -> list[tuple[float, float, float]]:
-    """剖切线（在俯视图上）：顶面上的折线点，两端伸出外形 4 mm。局部剖剖切位置明显，不画剖切符号。"""
+def cut_line(p, sec: SectionPlan, scale: float = 1.0) -> list[tuple[float, float, float]]:
+    """剖切线（在俯视图上）：顶面上的折线点，两端在图纸上伸出外形 6 mm（模型 mm = 6/比例），
+    使 5 mm 长的起止粗短画整段落在轮廓外、不与轮廓线相交（GB/T 4458.6）。局部剖剖切位置明显，不画剖切符号。"""
     if sec.kind == "local":
         return []
     ha, da = FRAME[sec.view]
     z = p.bbox.zmax
+    ext = 6.0 / (scale or 1.0)
     pts = []
     for i, (h0, h1, d) in enumerate(sec.path):
-        a = h0 - (4 if i == 0 else 0)
-        b = h1 + (4 if i == len(sec.path) - 1 else 0)
+        a = h0 - (ext if i == 0 else 0)
+        b = h1 + (ext if i == len(sec.path) - 1 else 0)
         pts.append(_p3(sec.view, a, d, z))  # 首段起点 / 阶梯转折点
         pts.append(_p3(sec.view, b, d, z))
     return pts
