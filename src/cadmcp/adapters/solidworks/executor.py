@@ -22,7 +22,8 @@ MM = 0.001
 NON_CRITICAL = {"cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
-                "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling"}
+                "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
+                "bom_balloons"}
 
 
 class OpFailed(Exception):
@@ -695,7 +696,35 @@ class SwExecutor:
         self.readback.setdefault("notes", []).append("notes")
         return {}
 
-    def op_bom_table(self, view: str, anchor: str, columns):
+    # swconst 中名称以实机为准；取不到时用 API 帮助里的枚举值
+    def _k(self, name: str, default: int) -> int:
+        try:
+            return getattr(self.c, name)
+        except AttributeError:
+            return default
+
+    @staticmethod
+    def _qi(obj, iface: str):
+        """BomTableAnnotation → TableAnnotation 等接口转换（晚绑定下需 CastTo；失败时用原对象）。"""
+        try:
+            import win32com.client as wc
+            return wc.CastTo(obj, iface)
+        except Exception:  # noqa: BLE001
+            return obj
+
+    def _comp_keys(self, comp) -> set[str]:
+        out = set()
+        try:
+            out.add(Path(str(comp.GetPathName())).stem.lower())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            out.add(str(comp.GetModelDoc2().GetCustomInfoValue("", "PartNo")).lower())
+        except Exception:  # noqa: BLE001
+            pass
+        return {k for k in out if k}
+
+    def op_bom_table(self, view: str, anchor: str, columns, rows=None, header_bottom: bool = True):
         v = self.views[view]
         self.model.ActivateView(v.Name)
         tpl = self.templates.get("bom", "")
@@ -703,7 +732,102 @@ class SwExecutor:
                                 self.c.swBomType_TopLevelOnly, "", tpl, False, self.c.swNumberingType_Detailed, False)
         if bom is None:
             raise OpFailed("InsertBomTable4 failed")
-        return {}
+        if not rows:
+            return {}
+        tbl = self._qi(bom, "ITableAnnotation")
+        notes = []
+        if header_bottom:  # GB/T 10609.2：表头在下，序号自下而上
+            try:
+                tbl.SetHeader(self._k("swTableHeader_Bottom", 2), 1)
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"SetHeader: {e}")
+        ncol = int(tbl.ColumnCount or 0)
+        for i, (title, prop) in enumerate(columns[:ncol]):
+            try:
+                tbl.SetColumnTitle2(i, title, True)
+                if prop:
+                    bom.SetColumnCustomProperty(i, prop)
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"column {i}: {e}")
+        cfg = str(getattr(v, "ReferencedConfiguration", "") or "")
+        want = {r["item"]: r for r in rows}
+
+        def data_rows():
+            n = int(tbl.RowCount or 0)
+            return list(range(0, n - 1)) if header_bottom else list(range(1, n))
+
+        def item_of(row) -> int | None:
+            comps = bom.GetComponents2(row, cfg) or []
+            keys = self._comp_keys(comps[0]) if comps else set()
+            return next((it for it, r in want.items() if keys & set(r["keys"])), None)
+
+        # 按方案序号排行：表头在下时自上而下为 n…1
+        target = sorted(want, reverse=header_bottom)
+        for pos, it in enumerate(target):
+            rs = data_rows()
+            if pos >= len(rs):
+                break
+            cur = next((r for r in rs if item_of(r) == it), None)
+            if cur is not None and cur != rs[pos]:
+                tbl.MoveRow(cur, self._k("swTableItemInsertPosition_Before", 3), rs[pos])
+        # 回读：序号 / 代号 / 数量（列号按 columns 顺序）
+        ci = {t: i for i, (t, _) in enumerate(columns)}
+        got = []
+        for r in data_rows():
+            it = item_of(r)
+            try:
+                if it is not None and str(tbl.Text(r, ci["序号"])).strip() != str(it):
+                    tbl.Text2(r, ci["序号"], True)  # 触发重算
+                got.append([str(tbl.Text(r, ci["序号"])).strip(), str(tbl.Text(r, ci["代号"])).strip(),
+                            str(tbl.Text(r, ci["数量"])).strip()])
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"readback row {r}: {e}")
+        self.readback["bom_rows"] = got
+        return {"rows": len(got), **({"notes": notes} if notes else {})}
+
+    def op_bom_balloons(self, view: str, balloons):
+        """逐个零件插 BOM 序号（链接明细表行），放到规划位置；任何一个找不到零件就整体退回自动序号。"""
+        v = self.views[view]
+        self.model.ActivateView(v.Name)
+        comps = []
+        try:
+            comps = list(v.RootDrawingComponent.GetChildren() or [])
+        except Exception:  # noqa: BLE001
+            comps = []
+        placed, missing = [], []
+        for b in balloons:
+            dc = next((d for d in comps if self._comp_keys(d.Component) & set(b["keys"])), None)
+            if dc is None:
+                missing.append(b["item"])
+                continue
+            self.model.ClearSelection2(True)
+            dc.Select(False, None)
+            note = self.model.Extension.InsertBOMBalloon2(
+                self._k("swBS_Circular", 1), self._k("swBF_Tightest", 0), self._k("swBalloonTextItemNumber", 1), "",
+                self._k("swBalloonTextCustom", 0), "")
+            if note is None:
+                missing.append(b["item"])
+                continue
+            note.GetAnnotation().SetPosition2(b["pos"][0], b["pos"][1], 0)
+            placed.append(b["item"])
+        if missing and not placed:
+            self.op_auto_balloon(view)
+        self.readback["balloon_items"] = self._read_balloons(v)
+        return {"placed": placed, "missing": missing}
+
+    def _read_balloons(self, v) -> list[str]:
+        items = []
+        try:
+            n = v.GetFirstNote()
+            for _ in range(5000):  # 上限：防止异常的注释链死循环
+                if n is None:
+                    break
+                if n.IsBomBalloon() is True:
+                    items.append(str(n.GetText()).strip())
+                n = n.GetNext()
+        except Exception:  # noqa: BLE001
+            pass
+        return items
 
     def op_auto_balloon(self, view: str):
         v = self.views[view]

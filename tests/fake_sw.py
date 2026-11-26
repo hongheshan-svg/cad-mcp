@@ -17,6 +17,8 @@ ARITY = {
     "SetUserPreferenceInteger": 3, "Add3": 4, "InsertSketch": 1, "CreateLine": 6,
     "SketchManager.CreatePoint": 3, "GetMathUtility().CreatePoint": 1,
     "CreateFillet": 2, "ReplaceComponents2": 5, "SetSystemValue3": 3, "Save3": 3, "GetDocumentDependencies2": 4, "FeatureRevolve2": 20, "InsertWeldmentFeature": 0, "InsertWeldmentTable": 6, "CreateCenterLine": 6, "ForceRebuild3": 1, "InsertNote": 1, "ClearSelection2": 1,
+    "InsertBomTable4": 10, "InsertBOMBalloon2": 6, "MoveRow": 3, "SetHeader": 2, "GetComponents2": 2,
+    "SetColumnTitle2": 3, "SetColumnCustomProperty": 2, "AutoBalloon5": 1, "Text": 2, "Text2": 3,
 }
 
 
@@ -34,7 +36,8 @@ class Fake:
     def __getattr__(self, name: str):
         root = self._root
         special = {"ArrayData": [0.0, 0.0, 0.0], "Mass": 1.234, "Position": [0.1, 0.1], "Name": "V1",
-                   "Volume": 0.0, "Components": [], "Name2": "C1"}
+                   "Volume": 0.0, "Components": [], "Name2": "C1", "RowCount": 0, "ColumnCount": 6,
+                   "ReferencedConfiguration": "Default"}
         if name in special:
             return special[name]
         return FakeMethod(root, name, self._path + "." + name)

@@ -634,8 +634,12 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                     dims.append(Dim(v.type, "linear", axis, round(_extent(a.bbox, axis), 2),
                                     f"{_extent(a.bbox, axis):g}", f"overall_{axis}"))
                     done.add(axis)
-    bom = a.bom() if spec.bom_table else []
-    balloons = [{"item": r["item"], "instance": r["instances"][0]} for r in bom if r["instances"]] if spec.balloons else []
+    bom = a.bom() if (spec.bom_table or spec.balloons) else []
+    balloons: list[dict[str, Any]] = []
+    if spec.balloons and bom:
+        bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet])
+    if not spec.bom_table:
+        bom = []
     notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
     notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, 3)]
     tb = {"name": a.title, "part_no": a.part_no, "material": "", "scale": scale_label(scale),
@@ -645,6 +649,136 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     tb.update(spec.title_block)
     return DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
+
+
+BALLOON_R = 4.0       # 序号圆半径（图纸 mm，GB/T 4458.2 细实线圆）
+BALLOON_GAP = 10.0    # 相邻序号中心距
+BALLOON_OFF = 14.0    # 序号离视图外框距离
+
+
+def _project(view, a, p3: tuple[float, float, float]) -> tuple[float, float]:
+    ha, va = VIEW_AXES[view.type]
+    (ulo, uhi), (wlo, whi) = vrange(a.bbox, ha), vrange(a.bbox, va)
+    cx, cy = view.origin_on_sheet
+    return (cx + (vc(p3, ha) - (ulo + uhi) / 2) * view.scale, cy + (vc(p3, va) - (wlo + whi) / 2) * view.scale)
+
+
+def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """序号排布（GB/T 4458.2）：序号沿主视图四周排成整齐的行/列，按顺时针方向依次编号；
+    明细表序号随之重排（只进明细表、图上没有的件排在最后）。同一边内按引出点位置排序，引线不交叉。
+    返回 (重新编号的 bom, 序号列表[item, instance, anchor, pos, side])。"""
+    if view.type not in VIEW_AXES:
+        return bom, []
+    cx, cy = view.origin_on_sheet
+    w, h = view.size_mm
+    W, H = sheet_size
+    def rect(inst):
+        b = inst.world_bbox
+        p0, p1 = _project(view, a, (b.xmin, b.ymin, b.zmin)), _project(view, a, (b.xmax, b.ymax, b.zmax))
+        return min(p0[0], p1[0]), max(p0[0], p1[0]), min(p0[1], p1[1]), max(p0[1], p1[1])
+
+    rects = {i.id: rect(i) for i in a.instances}
+    area = {k: (r[1] - r[0]) * (r[3] - r[2]) for k, r in rects.items()}
+    chosen: list[tuple[float, float]] = []
+    pts = []
+    for r in bom:
+        if not r["instances"]:
+            continue
+        inst = next(i for i in a.instances if i.id == r["instances"][0])
+        x0, x1, y0, y1 = rects[inst.id]
+        # 引出点：在零件投影内取点，避开更小零件的投影（被遮挡/指不清）和已选引出点，略偏向视图外侧（引线短）
+        best, c = None, ((x0 + x1) / 2, (y0 + y1) / 2)
+        for fu in (0.5, 0.3, 0.7, 0.15, 0.85):
+            for fv in (0.5, 0.3, 0.7, 0.15, 0.85):
+                q = (x0 + (x1 - x0) * fu, y0 + (y1 - y0) * fv)
+                cover = sum(1 for k, rr in rects.items() if k != inst.id and area[k] <= area[inst.id] * 1.5
+                            and rr[0] - 1 <= q[0] <= rr[1] + 1 and rr[2] - 1 <= q[1] <= rr[3] + 1)
+                near = min((math.hypot(q[0] - o[0], q[1] - o[1]) for o in chosen), default=99.0)
+                edge = min(q[0] - (cx - w / 2), (cx + w / 2) - q[0], q[1] - (cy - h / 2), (cy + h / 2) - q[1])
+                score = cover * 100 + max(0.0, 8 - near) * 10 + edge * 0.05
+                if best is None or score < best - 1e-9:
+                    best, c = score, q
+        chosen.append(c)
+        dx, dy = (c[0] - cx) / max(w, 1), (c[1] - cy) / max(h, 1)
+        side = ("right" if dx >= 0 else "left") if abs(dx) >= abs(dy) else ("top" if dy >= 0 else "bottom")
+        pts.append({"row": r, "instance": inst.id, "anchor": (round(c[0], 2), round(c[1], 2)), "side": side})
+    # 下方通常是明细表/技术要求，少用：底边序号并到左右两侧
+    for p in pts:
+        if p["side"] == "bottom":
+            p["side"] = "right" if p["anchor"][0] >= cx else "left"
+    balloons = []
+    order = []
+    for side in ("top", "right", "left"):  # 顺时针：上边左→右、右边上→下、左边下→上
+        group = [p for p in pts if p["side"] == side]
+        if side == "top":
+            group.sort(key=lambda p: p["anchor"][0])
+            along = [p["anchor"][0] for p in group]
+            lo_lim, hi_lim = 15.0, W - 15.0
+        else:
+            group.sort(key=lambda p: -p["anchor"][1] if side == "right" else p["anchor"][1])
+            along = [p["anchor"][1] for p in group]
+            lo_lim, hi_lim = 15.0, H - 15.0
+        n = len(group)
+        if not n:
+            continue
+        span = BALLOON_GAP * (n - 1)
+        mid = sum(along) / n
+        start = min(max(mid - span / 2 if side == "top" else mid + span / 2, lo_lim + (0 if side == "top" else span)),
+                    hi_lim - (span if side == "top" else 0))
+        for k, p in enumerate(group):
+            if side == "top":
+                pos = (start + k * BALLOON_GAP, min(cy + h / 2 + BALLOON_OFF, H - 12))
+            elif side == "right":
+                pos = (min(cx + w / 2 + BALLOON_OFF, W - 12), start - k * BALLOON_GAP)
+            else:
+                pos = (max(cx - w / 2 - BALLOON_OFF, 12), start - span + k * BALLOON_GAP)
+            p["pos"] = (round(pos[0], 2), round(pos[1], 2))
+            order.append(p)
+    new_bom, item = [], 1
+    for p in order:
+        p["row"]["item"] = item
+        balloons.append({"item": item, "instance": p["instance"], "part_no": p["row"]["part_no"],
+                         "anchor": p["anchor"], "pos": p["pos"], "side": p["side"]})
+        new_bom.append(p["row"])
+        item += 1
+    for r in bom:
+        if not r["instances"]:
+            r["item"] = item
+            new_bom.append(r)
+            item += 1
+    return new_bom, balloons
+
+
+def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
+    """图上明细表、序号与方案（= 装配 BOM）是否一致：D011 明细表行、D012 序号缺失/重复/无对应行。"""
+    out = []
+    if "bom_rows" in rendered and plan.bom:
+        want = {(int(r["item"]), str(r["part_no"]), int(r["qty"])) for r in plan.bom}
+        got = set()
+        for r in rendered["bom_rows"]:
+            try:
+                got.add((int(r[0]), str(r[1]), int(float(r[2]))))
+            except (TypeError, ValueError):
+                got.add((r[0], r[1], r[2]))
+        if want != got:
+            miss, extra = sorted(want - got, key=str), sorted(got - want, key=str)
+            out.append({"rule": "D011", "severity": "error",
+                        "message": f"图上明细表与装配 BOM 不一致：缺 {miss[:5]}，多/错 {extra[:5]}",
+                        "fix": "检查零件文件的 PartNo 属性与 BOM 模板列；或重新出图"})
+    if "balloon_items" in rendered and plan.balloons:
+        items = [int(x) for x in rendered["balloon_items"] if str(x).isdigit()]
+        want = {b["item"] for b in plan.balloons}
+        miss = sorted(want - set(items))
+        dup = sorted({i for i in items if items.count(i) > 1})
+        orphan = sorted(set(items) - {int(r["item"]) for r in plan.bom}) if plan.bom else []
+        if miss:
+            out.append({"rule": "D012", "severity": "error", "message": f"序号 {miss} 没有标到图上",
+                        "fix": "在主视图上补标，或检查该零件在主视图中是否可见"})
+        if dup:
+            out.append({"rule": "D012", "severity": "warning", "message": f"序号 {dup} 重复标注"})
+        if orphan:
+            out.append({"rule": "D012", "severity": "error", "message": f"序号 {orphan} 在明细表中没有对应行"})
+    return out
 
 
 def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -692,6 +826,8 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         f("D006", "error", "缺少总体尺寸")
     if plan.model_kind == "assembly" and not plan.bom:
         f("D007", "warning", "装配图没有明细表")
+    if rendered is not None and plan.model_kind == "assembly":
+        out += check_bom_association(plan, rendered)
     if plan.model_kind == "part" and not any("公差" in n for n in plan.notes):
         f("D008", "warning", "缺少未注公差说明")
     return out

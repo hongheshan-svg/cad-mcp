@@ -117,8 +117,11 @@ class SolidWorksAdapter(CadAdapter):
         ops = compile_drawing(plan, str(model_file), {k[8:]: v for k, v in self.templates.items() if k.startswith("drawing_")},
                               getattr(model, "shaft_features", None))
         ex, regen = self._run(ops, out_dir, plan.name)
-        return BuildResult(ex.saved_path, regen, extra={"rendered": {"dim_count": ex.readback.get("dim_count", 0),
-                                                                     "notes": ex.readback.get("notes", [])},
+        rendered = {"dim_count": ex.readback.get("dim_count", 0), "notes": ex.readback.get("notes", [])}
+        for k in ("bom_rows", "balloon_items"):  # 回读到才核对（D011/D012）
+            if ex.readback.get(k):
+                rendered[k] = ex.readback[k]
+        return BuildResult(ex.saved_path, regen, extra={"rendered": rendered,
                                                         "exports": ex.readback.get("exports", [])})
 
     # ---- 修改现有模型 ----

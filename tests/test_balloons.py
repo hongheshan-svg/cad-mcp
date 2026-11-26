@@ -1,0 +1,62 @@
+from cylinder_station import ASSEMBLY, BASE_PLATE, MOUNT_PLATE
+
+from cadmcp import detailing
+from cadmcp.adapters.solidworks.compile import compile_drawing
+from cadmcp.ir import AssemblySpec, DrawingSpec, PartSpec
+
+
+def _station(svc):
+    svc.change_begin("A")
+    for d in (BASE_PLATE, MOUNT_PLATE):
+        svc.build(PartSpec.model_validate(d))
+    asm = {**ASSEMBLY, "bom_extras": [{"source": "lib:SHCS-M8x16", "qty": 4, "note": "地脚"}]}
+    svc.build(AssemblySpec.model_validate(asm))
+    d = svc.build(DrawingSpec.model_validate({"model": ASSEMBLY["name"], "title_block": {"designer": "AI"}}))
+    return d, svc._get(ASSEMBLY["name"] + "_DRW").resolved
+
+
+def test_balloon_layout_clockwise(svc):
+    d, plan = _station(svc)
+    assert d["rules"]["passed"]
+    v = plan.views[0]
+    cx, cy = v.origin_on_sheet
+    w, h = v.size_mm
+    bs = plan.balloons
+    assert [b["item"] for b in bs] == list(range(1, len(bs) + 1))
+    assert plan.bom[-1]["part_no"].startswith("SHCS-M8x16") and plan.bom[-1]["item"] == len(bs) + 1  # 只进明细表的排最后
+    for b in bs:  # 序号在视图外，引出点在视图内
+        x, y = b["pos"]
+        assert not (cx - w / 2 < x < cx + w / 2 and cy - h / 2 < y < cy + h / 2)
+        ax, ay = b["anchor"]
+        assert cx - w / 2 - 1 <= ax <= cx + w / 2 + 1 and cy - h / 2 - 1 <= ay <= cy + h / 2 + 1
+    sides = [b["side"] for b in bs]
+    assert sides == sorted(sides, key=["top", "right", "left"].index)  # 顺时针
+    top = [b for b in bs if b["side"] == "top"]
+    assert [b["pos"][0] for b in top] == sorted(b["pos"][0] for b in top)
+    assert len({b["anchor"] for b in bs}) == len(bs)  # 引出点不重合
+
+
+def test_association_check(svc):
+    _, plan = _station(svc)
+    good = {"bom_rows": [(r["item"], r["part_no"], r["qty"]) for r in plan.bom],
+            "balloon_items": [b["item"] for b in plan.balloons]}
+    assert not detailing.check_bom_association(plan, good)
+    bad = {"bom_rows": [(r["item"], r["part_no"], r["qty"] + (1 if r["item"] == 2 else 0)) for r in plan.bom],
+           "balloon_items": [b["item"] for b in plan.balloons][1:] + [1, 99]}
+    rules = [(f["rule"], f["severity"]) for f in detailing.check_bom_association(plan, bad)]
+    assert ("D011", "error") in rules and rules.count(("D012", "error")) == 1  # 99 无对应行
+    bad["balloon_items"] = [b["item"] for b in plan.balloons][1:]
+    assert any("没有标到图上" in f["message"] for f in detailing.check_bom_association(plan, bad))
+
+
+def test_sw_ops_carry_rows_and_balloons(svc):
+    _, plan = _station(svc)
+    ops = compile_drawing(plan, "x.SLDASM")
+    bt = next(o for o in ops if o.op == "bom_table")
+    rows = {r["item"]: r for r in bt.args["rows"]}
+    base = next(r for r in rows.values() if r["part_no"] == BASE_PLATE["part_no"])
+    assert base["keys"] == [BASE_PLATE["part_no"].lower(), BASE_PLATE["name"].lower()]
+    bb = next(o for o in ops if o.op == "bom_balloons")
+    assert len(bb.args["balloons"]) == len(plan.balloons)
+    assert all(0 < b["pos"][0] < 1.2 for b in bb.args["balloons"])  # 米
+    assert not any(o.op == "auto_balloon" for o in ops)

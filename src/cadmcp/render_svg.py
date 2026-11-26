@@ -263,6 +263,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     s = _Svg(W, H)
     s.rect(5, 5, W - 10, H - 10, THICK)  # 图框
     rendered_refs: list[str] = []
+    balloon_items: list[int] = []
+    bom_rows: list[tuple[Any, Any, Any]] = []
     part = model if isinstance(model, ResolvedPart) else None
     asm = model if isinstance(model, ResolvedAssembly) else None
     box = model.bbox if model is not None else None
@@ -334,7 +336,20 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         # 序号气泡（主视图）
         if plan.balloons and v.type == plan.views[0].type:
             anchors = []
-            for b_ in plan.balloons:
+            if all("pos" in b_ for b_ in plan.balloons):  # 规划层已排布（装配图）
+                for b_ in plan.balloons:
+                    (ax, ay), (bx_, by_) = b_["anchor"], b_["pos"]
+                    d = math.hypot(bx_ - ax, by_ - ay) or 1
+                    s.line(ax, ay, bx_ - (bx_ - ax) / d * 4, by_ - (by_ - ay) / d * 4, 0.18)
+                    s.parts.append(f"<circle cx='{ax:.2f}' cy='{s.y(ay):.2f}' r='0.7' fill='{STROKE}'/>")
+                    s.circle(bx_, by_, 4, THIN)
+                    s.text(bx_, by_ - 1.2, str(b_["item"]), 3.5, "middle")
+                    rendered_refs.append(f"balloon:{b_['item']}")
+                    balloon_items.append(b_["item"])
+                plan_balloons_done = True
+            else:
+                plan_balloons_done = False
+            for b_ in ([] if plan_balloons_done else plan.balloons):
                 if "at" in b_:
                     anchors.append((b_, P(*b_["at"])))
                     continue
@@ -350,6 +365,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.circle(bx_, by_, 4, THIN)
                 s.text(bx_, by_ - 1.2, str(b_["item"]), 3.5, "middle")
                 rendered_refs.append(f"balloon:{b_['item']}")
+                balloon_items.append(b_["item"])
         # 孔（只在与孔所在面平行的视图中画实形）
         for h in ([] if part is None else part.holes):
             if FACE_AXIS[h.face] != FACE_AXIS.get(v.type):
@@ -470,20 +486,23 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         _draw_cut_list(s, x0, y0 + tbh + 12 + 5 * len(plan.notes), plan.cut_list)
         rendered_refs.append("cut_list")
     # 明细表（标题栏上方）
-    if plan.bom:
+    if plan.bom:  # GB/T 10609.2：表头在下，序号自下而上
         by = y0 + tbh + 12 + 5 * len(plan.notes)
         cols = [("序号", 12), ("图号/编码", 44), ("名称", 54), ("数量", 14), ("材料/规格", 56)]
-        for r in plan.bom:
-            xx = x0
-            for (name, w), val in zip(cols, [r["item"], r["part_no"], r["title"], r["qty"], r["material"] or r["spec"]]):
-                s.rect(xx, by, w, 7, THIN)
-                s.text(xx + 1.5, by + 2.2, str(val), 3)
-                xx += w
-            by += 7
         xx = x0
         for name, w in cols:
             s.rect(xx, by, w, 7, THIN)
             s.text(xx + 1.5, by + 2.2, name, 3)
             xx += w
-    return s.render(), {"dim_refs": rendered_refs, "views": [v.type for v in plan.views],
-                        "collisions": s.collisions()}
+        for r in sorted(plan.bom, key=lambda r: r["item"]):
+            by += 7
+            xx = x0
+            for (name, w), val in zip(cols, [r["item"], r["part_no"], r["title"], r["qty"], r["material"] or r["spec"]]):
+                s.rect(xx, by, w, 7, THIN)
+                s.text(xx + 1.5, by + 2.2, str(val), 3)
+                xx += w
+            bom_rows.append((r["item"], r["part_no"], r["qty"]))
+    out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions()}
+    if asm is not None:
+        out.update(bom_rows=bom_rows, balloon_items=balloon_items)
+    return s.render(), out

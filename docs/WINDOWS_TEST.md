@@ -144,3 +144,12 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 ### 共用件按目录区分（policy.dependents_rules）
 在 policy 中把一个测试项目目录设为 `frozen`、另一个设为 `report`，修改它们共同引用的零件：
 应返回 E017 拒绝；改用 `save_as` 后原件和两个项目文件均不变（核对文件修改时间）。
+
+### 装配图原生明细表与序号（D011 / D012）
+出气缸工位装配图（`examples/cylinder_station.py`），核对：
+1. 明细表是 SW 原生 BOM 表，表头在下、序号自下而上；“代号/名称/材料”列来自零件属性 PartNo/Description/Material。
+2. 明细表行顺序与平台方案一致（`*_DRW.oplog.json` 中 bom_table 的 rows）；如顺序不对，记录 MoveRow 是否生效、
+   SW 是否自动重编序号，以及 `swTableHeader_Bottom` / `swTableItemInsertPosition_Before` 常量名是否存在。
+3. 序号为 BOM 序号（双击可见链接到明细表），位置在主视图四周、按顺时针编号；oplog 中 bom_balloons 的
+   placed / missing（missing 多说明 `RootDrawingComponent.GetChildren` 或组件匹配有问题，此时会退回自动序号）。
+4. 出图结果 rules 中没有 D011/D012；有的话把 oplog 和 PDF 一起发回。

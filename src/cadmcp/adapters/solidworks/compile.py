@@ -320,6 +320,23 @@ SW_VIEW = {"top": ("*Front", 0), "bottom": ("*Back", 0), "front": ("*Bottom", 0)
 SW_SHAFT_VIEW = ("*Right", 180)
 
 
+# 原生明细表列：(列标题, 零件自定义属性；"" = SW 内置列：序号/数量)
+BOM_COLUMNS = [["序号", ""], ["代号", "PartNo"], ["名称", "Description"], ["数量", ""], ["材料", "Material"],
+               ["备注", ""]]
+
+
+def _match_keys(row) -> list[str]:
+    """把明细表行与 SW 组件对应起来的键：图号、模型文件名（part:/asm: 名称、库编码或参数化库件文件名）。"""
+    src = row.get("source") or ""
+    kind, _, ref = src.partition(":")
+    keys = [str(row["part_no"]).lower()]
+    if kind in ("part", "asm"):
+        keys.append(ref.lower())
+    elif kind == "lib":
+        keys.append(ref.partition("?")[0].lower())
+    return list(dict.fromkeys(keys))
+
+
 def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | None = None,
                     model_features: list | None = None) -> list[NativeOp]:
     sheet_templates = sheet_templates or {}
@@ -390,9 +407,17 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             f"{r.get('rev', '')}  {r.get('description', '')}  {r.get('date', '')}  {r.get('by', '')}" for r in plan.revisions),
             "anchor": "left_of_title_block"}))
     if plan.bom:
+        rows = [{"item": r["item"], "part_no": r["part_no"], "qty": r["qty"], "title": r["title"],
+                 "material": r["material"] or r["spec"], "keys": _match_keys(r)} for r in plan.bom]
         ops.append(NativeOp("bom_table", {"view": plan.views[0].type, "anchor": "above_title_block",
-                                          "columns": ["序号", "图号", "名称", "数量", "材料/规格"]}))
-        ops.append(NativeOp("auto_balloon", {"view": plan.views[0].type}))
+                                          "columns": BOM_COLUMNS, "rows": rows, "header_bottom": True},
+                            "InsertBomTable4 → 按方案序号重排行（MoveRow）→ 回读核对（D011）"))
+    if plan.balloons and plan.model_kind == "assembly" and all("pos" in b for b in plan.balloons):
+        keys = {r["item"]: _match_keys(r) for r in plan.bom} if plan.bom else {}
+        ops.append(NativeOp("bom_balloons", {"view": plan.views[0].type, "balloons": [
+            {"item": b["item"], "keys": keys.get(b["item"], [b["part_no"].lower()]),
+             "anchor": [v / 1000 for v in b["anchor"]], "pos": [v / 1000 for v in b["pos"]]} for b in plan.balloons]},
+            "逐个零件 InsertBOMBalloon2 并放到规划位置；找不到零件时退回 AutoBalloon5；回读核对（D012）"))
     ops.append(NativeOp("readback_annotations", {}, "回读尺寸/注释数量供出图检查"))
     ops.append(NativeOp("save_as", {"name": plan.name, "ext": ".SLDDRW"}))
     ops.append(NativeOp("export", {"format": "pdf"}))
