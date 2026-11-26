@@ -675,6 +675,24 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         for d in plan.dims:
             if d.view != v.type:
                 continue
+            if d.kind == "linear" and (d.extra or {}).get("install"):  # 安装尺寸：规划层给定图纸坐标
+                (ax_, ay_), (bx_, by_) = d.extra["sheet_pts"]
+                px_, py_ = d.extra["sheet_pos"]
+                if d.extra["orient"] == "h":  # 预览只画包络盒：补画安装孔（CAD 视图自带）
+                    for hx, hy, hr in d.extra.get("holes", []):
+                        s.circle(hx, hy, hr, THIN)
+                if d.extra["orient"] == "h":
+                    s.line(ax_, ay_ + 1, ax_, py_ + 2, 0.18)
+                    s.line(bx_, by_ + 1, bx_, py_ + 2, 0.18)
+                    s.line(ax_, py_, bx_, py_, 0.18)
+                    s.text((ax_ + bx_) / 2, py_ + 1, d.text, 3.5, "middle")
+                else:
+                    s.line(ax_ + 1, ay_, px_ + 2, ay_, 0.18)
+                    s.line(bx_ + 1, by_, px_ + 2, by_, 0.18)
+                    s.line(px_, ay_, px_, by_, 0.18)
+                    s.text(px_ - 1, (ay_ + by_) / 2, d.text, 3.5, "middle", -90)
+                rendered_refs.append(d.ref)
+                continue
             if d.kind == "linear" and d.axis == ha and d.at is None:
                 yy = vy0 - (22 if has_ord_h or prec_below else 10)  # 坐标尺寸区、基准/框格之外
                 s.line(vx0, yy, vx1, yy)

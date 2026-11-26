@@ -310,7 +310,11 @@ class CadService:
             p: ResolvedPart = models[ref].resolved
             return SourceInfo(source, "part", p.part_no, p.title, p.material, p.mass_kg, p.bbox, p.references,
                               properties={"surface_treatment": p.surface_treatment or ""},
-                              mounts={f"CS_{m['name']}": m for m in p.mounts})
+                              mounts={f"CS_{m['name']}": m for m in p.mounts},
+                              install_holes=[{"name": h.name, "dia": h.drill, "label": f"{len(h.instances)}×Φ{h.drill:g}",
+                                              "pts": [tuple(i.xyz) for i in h.instances]}
+                                             for h in p.holes if h.through and h.face in ("top", "bottom")
+                                             and len(h.instances) >= 2 and not h.slot])
         if kind == "asm":
             if ref not in models or models[ref].kind != "assembly":
                 raise CadError(DOC_NOT_FOUND, f"assembly {ref!r} not built in this session")

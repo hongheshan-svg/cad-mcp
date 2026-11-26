@@ -66,3 +66,26 @@ def test_assembly_sheet_not_oversized(svc):
     """审图：视图只需避开右侧栏（标题栏/明细表），不该因此换大图幅而大片留白。"""
     d, plan = _station(svc)
     assert plan.sheet == "A3"
+
+
+def test_assembly_install_dims():
+    """装配图：底板成组通孔的孔距作为安装尺寸标在俯视图，孔规格进技术要求。"""
+    import sys
+    sys.path.insert(0, "examples")
+    from cylinder_station import ASSEMBLY, BASE_PLATE, MOUNT_PLATE
+
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import AssemblySpec, DrawingSpec, PartSpec
+    import tempfile
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("T")
+    for d in (BASE_PLATE, MOUNT_PLATE):
+        svc.build(PartSpec.model_validate(d))
+    svc.build(AssemblySpec.model_validate(ASSEMBLY))
+    from cadmcp.detailing import plan_assembly_drawing
+    a = svc._models()[ASSEMBLY["name"]].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model=ASSEMBLY["name"]), a)
+    inst = {d.axis: d for d in plan.dims if d.ref.startswith("install_")}
+    assert {round(d.value) for d in inst.values()} == {260, 160}
+    assert all(d.view == "top" and len(d.extra["sheet_pts"]) == 2 for d in inst.values())
+    assert any("安装孔 4×Φ9" in n for n in plan.notes)

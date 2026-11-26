@@ -965,7 +965,11 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     if not spec.bom_table:
         bom = []
     notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
-    notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, 3)]
+    inst_dims, inst_note = install_dims(a, views) if spec.dimensions != "none" else ([], None)
+    dims += inst_dims
+    if inst_note:
+        notes.append(f"3. {inst_note}")
+    notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, len(notes))]
     tb = {"name": a.title, "part_no": a.part_no, "material": "", "scale": scale_label(scale),
           "mass": f"{a.mass_kg:.2f} kg", "sheet": sheet,
           "projection": "第一角" if spec.projection == "first_angle" else "第三角",
@@ -975,6 +979,46 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
     overall_dim_sheet(plan, a)
     return plan
+
+
+def install_dims(a: ResolvedAssembly, views: list[ViewPlan]) -> tuple[list[Dim], str | None]:
+    """安装尺寸（GB/T 4458.1 装配图应注 规格/装配/安装/外形 尺寸）：最底层基础件上成组通孔的孔距，
+    标在俯视图上方（横向）与右侧（纵向），尺寸界线引自孔心；孔规格写进技术要求。"""
+    from .ir.assembly_resolve import apply
+    v = next((v for v in views if v.type == "top"), None)
+    if v is None or not a.instances:
+        return [], None
+    base = min((i for i in a.instances if i.source.install_holes), key=lambda i: i.world_bbox.zmin, default=None)
+    if base is None or base.world_bbox.zmin > a.bbox.zmin + 1e-6:
+        return [], None
+    hg = max(base.source.install_holes, key=lambda h: len(h["pts"]))
+    w = [apply(base.transform, q) for q in hg["pts"]]
+    ha, va = VIEW_AXES["top"]
+    (x0, y0), (x1, y1) = _uv_sheet(v, a.bbox, (vrange(a.bbox, ha)[0], vrange(a.bbox, va)[0])), \
+        _uv_sheet(v, a.bbox, (vrange(a.bbox, ha)[1], vrange(a.bbox, va)[1]))
+    r = hg["dia"] / 2 * v.scale
+    holes = [[*(round(c, 2) for c in _uv_sheet(v, a.bbox, (vc(q, ha), vc(q, va)))), round(r, 2)] for q in w]
+    out, sizes = [], []
+    for axis, orient in ((ha, "h"), (va, "v")):
+        vals = sorted({round(vc(q, axis), 3) for q in w})
+        if len(vals) < 2:
+            continue
+        lo, hi = vals[0], vals[-1]
+        qa = next(q for q in w if abs(vc(q, axis) - lo) < 1e-3)
+        qb = next(q for q in w if abs(vc(q, axis) - hi) < 1e-3)
+        sa, sb = _uv_sheet(v, a.bbox, (vc(qa, ha), vc(qa, va))), _uv_sheet(v, a.bbox, (vc(qb, ha), vc(qb, va)))
+        if orient == "h":  # 孔圆周上远离尺寸线一侧的点：CAD 选到圆，按圆心标注
+            pts = [(round(sa[0], 2), round(sa[1] + r, 2)), (round(sb[0], 2), round(sb[1] + r, 2))]
+            pos = (round((sa[0] + sb[0]) / 2, 2), round(max(y0, y1) + 10, 2))
+        else:
+            pts = [(round(sa[0] + r, 2), round(sa[1], 2)), (round(sb[0] + r, 2), round(sb[1], 2))]
+            pos = (round(max(x0, x1) + 10, 2), round((sa[1] + sb[1]) / 2, 2))
+        out.append(Dim("top", "linear", axis, round(hi - lo, 2), f"{hi - lo:g}", f"install_{axis}",
+                       extra={"install": True, "holes": holes, "sheet_pts": pts, "sheet_pos": pos, "orient": orient}))
+        sizes.append(f"{hi - lo:g}")
+    if not out:
+        return [], None
+    return out, f"安装孔 {hg['label']}（{base.source.part_no or base.id}），孔距 {'×'.join(sizes)}，见俯视图。"
 
 
 BALLOON_R = 4.0       # 序号圆半径（图纸 mm，GB/T 4458.2 细实线圆）
@@ -1466,7 +1510,7 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
         norms = [tuple(d.extra["normal"]) for d in ords if d.kind in ("datum", "gtol", "roughness")
                  and d.extra and "normal" in d.extra and not d.extra.get("attach")]
         for d in ords:
-            if d.kind != "linear" or d.at is not None:
+            if d.kind != "linear" or d.at is not None or (d.extra or {}).get("install"):
                 continue
             if d.axis == ha:
                 y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)

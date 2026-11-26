@@ -102,6 +102,7 @@ class SourceInfo:
     properties: dict[str, str] = field(default_factory=dict)
     mounts: dict[str, dict[str, Any]] = field(default_factory=dict)  # 零件：CS_<mount> → 接口信息
     interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
+    install_holes: list[dict[str, Any]] = field(default_factory=list)  # 零件：顶/底面成组通孔 {name, dia, label, pts(零件坐标)}
 
 
 @dataclass
