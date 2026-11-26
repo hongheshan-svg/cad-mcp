@@ -341,18 +341,20 @@ def _hatch_dir(s, cid, cell, angle, step):
                    f"height='{y1 - y0:.2f}'/></clipPath>")
     lines = []
     h = y1 - y0
-    k = -h - step
-    while k < (x1 - x0) + h + step:  # 全局相位：相邻单元的线接得上
-        xa = x0 + k
-        if angle == 45:
-            xa_ = xa - ((xa - 0.0) % step)
-            lines.append(f"<line x1='{xa_:.2f}' y1='{s.y(y0):.2f}' x2='{xa_ + h:.2f}' y2='{s.y(y1):.2f}' "
+    # 全局相位：45° 线满足 x − y = n·step，135° 线满足 x + y = n·step，相邻单元的剖面线首尾相接
+    if angle == 45:
+        n0, n1 = math.floor((x0 - y1) / step), math.ceil((x1 - y0) / step)
+        for n in range(n0, n1 + 1):
+            c = n * step  # 线：x = y + c，y ∈ [y0, y1]
+            lines.append(f"<line x1='{y0 + c:.2f}' y1='{s.y(y0):.2f}' x2='{y1 + c:.2f}' y2='{s.y(y1):.2f}' "
                          f"stroke='#111' stroke-width='0.18'/>")
-        else:
-            xa_ = xa - ((xa - 0.0) % step)
-            lines.append(f"<line x1='{xa_:.2f}' y1='{s.y(y1):.2f}' x2='{xa_ + h:.2f}' y2='{s.y(y0):.2f}' "
+    else:
+        n0, n1 = math.floor((x0 + y0) / step), math.ceil((x1 + y1) / step)
+        for n in range(n0, n1 + 1):
+            c = n * step  # 线：x = c − y
+            lines.append(f"<line x1='{c - y0:.2f}' y1='{s.y(y0):.2f}' x2='{c - y1:.2f}' y2='{s.y(y1):.2f}' "
                          f"stroke='#111' stroke-width='0.18'/>")
-        k += step
+    del h
     s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
 
 
@@ -431,6 +433,13 @@ def _draw_asm_section(s, asm, v, sec):
             for n, c in enumerate(r["cells"]):
                 _hatch_dir(s, f"as{r['id']}_{n}", c, ang, step)
             for a_, b_ in r["edges"]:
+                s.poly([a_, b_], THICK, close=False)
+            for cone in r.get("cones", []):  # 螺纹底孔锥底：白底盖住剖面线，两斜边粗实线
+                s.face(cone, 0)
+                s.poly([cone[0], cone[2], cone[1]], THICK, close=False)
+            for a_, b_ in r.get("thin", []):  # 内螺纹大径
+                s.line(*a_, *b_, THIN)
+            for a_, b_ in r.get("thick", []):  # 螺纹终止线
                 s.poly([a_, b_], THICK, close=False)
     ha, va = VIEW_AXES[v.type]
     cx, cy = v.origin_on_sheet

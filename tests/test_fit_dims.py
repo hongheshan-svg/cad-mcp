@@ -136,3 +136,35 @@ def test_asm_full_section():
     assert not any(o.op == "model_view" and o.args["view"] == "front" for o in ops)
     from cadmcp.adapters.creo.drawing import tk_detail_ops
     assert any(o.op == "tk.drw.section" and o.args.get("exclude_components") == ["pin"] for o in tk_detail_ops(plan))
+
+
+def test_asm_section_tapped_hole():
+    """全剖中的螺纹连接：压块过孔挖空；座板螺孔按小径挖空，大径细实线、终止线粗实线、底孔 118° 锥底；螺钉不剖。"""
+    from cadmcp.detailing import asm_section_regions
+    plate = {**PLATE, "features": PLATE["features"] + [{"feature": "hole", "name": "T", "type": "tapped", "size": "M6",
+                                                       "depth": 18, "thread_depth": 16, "positions": [[35, 0]]}]}
+    cov = {"name": "FC", "part_no": "FP-03", "title": "压块", "material": "45#",
+           "base": {"type": "extrude", "profile": {"shape": "rect", "width": 20, "height": 20}, "thickness": 6},
+           "features": [{"feature": "hole", "name": "C", "type": "clearance", "size": "M6", "depth": "through",
+                         "positions": [[0, 0]]}]}
+    asm = {**ASM, "components": ASM["components"] + [
+        {"id": "cov", "source": "part:FC", "place": {"offset": [35, 0, 20]}},
+        {"id": "scr", "source": "lib:SHCS-M6x20", "place": {"offset": [35, 0, 26]}}]}
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("F")
+    for d in (plate, PIN, cov):
+        svc.build(PartSpec.model_validate(d))
+    svc.build(AssemblySpec.model_validate(asm))
+    a = svc._models()["FA"].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model="FA"), a)
+    sec = plan.asm_section
+    assert set(sec["exclude"]) == {"pin", "scr"} and sec["hatch"]["plate"][0] != sec["hatch"]["cov"][0]
+    regs = {r["id"]: r for r in asm_section_regions(a, plan.views[0], sec)}
+    k = plan.scale
+    pl = regs["plate"]
+    assert len(pl["thin"]) == 2 and abs(abs(pl["thin"][0][0][0] - pl["thin"][1][0][0]) - 6 * k) < 1e-6  # 大径 M6
+    assert len(pl["thick"]) == 1 and len(pl["cones"]) == 1
+    assert abs(abs(pl["cones"][0][0][0] - pl["cones"][0][1][0]) - 5 * k) < 1e-6  # 底孔 Φ5
+    assert len(regs["cov"]["cells"]) == 2  # 压块被过孔分成两块
+    svg, out = render(plan, a)
+    assert out["crossings"] == [] and out["collisions"] == []

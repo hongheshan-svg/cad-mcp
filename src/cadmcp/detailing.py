@@ -1580,7 +1580,7 @@ def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]
             rects = [rect((bb.xmin, yc, bb.zmin), (bb.xmax, yc, bb.zmax)) for bb, _ in solid_boxes(inst)]
             out.append({"id": inst.id, "state": "excluded", "rects": rects})
             continue
-        cells, edges = [], []
+        cells, edges, thin, thick, cones = [], [], [], [], []
         if inst.source.revolve:
             for z0, z1, do, di in inst.source.revolve:
                 ro, ri = do / 2, di / 2
@@ -1591,24 +1591,70 @@ def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]
                     cells += c_
                     edges += e_
         else:
-            voids = []
-            for f in inst.source.fits:
-                if f["role"] != "hole":
-                    continue
-                q0, q1 = apply(inst.transform, f["p0"]), apply(inst.transform, f["p1"])
-                if abs(q1[1] - q0[1]) > 1e-6:
-                    continue  # 孔轴线不平行于剖切面
+            voids, thin, thick, cones = [], [], [], []
+
+            def band(q0, q1, d):
+                """轴线 q0→q1（平行于剖切面、沿坐标轴）、直径 d 的圆柱被剖切面切出的矩形；切不到为 None。"""
                 e = abs(q0[1] - yc)
-                r = f["d"] / 2
-                if e >= r:
-                    continue
-                hw = (r * r - e * e) ** 0.5  # 剖切面切到的孔宽之半
+                if abs(q1[1] - q0[1]) > 1e-6 or e >= d / 2:
+                    return None
+                hw = (d * d / 4 - e * e) ** 0.5
                 ux = 1.0 if abs(q1[0] - q0[0]) < 1e-9 else 0.0  # 孔轴线竖直（沿 z）→ 孔宽沿 x
                 lo = (min(q0[0], q1[0]) - hw * ux, yc, min(q0[2], q1[2]) - hw * (1 - ux))
                 hi = (max(q0[0], q1[0]) + hw * ux, yc, max(q0[2], q1[2]) + hw * (1 - ux))
-                voids.append(rect(lo, hi))
+                return rect(lo, hi), hw, ux
+            for f in inst.source.fits:
+                if f["role"] not in ("hole", "tap", "bore"):
+                    continue
+                q0, q1 = apply(inst.transform, f["p0"]), apply(inst.transform, f["p1"])
+                if f["role"] == "tap":  # 内螺纹（GB/T 4459.1）：小径（钻孔）挖空、剖面线画到小径；大径细实线；终止线粗实线；钻孔锥角 118°
+                    q2 = apply(inst.transform, f["p2"])
+                    r_ = band(q0, q2, f["drill"])
+                    if r_ is None:
+                        continue
+                    voids.append(r_[0])
+                    bm = band(q0, q1, f["d"])
+                    ux = r_[2]
+                    if bm is not None:
+                        x0, y0, x1, y1 = bm[0]
+                        if ux:  # 竖直孔：大径线竖直
+                            thin += [((x0, y0), (x0, y1)), ((x1, y0), (x1, y1))]
+                        else:
+                            thin += [((x0, y0), (x1, y0)), ((x0, y1), (x1, y1))]
+                        if not f["through"]:
+                            pe = S(q1)
+                            thick.append(((x0, pe[1]), (x1, pe[1])) if ux else ((pe[0], y0), (pe[0], y1)))
+                    if not f["through"]:  # 锥底：底孔端点外伸 0.3×钻孔径（≈118° 锥角）
+                        u = [q2[k] - q0[k] for k in range(3)]
+                        L = sum(c * c for c in u) ** 0.5 or 1.0
+                        tip = tuple(q2[k] + u[k] / L * 0.3 * f["drill"] for k in range(3))
+                        x0, y0, x1, y1 = r_[0]
+                        pe, pt = S(q2), S(tip)
+                        base = ((x0, pe[1]), (x1, pe[1])) if ux else ((pe[0], y0), (pe[0], y1))
+                        cones.append([base[0], base[1], pt])
+                    continue
+                r_ = band(q0, q1, f["d"])
+                if r_ is not None:
+                    voids.append(r_[0])
+                if f["role"] == "bore" and f.get("cbore"):
+                    D, dep = f["cbore"]
+                    u = [q1[k] - q0[k] for k in range(3)]
+                    L = sum(c * c for c in u) ** 0.5 or 1.0
+                    rc = band(q0, tuple(q0[k] + u[k] / L * dep for k in range(3)), D)
+                    if rc is not None:
+                        voids.append(rc[0])
             cells, edges = _rect_minus(rect((b.xmin, yc, b.zmin), (b.xmax, yc, b.zmax)), voids)
-        out.append({"id": inst.id, "state": "cut", "cells": cells, "edges": edges, "hatch": sec["hatch"].get(inst.id, (45, 2.5))})
+
+            def on_base(e_):  # 锥底处没有轮廓线（钻孔圆柱直接过渡到锥面）
+                for c_ in cones:
+                    (ax_, ay_), (bx_, by_) = c_[0], c_[1]
+                    if all(min(ax_, bx_) - 1e-6 <= q[0] <= max(ax_, bx_) + 1e-6 and
+                           min(ay_, by_) - 1e-6 <= q[1] <= max(ay_, by_) + 1e-6 for q in e_):
+                        return True
+                return False
+            edges = [e_ for e_ in edges if not on_base(e_)]
+        out.append({"id": inst.id, "state": "cut", "cells": cells, "edges": edges, "hatch": sec["hatch"].get(inst.id, (45, 2.5)),
+                    "thin": thin, "thick": thick, "cones": cones})
     return out
 
 

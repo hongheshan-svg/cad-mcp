@@ -112,7 +112,24 @@ def part_fits(p) -> list[dict[str, Any]]:
     """零件上可能参与配合的圆柱面（孔：光孔/套类内孔；轴：轴段），tol 为公差带（未注为 None），轴线段为零件坐标。"""
     out: list[dict[str, Any]] = []
     for h in p.holes:
-        if h.type not in ("simple",) or h.slot:
+        if h.slot:
+            continue
+        if h.type == "tapped":  # 螺纹孔：装配全剖画内螺纹（不参与配合）
+            for i in h.instances:
+                n = i.normal
+                at = lambda t: tuple(i.xyz[k] - n[k] * t for k in range(3))  # noqa: E731
+                out.append({"role": "tap", "d": h.nominal, "drill": h.drill, "p0": tuple(i.xyz),
+                            "p1": at(h.thread_depth or h.depth), "p2": at(h.depth), "through": h.through,
+                            "name": f"{h.name}[{i.index}]"})
+            continue
+        if h.type in ("clearance", "counterbore", "countersink"):  # 螺钉过孔：装配全剖中挖空
+            for i in h.instances:
+                n = i.normal
+                out.append({"role": "bore", "d": h.drill, "p0": tuple(i.xyz),
+                            "p1": tuple(i.xyz[k] - n[k] * h.depth for k in range(3)), "cbore": h.cbore,
+                            "name": f"{h.name}[{i.index}]"})
+            continue
+        if h.type not in ("simple",):
             continue
         for i in h.instances:
             n = i.normal
