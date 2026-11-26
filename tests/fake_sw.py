@@ -23,6 +23,7 @@ ARITY = {
     "InsertTableAnnotation2": 7, "SetColumnWidth": 3, "CreateBreakOutSection": 1,
     "InsertDatumTag2": 0, "InsertGtol": 0, "SetFrameSymbols2": 9, "SetFrameValues2": 6, "SetLabel": 1,
     "InsertSurfaceFinishSymbol3": 14,
+    "AddDimension2": 3, "AddDimension2().SetText": 2,  # native_shaft_dims
 }
 
 

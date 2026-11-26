@@ -186,3 +186,29 @@ def test_sw_hole_table_and_local_section(sw_svc):
     bo = [c[1] for c in ad.sw.calls if c[0] == "CreateBreakOutSection"]
     assert bo and bo[0][0] == pytest.approx(0.020)
     assert not [f for f in d["rules"]["findings"] if f["rule"] == "D016"]
+
+
+def test_sw_native_shaft_dimensions(sw_svc):
+    """轴类尺寸原生标注：选两条边线（SelectByID2 9 参）+ AddDimension2（3 参），坐标在图纸内。"""
+    svc, ad = sw_svc
+    svc.change_begin("SHD")
+    svc.build(PartSpec.model_validate(SHAFT))
+    svc.build(DrawingSpec.model_validate({"model": "SH1", "title_block": {"designer": "AI"}}))
+    calls = ad.sw.calls
+    adds = [c[1] for c in calls if c[0] == "AddDimension2"]
+    assert len(adds) >= 8 and all(len(a) == 3 for a in adds)
+    edge_sel = [c[1] for c in calls if c[0] == "SelectByID2" and c[1][1] == "EDGE"]
+    assert len(edge_sel) >= 2 * len(adds) and all(len(a) == 9 for a in edge_sel)
+    texts = [c[1][1] for c in calls if c[0] == "SetText" and len(c[1]) == 2]
+    assert "<MOD-DIAM><DIM>k6" in texts and "<MOD-DIAM><DIM>" in texts   # 直径带公差带的文字覆盖
+    for a in adds + [(e[2], e[3]) for e in edge_sel]:
+        assert 0 < a[0] < 0.5 and 0 < a[1] < 0.5
+
+
+def test_sw_overall_dimension_native(sw_svc):
+    svc, ad = sw_svc
+    svc.change_begin("PL")
+    svc.build(PartSpec.model_validate(PLATE_PRECISION))
+    svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
+    adds = [c[1] for c in ad.sw.calls if c[0] == "AddDimension2"]
+    assert len(adds) >= 2 and all(len(a) == 3 for a in adds)

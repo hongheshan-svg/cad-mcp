@@ -422,12 +422,18 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                             "IDrawingDoc.AutoDimension"))
     for d in plan.dims:
         if d.kind == "linear" and d.view not in ordinate_views and d.at is None:
-            ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value}))
+            ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）：pts = 两条被标注边线上的点，pos = 尺寸线/文字位置
+            ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value, "ref": d.ref,
+                                                      "pts": ex.get("sheet_pts"), "pos": ex.get("sheet_pos"),
+                                                      "orient": ex.get("orient")}, "选两条轮廓边线 AddDimension2"))
     if plan.layout == "shaft":
         for d in plan.dims:
             if d.kind == "diameter" or (d.kind == "linear" and d.at is not None):
+                ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）
                 ops.append(NativeOp("shaft_dimension", {"view": d.view, "kind": d.kind, "text": d.text,
-                                                        "at": d.at, "ref": d.ref}))
+                                                        "at": d.at, "ref": d.ref, "pts": ex.get("sheet_pts"),
+                                                        "pos": ex.get("sheet_pos"), "orient": ex.get("orient")},
+                                    "选两条边线 AddDimension2；直径用文字覆盖带公差带"))
     for d in plan.dims:
         if d.kind in ("callout", "radius") or d.kind == "diameter" and plan.layout != "shaft":
             lb = (d.extra or {}).get("label")

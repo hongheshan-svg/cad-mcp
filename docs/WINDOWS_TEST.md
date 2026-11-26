@@ -190,3 +190,20 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 3. 框格：符号是否正确（平面度 ⏥、位置度 ⌖ 等）、位置度前是否有 Φ、基准字母顺序；
    孔的位置度框格应在孔标注文字下方。
 4. 表面结构符号：是否为"去除材料"√，值显示为 Ra 3.2；非顶面的符号是否带引线。
+
+## 原生轴类尺寸 / 非坐标视图总体尺寸（op_shaft_dimension / op_overall_dimension）
+
+规划层（`detailing.shaft_dim_sheet` / `overall_dim_sheet`）给每个尺寸写 `Dim.extra`：`sheet_pts`（两个被标注点，图纸 mm）、
+`sheet_pos`（尺寸线/文字放置点，图纸 mm）、`orient`（h/v）。执行器激活视图 → 在 `sheet_pts` 处两次 `Extension.SelectByID2("", "EDGE", x, y, 0, append, 0, None, 0)`
+→ `AddDimension2(x, y, 0)` 放到 `sheet_pos`。失败抛 OpFailed（NON_CRITICAL），成功的 ref 记入 `readback["dim_refs"]`
+（不转给 rendered，避免 D005 改按 ref 全量核对；尺寸数量仍由 `dim_count` 回读核对）。
+
+实机核对：
+1. 出一张 SHAFT 图，看主视图：各轴段长度链、总长、键槽长/定位、各段直径是否都已标注，位置与 SVG 预览一致；查看 oplog 中 shaft_dimension / overall_dimension 的失败原因。
+2. 线性尺寸选边点：轴肩/端面取偏离轴线 0.85r 处的竖直线；键槽端部取轴线高度的圆弧端点。若选不中，检查视图缩放/旋转后图纸坐标是否仍与规划一致（`SelectByID2` 的 x、y 是图纸坐标，单位 m）。
+3. API 假设（需确认）：
+   - 两条平行边线选中后 `AddDimension2(x, y, 0)` 直接生成两线间距离尺寸（水平/竖直由两线方向决定），返回 IDisplayDimension；不行就改 AddHorizontalDimension2 / AddVerticalDimension2（同为 3 参）。
+   - 直径尺寸是"上下两条轮廓线间距"，用 `IDisplayDimension.SetText(swDimensionTextAll, "<MOD-DIAM><DIM>k6")` 覆盖为 Φ+值+公差带（`swDimensionTextAll` 缺失时默认 0；`<MOD-DIAM>`/`<DIM>` 标记需确认）。
+     公差带只是文字，未写入 IDimensionTolerance（拟合公差类型枚举写不准）；失败记入 `readback["dim_text_failed"]`，尺寸仍保留。
+   - 轴类视图的边线是否能被 `SelectByID2(..., "EDGE", ...)` 按图纸坐标选中，取决于该视图当前精度；选不中时 oplog 会写明坐标。
+4. 非坐标视图的总体尺寸（零件/装配的各视图）取左右（或上下）轮廓线的中点；L 形等非矩形轮廓可能选不中，属预期的软失败。
