@@ -432,13 +432,20 @@ def prune_default_views(spec: DrawingSpec, p: ResolvedPart, min_feat: float) -> 
     - 拉伸类棱柱件左右两侧面上没有孔/型腔/凸台、也没有剖视落在左视图 → 左视图只重复主视图已表达的厚度，省略；
     - 轴测图是辅助视图：带它只能用更小比例（或更大图幅）时省略，保证主要视图清晰。
     返回（新 spec, info 级说明）。"""
-    if "views" in spec.model_fields_set or p.base_type != "extrude":
+    if "views" in spec.model_fields_set:
         return spec, []
     infos: list[dict[str, Any]] = []
+    if p.base_type == "sheet_metal" and p.flat_box and all(v.type != "flat_pattern" for v in spec.views):
+        from .ir.drawing import ViewSpec
+        spec = spec.model_copy(update={"views": [*spec.views, ViewSpec(type="flat_pattern")]})
+        infos.append({"rule": "D021", "severity": "info", "message": "钣金件默认加展开图（下料依据，标注展开尺寸与折弯线）",
+                      "fix": "不需要时在 views 中显式列出视图"})
+    elif p.base_type != "extrude":
+        return spec, []
     types = [v.type for v in spec.views]
     side = {h.face for h in p.holes} | {pk["face"] for pk in p.pockets} | {b_.get("face", "top") for b_ in p.bosses}
     left_sec = isinstance(spec.sections, list) and any(s.view == "left" for s in spec.sections)
-    if "left" in types and not side & {"left", "right"} and not left_sec:
+    if p.base_type == "extrude" and "left" in types and not side & {"left", "right"} and not left_sec:
         types.remove("left")
         infos.append({"rule": "D021", "severity": "info", "message": "省略左视图：左右侧面无特征，厚度已在主视图表达",
                       "fix": "需要时在 views 中显式列出 left"})

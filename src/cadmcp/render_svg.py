@@ -161,6 +161,22 @@ def _draw_sheet_side(s, part, vtype, ha, P):
             s.poly([P(a0, z0), P(a1, z0), P(a1, z1), P(a0, z1)], THIN)
 
 
+def _sheet_flange_boxes(part):
+    """钣金翻边实体包围盒（模型坐标）：沿整条底板边线，厚 t，Z 向按翻边方向。"""
+    from .ir.resolve import Box
+    t = part.thickness
+    u0, u1, v0, v1 = part.profile.bbox2d
+    out = []
+    for bd in part.bends:
+        L = bd["length"]
+        z0, z1 = (0.0, L) if bd["direction"] == "up" else (-(L - t), t)
+        e = bd["edge"]
+        xs = (u0, u1) if e in ("front", "back") else ((u0, u0 + t) if e == "left" else (u1 - t, u1))
+        ys = (v0, v1) if e in ("left", "right") else ((v0, v0 + t) if e == "front" else (v1 - t, v1))
+        out.append((bd, Box(*xs, *ys, z0, z1)))
+    return out
+
+
 def _draw_weld_bodies(s, part, vtype, ha, va, P):
     """焊接件视图：每个杆件/板件按包围盒投影；端视的管材画内壁（细实线），圆管画圆。"""
     from .ir.resolve import Box
@@ -460,6 +476,9 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
         else:
             for x, y in pts:
                 s.line(*iso(x, y, z0), *iso(x, y, z1), THICK)
+        if part.base_type == "sheet_metal":
+            for _, bb in _sheet_flange_boxes(part):
+                _iso_box(s, iso, bb, THICK)
         return
     if part is not None and part.base_type == "shaft":
         z = 0.0
@@ -476,11 +495,16 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
         ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
     for bb in boxes:
+        _iso_box(s, iso, bb, THIN if asm is not None or len(boxes) > 1 else THICK)
+
+
+def _iso_box(s, iso, bb, w):
+    if True:
         P = {(i, j, k): iso(bb.xmin + i * (bb.xmax - bb.xmin), bb.ymin + j * (bb.ymax - bb.ymin),
                             bb.zmin + k * (bb.zmax - bb.zmin)) for i in (0, 1) for j in (0, 1) for k in (0, 1)}
         for e1, e2 in [((0,0,0),(1,0,0)),((1,0,0),(1,1,0)),((0,0,1),(1,0,1)),((1,0,1),(1,1,1)),((0,1,1),(1,1,1)),
                        ((0,0,1),(0,1,1)),((0,0,0),(0,0,1)),((1,0,0),(1,0,1)),((1,1,0),(1,1,1))]:
-            s.line(*P[e1], *P[e2], THIN if asm is not None or len(boxes) > 1 else THICK)
+            s.line(*P[e1], *P[e2], w)
 
 
 def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = None) -> tuple[str, dict[str, Any]]:
@@ -538,6 +562,12 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.circle(*V(c3), pr.data["diameter"] / 2 * sc)
             else:
                 s.poly([V((x, y, 0.0)) for x, y in pr.outline])
+            if part.base_type == "sheet_metal":  # 翻边在俯/仰视图中积聚为板厚条
+                for bd, bb in _sheet_flange_boxes(part):
+                    vis = (bd["direction"] == "up") == (v.type == "top")
+                    x0, y0 = V((bb.xmin, bb.ymin, 0.0))
+                    x1, y1 = V((bb.xmax, bb.ymax, 0.0))
+                    s.rect(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0), THICK if vis else THIN)
             for pk in part.pockets:
                 if pk["face"] in ("top", "bottom"):  # 背面的盲型腔不可见：细虚线
                     hid = pk["face"] != v.type and not pk.get("through")
