@@ -356,6 +356,21 @@ class GearSpec(Strict):
     blank_tolerances: bool = Field(True, description="自动标齿坯公差：轴孔为基准 A，齿顶圆径向圆跳动、基准端面圆跳动（按分度圆直径与精度等级查表）")
 
 
+class LocalHardening(Strict):
+    """局部表面淬火：整段轴颈（step:i），图上沿表面画粗点画线（GB/T 4457.4），技术要求写硬度与淬硬层深。"""
+    target: str = Field(description="step:<段号>")
+    method: Literal["induction", "flame"] = Field("induction", description="induction=高频感应淬火，flame=火焰淬火")
+    hardness: str | None = Field(None, description="如 50~55HRC；缺省按材料取经验值")
+    depth: str | None = Field(None, description="淬硬层深，如 1~1.5（mm）；缺省按材料")
+
+
+class HeatTreatment(Strict):
+    """整体热处理 + 局部表面淬火。整体硬度缺省按材料取经验值（45# 调质 220~250HBW）。"""
+    process: Literal["quench_temper", "normalize", "none"] = Field("quench_temper", description="调质 / 正火 / 不做整体热处理")
+    hardness: str | None = None
+    local: list[LocalHardening] = []
+
+
 class CastingSpec(Strict):
     """铸件：spec 描述加工后的零件；平台据此生成毛坯（加工面加余量、小孔不铸出、铸孔留加工量）。"""
     process: Literal["sand", "investment", "die"] = Field("sand", description="砂型 / 熔模精铸 / 压铸")
@@ -391,6 +406,7 @@ class PartSpec(Strict):
     auto_precision: bool = Field(False, description="轴类：按工程惯例自动补基准（两端轴承位 A、B）、轴承位圆柱度（GB/T 275）、"
                                  "其余配合段/齿轮段径向圆跳动（GB/T 1184）与配合面粗糙度；已写的基准/公差不改动")
     casting: CastingSpec | None = Field(None, description="铸件（category=casting）：加工面、余量、拔模、最小铸孔")
+    heat_treatment: HeatTreatment | None = Field(None, description="热处理（调质/正火 + 轴颈局部淬火）→ 技术要求与粗点画线")
     gear: GearSpec | None = Field(None, description="直齿圆柱齿轮：底座为 extrude + circle（直径 = 齿顶圆）")
 
     @model_validator(mode="after")

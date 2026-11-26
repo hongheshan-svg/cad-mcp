@@ -9,6 +9,7 @@ extern "C" {
 #include <ProSolid.h>
 #include <ProDrawing.h>
 #include <ProDtlnote.h>
+#include <ProDtlentity.h>
 #include <ProDtlattach.h>
 #include <ProDtlsyminst.h>
 #include <ProDwgtable.h>
@@ -864,6 +865,38 @@ json cmd_drw_detail_view(const json& a) {
     return json{{"view", alias}, {"scale_set", es == PRO_TK_NO_ERROR}};
 }
 
+// drw.line：图纸草绘直线（图纸 mm），指定线型与线宽（局部热处理粗点画线等）；view 可空（仅用于关联视图）。
+// TODO(实机核对): ProDtlentitydataAlloc / ProDtlentitydataCurveSet / ProDtlentitydataFontSet / ProDtlentitydataWidthSet
+//   / ProDtlentitydataViewSet / ProDtlentityCreate 签名；线型名 CTRLFONT（点画线）是否存在于图纸
+json cmd_drw_line(const json& a) {
+    ProDrawing d = find_drawing(arg_str(a, "drawing"));
+    if (!has(a, "points") || !a["points"].is_array() || a["points"].size() != 2)
+        throw CmdError("BAD_ARGS", "points 须为两个图纸点 [[x,y],[x,y]]");
+    Pt p1{a["points"][0][0].get<double>(), a["points"][0][1].get<double>()};
+    Pt p2{a["points"][1][0].get<double>(), a["points"][1][1].get<double>()};
+    std::string font = has(a, "font") ? arg_str(a, "font") : "SOLIDFONT";
+    double width = has(a, "width") ? arg_num(a, "width") : 0.0;
+    ProCurvedata curve;
+    ProPoint3d e1, e2;
+    sheet_mm_to_drw(d, p1, e1);
+    sheet_mm_to_drw(d, p2, e2);
+    check(ProLinedataInit(e1, e2, &curve), "ProLinedataInit");
+    ProDtlentitydata data;
+    check(ProDtlentitydataAlloc(d, &data), "ProDtlentitydataAlloc");
+    check(ProDtlentitydataCurveSet(data, &curve), "ProDtlentitydataCurveSet");
+    ProName fname;
+    to_proname(font, fname);
+    bool font_ok = ProDtlentitydataFontSet(data, fname) == PRO_TK_NO_ERROR;
+    bool width_ok = width <= 0 || ProDtlentitydataWidthSet(data, width) == PRO_TK_NO_ERROR;
+    if (has(a, "view") && !arg_str(a, "view").empty())
+        ProDtlentitydataViewSet(data, find_view(d, arg_str(a, "view")));
+    ProDtlentity ent;
+    ProError e = ProDtlentityCreate(d, nullptr, data, &ent);
+    ProDtlentitydataFree(data);
+    check(e, "ProDtlentityCreate");
+    return json{{"font_set", font_ok}, {"width_set", width_ok}};
+}
+
 // drw.balloon：BOM 球标（首期降级为带引线的序号注释）
 json cmd_drw_balloon(const json& a) {
     ProDrawing d = find_drawing(arg_str(a, "drawing"));
@@ -985,6 +1018,7 @@ void register_drawing_cmds() {
     register_cmd("drw.section", cmd_drw_section);
     register_cmd("drw.removed_section", cmd_drw_removed_section);
     register_cmd("drw.detail_view", cmd_drw_detail_view);
+    register_cmd("drw.line", cmd_drw_line);
     register_cmd("drw.balloon", cmd_drw_balloon);
     register_cmd("drw.readback", cmd_drw_readback);
     register_cmd("drw.show_axes", cmd_drw_show_axes);

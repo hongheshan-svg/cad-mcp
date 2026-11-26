@@ -347,6 +347,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 s.text(*lb["text_at"], d.text, 3.5)
                 refs.append(d.ref)
 
+    for d in plan.dims:  # 局部淬火粗点画线（坐标由规划层给出）
+        if d.kind == "chain":
+            (xa, ya), (xb, yb) = d.extra["sheet_pts"]
+            s.line(xa, ya, xb, yb, THICK, dash="8,1.5,1,1.5")
+            refs.append(d.ref)
     for v in plan.views:
         if v.type == "detail":
             _detail_view(s, plan, part, v, segs, refs)

@@ -459,3 +459,14 @@ def test_sw_grinding_undercut_detail(sw_svc):
     r = svc.build(DrawingSpec.model_validate({"model": "GR1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
     assert [c for c in ad.sw.calls if c[0] == "CreateDetailViewAt4"]
+
+
+def test_sw_heat_treatment_chain_line(sw_svc):
+    """局部淬火：视图草图粗点画线（SetLineStyle/SetLineWidth），规则检查通过。"""
+    from test_heat_treatment import HT
+    svc, ad = sw_svc
+    svc.change_begin("HT")
+    svc.build(PartSpec.model_validate(HT))
+    r = svc.build(DrawingSpec.model_validate({"model": "HT1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    assert len([c for c in ad.sw.calls if c[0] == "SetLineStyle"]) == 2

@@ -89,6 +89,7 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | `drw.section` | `parent`（画剖切线的视图，显示剖切箭头；local 可空）, `replaces`（被设为剖视的已有视图）, `label`, `kind`（full/step/half/local）, `cut_points`（模型坐标折线，在零件顶面上；full/half/local 取前两点）, `center`（视图位置，仅校验）, `boundary`（local 必填：局部区域闭合折线，图纸 mm） → `ProXSectionOffsetCreate` 建剖截面（一段=平面剖，多段=阶梯剖）后 `ProDrawingView2DSectionSet`；half 的分界面为垂直剖切线的默认基准面 |
 | `drw.removed_section` | `view`（CREOSON 已建的沿轴线观察视图，如 V_SEC_A）, `label`（剖截面名，如 A）, `z`（剖切位置：IR Z 坐标=轴向，mm）, `parent`（画剖切箭头的视图，可空）, `half_span`（剖切线半长，默认 500） → 偏移剖截面（平面 IR z=const）+ 2D 剖视 + 只显示切面（`ProDrawingView2DSectionAreaSet`） |
 | `drw.detail_view` | `parent`（父视图）, `view`（新视图别名，如 V_DET_I；后续 drw.dim 用它）, `circle`（`[cx, cy, r]` 图纸 mm：放大区域）, `center`（放大图位置，图纸 mm）, `scale`（放大比例，如 5） → 圆内最近模型边作参考点 + 圆形样条边界 → `ProDrawingViewDetailCreate` → `ProDrawingViewScaleSet`；返回 `{"view", "scale_set"}` |
+| `drw.line` | `points`（两个图纸点）, `font`（线型名，默认 SOLIDFONT；点画线 CTRLFONT）, `width`（mm，0 = 默认）, `view`（可空：关联视图） → `ProDtlentityCreate`（草绘直线）；返回 `{"font_set", "width_set"}` |
 | `drw.balloon` | `view`, `component`（组件路径名列表）, `item`, `at`, `pos` |
 | `drw.show_axes` | `view` → 遍历零件基准轴（`ProSolidAxisVisit`），逐个 `ProAnnotationShow` 显示在该视图中（孔/圆柱中心线）；返回 `{"axes", "shown", "failed"}`，失败不中断 |
 | `drw.readback` | – → `{"dims": n, "notes": n, "tables": [{"rows": [[...]]}], "views": [...], "symbols": n}` |

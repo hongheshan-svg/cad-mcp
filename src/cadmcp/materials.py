@@ -23,6 +23,14 @@ MATERIALS: dict[str, dict] = {
 }
 
 
+# 热处理经验硬度（中小截面；TODO(核对手册)）：process → 硬度；local_induction = 表面高频淬火 (硬度, 淬硬层深)
+HEAT_TREATMENT = {
+    "45#": {"quench_temper": "220~250HBW", "normalize": "170~217HBW", "local_induction": ("40~45HRC", "1~1.5")},
+    "40Cr": {"quench_temper": "241~286HBW", "normalize": "179~229HBW", "local_induction": ("48~53HRC", "1~1.5")},
+}
+HEAT_PROCESS = {"quench_temper": "调质处理", "normalize": "正火处理"}
+
+
 def density(name: str) -> float:
     if name not in MATERIALS:
         raise CadError(SPEC_INVALID, f"unknown material {name!r}", hint=f"available: {sorted(MATERIALS)}")

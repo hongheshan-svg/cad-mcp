@@ -338,6 +338,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                                                 "leader_to": _xy(lb["anchor"])}, "孔/圆角/倒角引线标注"))
         elif d.kind in ("linear", "ordinate"):
             skip("坐标/定位尺寸（规划层未给图纸坐标）")
+        elif d.kind == "chain":
+            ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in ex["sheet_pts"]],
+                                                "font": "CTRLFONT", "width": 0.5}, "局部热处理部位：粗点画线"))
         elif d.kind in ("tag", "origin"):
             if "sheet_at" not in ex:
                 skip("孔号")

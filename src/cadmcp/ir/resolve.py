@@ -145,6 +145,7 @@ class ResolvedPart:
     weld_options: dict[str, Any] = field(default_factory=dict)
     gear: dict[str, Any] | None = None  # 齿轮：geometry() + 精度、齿顶圆公差、齿面 Ra
     casting: dict[str, Any] = field(default_factory=dict)  # 铸件：工艺参数、技术要求、是否毛坯
+    heat: dict[str, Any] = field(default_factory=dict)  # 热处理 {text: 整体, local: [{step, z0, z1, text}]}
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -909,8 +910,9 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     if shaft_bores and any(f["kind"] in ("keyway", "thread", "gear") for f in shaft_feats):
         raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带键槽/外螺纹/齿轮",
                        hint="套类零件先只用内孔 + 环槽；或拆成实心轴")
+    heat = _heat_treatment(spec, steps)
     return ResolvedPart(
-        datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
+        heat=heat, datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
         category=spec.category, surface_treatment=spec.surface_treatment, base_type=base.type,
         parameters=params, bbox=box, volume_mm3=volume, mass_kg=volume * 1e-9 * dens, thickness=thickness,
@@ -925,6 +927,38 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                              "stress_relief": base.stress_relief, "process": base.weld_process}}
            if isinstance(base, WeldmentBase) else {}),
     )
+
+
+def _heat_treatment(spec: PartSpec, steps) -> dict[str, Any]:
+    ht = spec.heat_treatment
+    if ht is None:
+        return {}
+    tbl = materials.HEAT_TREATMENT.get(spec.material)
+    out: dict[str, Any] = {"text": "", "local": []}
+    if ht.process != "none":
+        hard = ht.hardness or (tbl or {}).get(ht.process)
+        if hard is None:
+            raise CadError(SPEC_INVALID, f"材料 {spec.material} 没有 {materials.HEAT_PROCESS[ht.process]}的经验硬度，请给出 hardness",
+                           hint=f"有经验值的材料：{sorted(materials.HEAT_TREATMENT)}")
+        out["text"] = f"{materials.HEAT_PROCESS[ht.process]} {hard}"
+    if ht.local:
+        if tbl is None and any(lh.hardness is None or lh.depth is None for lh in ht.local):
+            raise CadError(SPEC_INVALID, f"材料 {spec.material} 不宜表面淬火或没有经验值：请给出 hardness 与 depth，或改用 45#/40Cr")
+        if not steps:
+            raise CadError(SPEC_INVALID, "局部淬火目前只支持轴类（target = step:<段号>）")
+    for lh in ht.local:
+        try:
+            i = int(lh.target.split(":", 1)[1]) if lh.target.startswith("step:") else -1
+        except ValueError:
+            i = -1
+        if not 0 <= i < len(steps):
+            raise CadError(SPEC_INVALID, f"局部淬火 target {lh.target!r} 须为 step:<0..{len(steps) - 1}>")
+        h0, d0 = (tbl or {}).get("local_induction", (None, None))
+        z0 = sum(L for L, _ in steps[:i])
+        how = "高频感应淬火" if lh.method == "induction" else "火焰淬火"
+        out["local"].append({"step": i, "z0": z0, "z1": z0 + steps[i][0], "method": lh.method,
+                             "text": f"{how} {lh.hardness or h0}，淬硬层深 {lh.depth or d0}"})
+    return out
 
 
 def shaft_thread_points(p: "ResolvedPart", f: dict) -> tuple[list[float], list[float]]:

@@ -51,7 +51,7 @@ def _keys_read(body: str) -> set[str]:
 
 
 def test_doc_has_commands():
-    assert len(_doc_cmds()) == 12
+    assert len(_doc_cmds()) == 13
 
 
 def test_all_commands_registered():

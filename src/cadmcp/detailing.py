@@ -426,6 +426,17 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     if p.surface_treatment and p.surface_treatment != "无":
         notes.append(f"{n}. 表面处理：{p.surface_treatment}。")
         n += 1
+    if p.heat.get("text"):
+        notes.append(f"{n}. {p.heat['text']}。")
+        n += 1
+    if p.heat.get("local"):  # 合并同一工艺的轴颈；直径名写出来，原生图上没有粗点画线时也看得懂
+        groups: dict[str, list[str]] = {}
+        for lh in p.heat["local"]:
+            groups.setdefault(lh["text"], []).append(_shaft_dia_label(p, lh["step"], False))
+        for text, names in groups.items():
+            uniq = [f"{x}（{names.count(x)} 处）" if names.count(x) > 1 else x for x in dict.fromkeys(names)]
+            notes.append(f"{n}. {'、'.join(uniq)} 轴颈表面（图中粗点画线处）{text}。")
+            n += 1
     if p.base_type == "shaft" and p.shaft_chamfer:
         notes.append(f"{n}. 未注倒角 C0.5。")
         n += 1
@@ -1192,6 +1203,12 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
+    for lh in p.heat.get("local", []):  # 局部淬火：主视图轮廓下方 1.2 mm 的粗点画线（GB/T 4457.4），两端让开 0.5 mm
+        r_ = p.shaft_steps[lh["step"]][1] / 2
+        y_ = front.origin_on_sheet[1] - r_ * scale - 1.2
+        xa_, xb_ = shaft_sx(front, Ltot, lh["z0"]) + 0.5, shaft_sx(front, Ltot, lh["z1"]) - 0.5
+        dims.append(Dim("front", "chain", None, None, "", f"heat:{lh['step']}", None,
+                        {"sheet_pts": [(round(xa_, 2), round(y_, 2)), (round(xb_, 2), round(y_, 2))]}))
     for v in views:  # 局部放大图：视图位置已定后算主视图圆圈/编号与放大图内尺寸的图纸坐标
         if v.type == "detail":
             dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none")

@@ -631,6 +631,11 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": d.at, "ref": d.ref,
                                                 **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else
                                                    {"text_pos": pos} if pos else {})}))
+    for d in plan.dims:  # 局部热处理部位：视图中画线，改为粗点画线
+        if d.kind == "chain":
+            ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["sheet_pts"]],
+                                              "style": "CENTER", "weight": "thick", "ref": d.ref},
+                                "视图草图直线 → SetLineStyle 点画线 + SetLineWidth 粗（GB/T 4457.4 粗点画线）"))
     for d in plan.dims:  # 焊缝符号：原生 InsertWeldSymbol3，失败时退回带引线注释
         if d.kind == "weld":
             ex = d.extra or {}

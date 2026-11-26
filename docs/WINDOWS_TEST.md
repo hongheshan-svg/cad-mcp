@@ -486,3 +486,8 @@ Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺�
   新视图用别名 V_DET_I 登记在 TOOLKIT 会话里，后续 `drw.dim` 按别名找。CREOSON 扩展路径不建放大图（发 warn）。
 - 越程槽表 `standards.GRINDING_UNDERCUT`（GB/T 6403.5 磨外圆 b1/h/r）按手册常用值录入，未对照原文；槽底圆角 r 未建模
   （模型和图上都是直角槽底）。
+
+## 热处理粗点画线（TODO(实机核对)）
+样例：`tests/test_heat_treatment.py`。SW `view_line`：视图草图直线 → `SetLineStyle("CENTER")` + `SetLineWidth(swLW_THICK)`，
+核对线型名与线宽枚举；Creo `tk.drw.line`：`ProDtlentityCreate`，线型 CTRLFONT、线宽 0.5。
+热处理硬度经验值（`materials.HEAT_TREATMENT`）未对照手册。

@@ -24,7 +24,7 @@ NON_CRITICAL = {"check_body_extent", "probe_gdt_constants", "datum_tag", "gtol",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks", "detail_view"}
+                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks", "detail_view", "view_line"}
 
 
 class OpFailed(Exception):
@@ -1350,6 +1350,27 @@ class SwExecutor:
                 self.readback.setdefault("dim_text_failed", []).append(ref)
                 return {"text_override": f"failed: {e}"}
         return {"text": text}
+
+    def op_view_line(self, view: str, points, style: str = "CENTER", weight: str = "thick", ref: str = ""):
+        """视图草图中画一段直线（图纸坐标 mm），设线型/线宽（局部热处理粗点画线等）。"""
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        self.model.ActivateView(v.Name)
+        (ax, ay), (bx, by) = points
+        seg = self.model.SketchManager.CreateLine(ax * MM, ay * MM, 0, bx * MM, by * MM, 0)
+        if seg is None:
+            raise OpFailed("view line CreateLine failed")
+        self.model.ClearSelection2(True)
+        seg.Select4(False, None)
+        styled = True
+        try:  # TODO(实机核对): IModelDoc2.SetLineStyle("CENTER") 线型名；SetLineWidth 取 swLineWeights_e（粗 = swLW_THICK）
+            self.model.SetLineStyle(style)
+            self.model.SetLineWidth(self._k("swLW_THICK", 2) if weight == "thick" else self._k("swLW_THIN", 0))
+        except Exception:  # noqa: BLE001  线型设置失败只影响外观
+            styled = False
+        self.model.ClearSelection2(True)
+        return {"ref": ref, "styled": styled}
 
     def op_leader_note(self, view: str, text: str, at_model, ref: str, text_pos=None, anchor=None):
         v = self.views.get(view)
