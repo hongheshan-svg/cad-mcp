@@ -713,8 +713,9 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                                 f"{round(L, 1):g}", f"flat_bend{i}", extra={"bend": i}))
             for i, bd in enumerate(p.bends):
                 word = "上折" if bd["direction"] == "up" else "下折"
-                at = ((fu0 + fu1) / 2 * 0.4 + fu1 * 0.6, bd["flat_pos"]) if bd["flat_axis"] == "v" \
-                    else (bd["flat_pos"], fv0 * 0.6 + (fv0 + fv1) / 2 * 0.4)
+                # 写在折弯线中部：横、竖折弯线的说明分处各自中部，不在四角相撞
+                at = ((fu0 + fu1) / 2, bd["flat_pos"]) if bd["flat_axis"] == "v" \
+                    else (bd["flat_pos"], (fv0 + fv1) / 2)
                 dims.append(Dim("flat_pattern", "callout", None, bd["angle"],
                                 f"{word} {bd['angle']:g}° R{bd['radius']:g}", f"bend{i}", at))
     ht_rows, ht_view = ([], "") if spec.dimensions == "none" else _hole_table(dims, p, views, spec)

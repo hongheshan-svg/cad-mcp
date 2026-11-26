@@ -209,22 +209,57 @@ def _draw_flat(s, cx, cy, sc, part, plan, refs):
         elif d.ref.startswith("flat_bend") and d.extra.get("sheet_pts"):
             (ax, ay), (bx, by) = d.extra["sheet_pts"]
             px, py = d.extra["sheet_pos"]
+            tw_ = _text_w(d.text, 3.5)
             if d.extra["orient"] == "v":  # 尺寸界线自外轮廓左边引出
                 s.line(px, ay, px, by)
                 s.line(x0 - 2, ay, px - 1.5, ay)
                 s.line(x0 - 2, by, px - 1.5, by)
                 _arrow_pair(s, (px, ay), (px, by))
-                s.text(px - 1, (ay + by) / 2, d.text, 3.5, "middle", -90)
+                if tw_ > abs(by - ay) - 1:  # 太短：数字移到外轮廓一端之外（该侧没有别的界线）
+                    sg = -1 if by > ay else 1
+                    s.line(px, ay, px, ay + sg * (1.5 + tw_))
+                    s.text(px - 1, ay + sg * (1.5 + tw_ / 2), d.text, 3.5, "middle", -90)
+                else:
+                    s.text(px - 1, (ay + by) / 2, d.text, 3.5, "middle", -90)
             else:
                 s.line(ax, py, bx, py)
                 s.line(ax, y1 + 2, ax, py + 1.5)
                 s.line(bx, y1 + 2, bx, py + 1.5)
                 _arrow_pair(s, (ax, py), (bx, py))
-                s.text((ax + bx) / 2, py + 1, d.text, 3.5, "middle")
+                if tw_ > abs(bx - ax) - 1:
+                    sg = -1 if bx > ax else 1
+                    s.line(ax, py, ax + sg * (1.5 + tw_), py)
+                    s.text(ax + sg * (1.5 + tw_ / 2), py + 1, d.text, 3.5, "middle")
+                else:
+                    s.text((ax + bx) / 2, py + 1, d.text, 3.5, "middle")
+        elif d.kind == "callout" and d.at is not None and d.ref.startswith("bend"):
+            _bend_note(s, d, F, x0, y0, x1, y1, part)
         elif d.kind == "callout" and d.at is not None:
             px, py = F(*d.at)
             s.text(px, py + 1, d.text, 3, "middle")
         refs.append(d.ref)
+
+
+def _bend_note(s, d, F, x0, y0, x1, y1, part):
+    """折弯说明（上折/下折 角度 R）：写在折弯线旁；展开图内放不下时移到轮廓外（右侧/上方，避开展开尺寸），
+    用细线把折弯线延长过去。水平折弯线文字横写在线上方，竖直折弯线文字竖写在线左侧。"""
+    bd = part.bends[int(d.ref[4:])]
+    tw = _text_w(d.text, 3)
+    px, py = F(*d.at)
+    if bd["flat_axis"] == "v":  # 水平折弯线 y = py
+        if tw <= (x1 - x0) - 4:
+            tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
+            s.text(tx, py + 1, d.text, 3, "middle")
+        else:  # 右侧展开高度尺寸（x1+10，文字到 x1+15）之外
+            s.line(x1 + 1, py, x1 + 18, py, THIN)
+            s.text(x1 + 18.5, py - 1, d.text, 3)
+    else:  # 竖直折弯线 x = px
+        if tw <= (y1 - y0) - 4:
+            ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
+            s.text(px - 1, ty, d.text, 3, "middle", -90)
+        else:  # 上方（展开宽度尺寸在下方）
+            s.line(px, y1 + 1, px, y1 + 4, THIN)
+            s.text(px, y1 + 5, d.text, 3, "middle")
 
 
 def _draw_sheet_side(s, part, vtype, ha, P):
@@ -1356,13 +1391,25 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.line(vx0, yy, vx1, yy)
                 s.line(vx0, vy0 - 2, vx0, yy - 1.5)
                 s.line(vx1, vy0 - 2, vx1, yy - 1.5)
-                s.text((vx0 + vx1) / 2, yy + 1, d.text, 3.5, "middle")
+                tw_ = _text_w(d.text, 3.5)
+                if tw_ > abs(vx1 - vx0) - 1:  # 太窄（板厚等）：数字移到右界线之外，尺寸线延长到数字下
+                    xr_ = max(vx0, vx1)
+                    s.line(xr_, yy, xr_ + 1.5 + tw_, yy)
+                    s.text(xr_ + 1.5 + tw_ / 2, yy + 1, d.text, 3.5, "middle")
+                else:
+                    s.text((vx0 + vx1) / 2, yy + 1, d.text, 3.5, "middle")
             elif d.kind == "linear" and d.axis == va and d.at is None:
                 xx = vx0 - (22 if prec_left else 10)  # 纵向坐标尺寸画在右侧；左侧让开基准符号
                 s.line(xx, vy0, xx, vy1)
                 s.line(vx0 - 2, vy0, xx - 1.5, vy0)
                 s.line(vx0 - 2, vy1, xx - 1.5, vy1)
-                s.text(xx - 1, (vy0 + vy1) / 2, d.text, 3.5, "middle", -90)
+                tw_ = _text_w(d.text, 3.5)
+                if tw_ > abs(vy1 - vy0) - 1:  # 太窄（板厚等）：数字移到上界线之外，尺寸线延长到数字旁
+                    yt_ = min(vy0, vy1)
+                    s.line(xx, yt_, xx, yt_ - 1.5 - tw_)
+                    s.text(xx - 1, yt_ - 1.5 - tw_ / 2, d.text, 3.5, "middle", -90)
+                else:
+                    s.text(xx - 1, (vy0 + vy1) / 2, d.text, 3.5, "middle", -90)
             elif d.kind == "linear" and d.at is not None:
                 px, py = P(*d.at)
                 s.text(vx1 + 6, py, d.text, 3, "start")
