@@ -1229,6 +1229,20 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         zc = (f["z0"] + f["z1"]) / 2
         views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (shaft_sx(front, Ltot, zc), cy_sec),
                               label=label, target=f["name"]))
+    # 断面图伸进右侧技术要求/标题栏一列且低于该栏顶部：左移让开（移出剖切位置的断面图带 X-X 标注，GB/T 17452 允许）
+    n_notes_ = len(_notes_and_title(spec, p, sheet, scale, today)[0])
+    col_x_, col_top_ = W - 5 - 180, 5 + 56 + 14 + 5 * n_notes_ + 6 + 16
+    secs_ = sorted((v for v in views if v.type == "section"), key=lambda v: -v.origin_on_sheet[0])
+    for v in secs_:
+        cx_, cy_ = v.origin_on_sheet
+        w_, h_ = v.size_mm
+        if cx_ + w_ / 2 + 16 <= col_x_ or cy_ - h_ / 2 - 10 >= col_top_ + 4:
+            continue
+        x_new = col_x_ - 16 - w_ / 2
+        others = [(o.origin_on_sheet[0] - o.size_mm[0] / 2 - 16, o.origin_on_sheet[0] + o.size_mm[0] / 2 + 16)
+                  for o in views[1:] if o is not v and o.type == "section"]
+        if x_new - w_ / 2 > MARGIN + 4 and not any(a < x_new + w_ / 2 and x_new - w_ / 2 < b for a, b in others):
+            v.origin_on_sheet = (round(x_new, 2), cy_)
     # 局部放大图（GB/T 4458.1）：放在被放大部位下方的一行，避开断面图；罗马数字从左到右
     taken = [(v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2) for v in views[1:]]
     for k, (f, (ds_, rm_)) in enumerate(sorted(zip(dets, dgeo), key=lambda t: t[0]["z0"])):

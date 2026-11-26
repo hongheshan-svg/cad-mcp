@@ -360,3 +360,16 @@ def test_iso_draws_slots_and_through_exits():
     rings = [x for x in s.parts if x.startswith("<poly")]
     assert len(rings) == 4  # 2 个腰型孔 + 2 个 M5 出口
     assert plan_part_drawing(DrawingSpec(model="LB"), p)
+
+
+def test_shaft_sections_clear_notes_column():
+    """断面图不伸进右侧技术要求/标题栏一列（低于该栏顶部时左移），技术要求不再被挤到断面图旁。"""
+    from cadmcp.detailing import plan_part_drawing, notes_x
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate(SHAFT))
+    plan = plan_part_drawing(DrawingSpec.model_validate({"model": "SH1"}), p)
+    W, _ = plan.sheet_size
+    for v in plan.views:
+        if v.type == "section":
+            assert v.origin_on_sheet[0] + v.size_mm[0] / 2 + 16 <= W - 5 - 180 + 1e-6
+    assert notes_x(plan) == W - 5 - 180
