@@ -15,6 +15,7 @@ from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
 from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
+                   ShaftThread,
                    SheetMetalBase, ShaftBase, Boss, WeldmentBase)
 from .weldment import plate_hole_frame, resolve_weldment
 
@@ -595,6 +596,26 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     pockets, bosses, finishes, holes = [], [], [], []
     shaft_feats: list[dict[str, Any]] = []
     for f in spec.features:
+        if isinstance(f, ShaftThread):
+            if not isinstance(base, ShaftBase):
+                raise CadError(SPEC_INVALID, f"thread {f.name}: only valid on a shaft base",
+                               hint="孔内螺纹用 hole type=tapped")
+            if not 0 <= f.step < len(steps):
+                raise CadError(SPEC_INVALID, f"{f.name}: step {f.step} out of range (0..{len(steps) - 1})")
+            sz0 = sum(L for L, _ in steps[:f.step])
+            L, d = steps[f.step]
+            nd, pitch, d1, fine = standards.ext_thread(f.size)
+            if abs(nd - d) > 1e-6:
+                raise CadError(SPEC_INVALID, f"thread {f.name}: {f.size} needs step {f.step} diameter {nd:g}, got {d:g}",
+                               hint=f"把轴段 {f.step} 直径改为 {nd:g}")
+            tl = ev(f.length) if f.length is not None else L
+            side = f.side or ("start" if f.step == 0 and len(steps) > 1 else "end")
+            z0 = sz0 if side == "start" else sz0 + L - tl
+            code = f"M{nd:g}" + (f"×{pitch:g}" if fine else "") + f"-{f.tolerance}"
+            shaft_feats.append({"kind": "thread", "name": f.name, "step": f.step, "d": d, "d1": d1, "pitch": pitch,
+                                "length": tl, "z0": z0, "z1": z0 + tl, "side": side, "offset": z0 - sz0,
+                                "callout": code, "full": abs(tl - L) < 1e-6})
+            continue
         if isinstance(f, (Keyway, Groove)):
             if not isinstance(base, ShaftBase):
                 raise CadError(SPEC_INVALID, f"{f.feature} {f.name}: only valid on a shaft base")
@@ -767,3 +788,16 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                              "stress_relief": base.stress_relief, "process": base.weld_process}}
            if isinstance(base, WeldmentBase) else {}),
     )
+
+
+def shaft_thread_points(p: "ResolvedPart", f: dict) -> tuple[list[float], list[float]]:
+    """轴外螺纹的选边点（模型坐标 mm，CAD 无关）：
+    (螺纹圆柱面在起始端的圆边上一点, 起始端面上一条圆边上一点)。轴端有倒角时圆柱面的端边在倒角处、端面边为倒角小圆。"""
+    Ltot, c, r = p.bbox.zmax, p.shaft_chamfer or 0.0, f["d"] / 2
+    if f["side"] == "end":
+        z = f["z1"]
+        on_end = abs(z - Ltot) < 1e-6 and c > 0
+        return [r, 0.0, z - c if on_end else z], [r - c if on_end else r, 0.0, z]
+    z = f["z0"]
+    on_end = z < 1e-6 and c > 0
+    return [r, 0.0, z + c if on_end else z], [r - c if on_end else r, 0.0, z]

@@ -775,11 +775,54 @@ ProFeature make_thread(ProSolid s, ProGeomitem* cyl, ProSelection start, double 
     return create_feature(s, g.t, false);
 }
 
+// 边的两个邻面中取指定类型的一个（圆柱面 / 平面）
+ProGeomitem edge_neighbor(ProSolid s, ProEdge e, ProSrftype want, const char* what) {
+    ProEdge e1, e2;
+    ProSurface s1 = NULL, s2 = NULL;
+    // TODO(实机核对): ProEdgeNeighborsGet(ProEdge, ProEdge*, ProEdge*, ProSurface*, ProSurface*)
+    check(ProEdgeNeighborsGet(e, &e1, &e2, &s1, &s2), "ProEdgeNeighborsGet");
+    for (ProSurface sf : {s1, s2}) {
+        ProSrftype st;
+        if (sf && ProSurfaceTypeGet(sf, &st) == PRO_TK_NO_ERROR && st == want) {
+            int id;
+            check(ProSurfaceIdGet(sf, &id), "ProSurfaceIdGet");
+            ProGeomitem gi;
+            check(ProModelitemInit(reinterpret_cast<ProMdl>(s), id, PRO_SURFACE, &gi), "ProModelitemInit(surface)");
+            return gi;
+        }
+    }
+    throw CmdError("PRO_TK_E_NOT_FOUND", std::string("边的邻面中没有") + what);
+}
+
+// 轴段外螺纹：edge_point = 螺纹圆柱面端部圆边上一点，start_edge_point = 起始端面上的一条圆边上一点（IR 坐标 mm）
+json shaft_thread(ProSolid s, const V3& cyl_pt, const V3& start_pt, const std::string& name, double dia, double len) {
+    ProGeomitem cyl = edge_neighbor(s, nearest_edge(s, cyl_pt, 0.5), PRO_SRF_CYL, "圆柱面");
+    ProGeomitem pl = edge_neighbor(s, nearest_edge(s, start_pt, 0.5), PRO_SRF_PLANE, "平面");
+    ProSelection start = item_selection(&pl);
+    ProFeature f;
+    try {  // 深度方向：先按起始面正法向，失败再反向（应指向材料内部）
+        try {
+            f = make_thread(s, &cyl, start, dia, len, name, PRO_COSTHREAD_THD_FLIP_OPT_NORM);
+        } catch (const CmdError&) {
+            f = make_thread(s, &cyl, start, dia, len, name, PRO_COSTHREAD_THD_FLIP_OPT_FLIP);
+        }
+    } catch (...) {
+        ProSelectionFree(&start);
+        throw;
+    }
+    ProSelectionFree(&start);
+    set_feature_name(&f, name);
+    return json{{"id", f.id}, {"features", json::array({f.id})}};
+}
+
 json cmd_cosmetic_thread(const json& a) {
     ProSolid s = reinterpret_cast<ProSolid>(find_part(arg_str(a, "model")));
-    std::string name = arg_str(a, "feature"), hole = arg_str(a, "hole_feature");
+    std::string name = arg_str(a, "feature");
     double dia = arg_num(a, "major_diameter"), len = arg_num(a, "length");
     if (dia <= 0 || len <= 0) throw CmdError("BAD_ARGS", "major_diameter / length 必须为正");
+    if (has(a, "edge_point"))
+        return shaft_thread(s, arg_pt3(a, "edge_point"), arg_pt3(a, "start_edge_point"), name, dia, len);
+    std::string hole = arg_str(a, "hole_feature");
     ProFeature hf;
     if (!find_feature(s, hole, &hf)) throw CmdError("PRO_TK_E_NOT_FOUND", "找不到孔特征 " + hole);
     std::vector<HoleCyl> cyls = hole_cylinders(&hf);

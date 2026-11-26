@@ -64,7 +64,7 @@ CREOSON 按命名视图 FRONT/TOP/RIGHT 建的工程图视图与规划层一致�
 | `feat.extrude` | `plane`, `entities`, `depth`, `direction`（`normal`/`reverse`/`both`）, `op`（`add`/`cut`）, `through_all`（bool，cut 用） |
 | `feat.revolve` | `plane`（含轴线的草绘面）, `entities`（闭合半截面）, `axis`（`{"p1":[u,v],"p2":[u,v]}` 草绘中心线）, `angle`（默认 360）, `op` |
 | `feat.hole` | `face`（`top|bottom|front|back|left|right`）, `points`（模型坐标孔口中心列表）, `diameter`, `depth`, `through`, `cbore`（`[直径, 深度]`或 null）, `csink`（直径或 null）, `drill_point`（bool，盲孔 118° 尖）。实现可用旋转切除（推荐，形状完全可控）或 Creo 孔特征 |
-| `feat.cosmetic_thread` | `hole_feature`（孔特征名）, `major_diameter`, `length` |
+| `feat.cosmetic_thread` | `hole_feature`（孔特征名）, `major_diameter`, `length`；轴外螺纹改用 `edge_point`（螺纹圆柱面端部圆边上一点）+ `start_edge_point`（起始端面上一条边上的点），按边的邻面取圆柱面与起始平面 |
 | `feat.round` | `edges`（模型坐标的边中点列表）, `radius` |
 | `feat.chamfer` | `edges`, `distance` |
 | `datum.plane` | `ref`（`TOP|FRONT|RIGHT|<面名>`）, `offset` |

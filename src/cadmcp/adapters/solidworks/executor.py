@@ -686,7 +686,7 @@ class SwExecutor:
         raise OpFailed("hole_wizard: 需实机核对 HoleWizard5 GB 标准参数表；请用 holes_via='cut'")
 
     def op_cosmetic_thread(self, feature: str, size: str, depth: float | None, edge_pts=None, diameter=None,
-                           external: bool = False):
+                           external: bool = False, tol: str | None = None):
         """装饰螺纹：先选中孔口（或轴段端部）圆边，再 FeatureManager.InsertCosmeticThread3。
         edge_pts 为圆边上的一个模型坐标点（mm）列表；diameter 为螺纹公称直径（mm），缺省按 size 的 M 后数字解析。
         InsertCosmeticThread3 的实参个数/含义以实机帮助为准（见 docs/WINDOWS_TEST.md 的待核对项）。"""
@@ -710,7 +710,8 @@ class SwExecutor:
                 self.readback.setdefault("cosmetic_thread_errors", []).append(f"{feature}[{i}]: edge not found")
                 continue
             feat = fm.InsertCosmeticThread3(ttype, diameter * MM, (depth or 0.0) * MM, end_cond,
-                                            "GB", "Metric Tap" if not external else "Metric Die", size or "", "6H")
+                                            "GB", "Metric Tap" if not external else "Metric Die", size or "",
+                                            tol or ("6g" if external else "6H"))
             if feat is None:
                 self.readback.setdefault("cosmetic_thread_errors", []).append(f"{feature}[{i}]: InsertCosmeticThread3 returned None")
                 continue

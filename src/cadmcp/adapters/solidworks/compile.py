@@ -10,7 +10,7 @@ from ...errors import CAPABILITY_UNSUPPORTED, CadError
 
 from ...ir.assembly_resolve import euler_xyz, identity, matmul, ref_frame, same_frame
 from ...ir.part import PartSpec
-from ...ir.resolve import ResolvedPart
+from ...ir.resolve import ResolvedPart, shaft_thread_points
 from ..native import NativeOp, to_sw_equation
 
 HOLE_TYPE = {"tapped": "swWzdTap", "counterbore": "swWzdCounterBore",
@@ -172,6 +172,13 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
         ops.append(NativeOp("revolve", {"feature": "Base", "sketch": "SK_Shaft", "angle": 360}))
         for f in p.shaft_features:
             sk = f"SK_{f['name']}"
+            if f["kind"] == "thread":  # 外螺纹：选起始端圆边 → 装饰螺纹（Metric Die），长度 = 螺纹长
+                cyl_pt, _ = shaft_thread_points(p, f)
+                ops.append(NativeOp("cosmetic_thread", {"feature": f["name"], "size": f["callout"].split("-")[0],
+                                                        "depth": f["length"], "edge_pts": [cyl_pt], "diameter": f["d"],
+                                                        "external": True, "tol": f["callout"].split("-")[-1]},
+                                    "轴外螺纹装饰线（失败不影响几何）"))
+                continue
             if f["kind"] == "keyway":
                 # 键槽朝向：0/180 → 在 Right Plane(YZ) 画槽形，沿 ±X 切；90/270 → Top Plane(XZ)，沿 ±Y 切
                 ang = round(f["angle"]) % 360

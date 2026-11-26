@@ -13,7 +13,7 @@ import math
 
 from ...errors import CAPABILITY_UNSUPPORTED, CadError
 from ...ir.part import PartSpec
-from ...ir.resolve import ResolvedPart
+from ...ir.resolve import ResolvedPart, shaft_thread_points
 from ..native import NativeOp
 
 
@@ -216,6 +216,11 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
         feat("feat.revolve", "Base", "半截面含两端倒角", plane={"ref": "FRONT", "offset": 0}, entities=ents,
              axis=axis, angle=360, op="add")
         for f in p.shaft_features:
+            if f["kind"] == "thread":
+                cyl_pt, start_pt = shaft_thread_points(p, f)
+                feat("feat.cosmetic_thread", f["name"], "轴外螺纹：装饰螺纹（失败不影响几何）", edge_point=cyl_pt,
+                     start_edge_point=start_pt, major_diameter=f["d"], length=f["length"])
+                continue
             if f["kind"] == "keyway":
                 ang = round(f["angle"]) % 360
                 if ang not in (0, 90, 180, 270):

@@ -355,7 +355,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             if cuts:
                 frac = max((0.5, 0.2, 0.8), key=lambda t: min(abs(z0 + t * (z1 - z0) - c) for c in cuts))
         elif kind == "roughness":  # 环槽等的引线从槽口斜向右上：符号（文字在右）避开，离槽越远越好
-            grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] != "keyway"
+            grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "groove"
                        and z0 - 1 <= (f["z0"] + f["z1"]) / 2 <= z1 + 1]
             if grooves:
                 frac = max((0.7, 0.5, 0.3, 0.2), key=lambda t: round(min(abs(z0 + t * (z1 - z0) - c) for c in grooves), 3))
@@ -946,7 +946,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     sec_d = max((f["d"] for f in kws), default=0.0)
     col_w = [Ltot]
     row_h = [D] + ([sec_d] if kws else [])
-    min_feat = min((f["width"] for f in p.shaft_features), default=0.0)
+    min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
@@ -966,7 +966,10 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         z = 0.0
         for i, (L, d) in enumerate(p.shaft_steps):
             tol = p.shaft_tolerances[i] if p.shaft_tolerances else None
-            dims.append(Dim("front", "diameter", None, d, _dia_text(d, tol), f"step{i}_dia", (z + L / 2, d)))
+            th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["step"] == i), None)
+            # 螺纹段：螺纹代号注在大径上替代 Φ（GB/T 4459.1）
+            dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(d, tol), f"step{i}_dia",
+                            (z + L / 2, d)))
             if len(p.shaft_steps) > 1:
                 dims.append(Dim("front", "linear", "z", L, f"{L:g}", f"step{i}_len", (z, z + L)))
             z += L
@@ -976,6 +979,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                             (0.0, p.shaft_steps[0][1] / 2)))
         for f in p.shaft_features:
             sz0 = p.step_z(f["step"])[0]
+            if f["kind"] == "thread":  # 未满整段：注螺纹长度（自轴段端面起）
+                if not f["full"]:
+                    dims.append(Dim("front", "linear", "z", f["length"], f"{f['length']:g}", f"{f['name']}_len",
+                                    (f["z0"], f["z1"])))
+                continue
             if f["kind"] == "keyway":
                 dims.append(Dim("front", "linear", "z", f["length"], f"{f['length']:g}", f"{f['name']}_len",
                                 (f["z0"], f["z1"])))

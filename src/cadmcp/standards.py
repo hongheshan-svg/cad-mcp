@@ -82,3 +82,25 @@ def circlip_groove(d: float) -> tuple[float, float]:
         raise CadError(SPEC_INVALID, f"no GB/T 894 circlip groove for shaft Φ{d:g}",
                        hint=f"可用轴径：{sorted(CIRCLIP_GROOVE)}")
     return CIRCLIP_GROOVE[key]
+
+
+# GB/T 193 普通螺纹粗牙螺距；GB/T 196 基本小径 d1 = d − 1.0825·P
+COARSE_PITCH = {3: 0.5, 4: 0.7, 5: 0.8, 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 14: 2.0, 16: 2.0, 18: 2.5, 20: 2.5,
+                22: 2.5, 24: 3.0, 27: 3.0, 30: 3.5, 33: 3.5, 36: 4.0, 39: 4.0, 42: 4.5, 45: 4.5, 48: 5.0,
+                52: 5.0, 56: 5.5, 60: 5.5, 64: 6.0}
+
+
+def ext_thread(size: str) -> tuple[float, float, float, bool]:
+    """M20 / M20x1.5 → (公称直径 d, 螺距 P, 小径 d1, 是否细牙)。"""
+    import re
+    m = re.fullmatch(r"\s*M\s*(\d+(?:\.\d+)?)\s*(?:[x×X*]\s*(\d+(?:\.\d+)?))?\s*", size)
+    if not m:
+        raise CadError(SPEC_INVALID, f"thread size {size!r}: expected like M20 or M20x1.5")
+    d = float(m.group(1))
+    if m.group(2):
+        pitch, fine = float(m.group(2)), True
+    else:
+        if d not in COARSE_PITCH:
+            raise CadError(SPEC_INVALID, f"thread {size}: no coarse pitch for M{d:g}", hint="写明螺距，如 M{d:g}x1.5")
+        pitch, fine = COARSE_PITCH[d], False
+    return d, pitch, round(d - 1.0825 * pitch, 3), fine

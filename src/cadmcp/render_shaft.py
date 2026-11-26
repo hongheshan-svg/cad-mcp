@@ -30,10 +30,17 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text):
 
 
 def _vdim(s, x, ya, yb, text, text_left=True):
+    """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外。"""
+    from .render_svg import _text_w
+    tw = _text_w(text, 3.5)
+    ym = (ya + yb) / 2
+    if tw > yb - ya - 2:
+        s.line(x, yb, x, yb + tw + 3, THIN)
+        ym = yb + 2 + tw / 2
     s.line(x, ya, x, yb, THIN)
     _arrow(s, x, ya, 0, -1)
     _arrow(s, x, yb, 0, 1)
-    s.text(x - 1 if text_left else x + 4.5, (ya + yb) / 2, text, 3.5, "middle", -90)
+    s.text(x - 1 if text_left else x + 4.5, ym, text, 3.5, "middle", -90)
 
 
 def _profile(part: ResolvedPart) -> list[tuple[float, float, float]]:
@@ -90,6 +97,14 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             s.line(*P(z, -r), *P(z, r), THICK)
     s.line(*P(-3, 0), *P(Ltot + 3, 0), THIN, CENTER)
 
+    # 外螺纹（GB/T 4459.1）：大径粗实线（即轮廓），小径细实线画到螺纹终止处（倒角内也画），终止线粗实线
+    for f in (f for f in part.shaft_features if f["kind"] == "thread"):
+        r1 = f["d1"] / 2
+        s.line(*P(f["z0"], r1), *P(f["z1"], r1), THIN)
+        s.line(*P(f["z0"], -r1), *P(f["z1"], -r1), THIN)
+        zt = f["z0"] if f["side"] == "end" else f["z1"]  # 终止线在螺纹靠轴内的一端
+        if 1e-6 < zt < Ltot - 1e-6:
+            s.line(*P(zt, -f["d"] / 2), *P(zt, f["d"] / 2), THICK)
     # 键槽（朝前，主视图显示其实形）
     kws = [f for f in part.shaft_features if f["kind"] == "keyway"]
     for f in kws:

@@ -205,6 +205,18 @@ class Groove(Strict):
     depth: Num | None = Field(None, description="undercut 默认 0.5")
 
 
+class ShaftThread(Strict):
+    """轴上外螺纹（普通螺纹 GB/T 193/196）：车在某轴段上（该段直径 = 螺纹公称直径），从轴段一端起。
+    图上螺纹代号替代该段直径尺寸（如 M20×1.5-6g），未满整段时另注螺纹长度。"""
+    feature: Literal["thread"]
+    name: str
+    step: int
+    size: str = Field(description="M20（粗牙）或 M20x1.5（细牙）")
+    length: Num | None = Field(None, description="螺纹长度；默认整个轴段")
+    side: Literal["start", "end"] | None = Field(None, description="从轴段哪一端起；默认靠轴端的一侧")
+    tolerance: str = Field("6g", description="外螺纹公差带")
+
+
 class Mount(Strict):
     """外购件安装接口：按标准件库登记的接口自动开螺钉孔 + 止口/让位孔，并生成装配用坐标系 CS_<name>
     （z 沿面外法向；把外购件的接口坐标系对齐到它即可装配）。"""
@@ -221,7 +233,8 @@ class Mount(Strict):
     pilot: bool = Field(True, description="是否开止口/让位孔（库中登记了 pilot 时）")
 
 
-Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove | Mount, Field(discriminator="feature")]
+Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove | ShaftThread | Mount,
+                    Field(discriminator="feature")]
 
 
 # ---------- named references ----------
