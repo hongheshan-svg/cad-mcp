@@ -185,3 +185,11 @@ def test_crowded_gear_shaft_annotations_joint_layout():
     assert on_frame
     W, H = plan.sheet_size
     assert all(d.extra["sheet_at"][1] + 10 < H - 5 for d in on_frame)  # 不出图框
+
+
+def test_gear_views_balanced():
+    p = resolve_part(PartSpec.model_validate(GEAR))
+    plan = plan_part_drawing(DrawingSpec(model="GR1"), p)
+    W, H = plan.sheet_size
+    f = plan.views[0]
+    assert H - 10 - (f.origin_on_sheet[1] + f.size_mm[1] / 2) > 40  # 不再贴着上边

@@ -56,9 +56,16 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     W, H = SHEETS[sheet]
     sc = scale
     x0 = MARGIN + GAP + 20  # 左侧留给 Φda、Φd 两道竖直尺寸
-    cy = H - MARGIN - GAP / 2 - da * sc / 2 - 12
-    main = ViewPlan("front", sc, (b * sc, da * sc), (x0 + b * sc / 2, cy))
+    cy = H - MARGIN - GAP / 2 - da * sc / 2 - 12  # 上方留给齿顶圆跳动框格
     ex = x0 + b * sc + GAP + 10 + da * sc / 2
+    # 上下留白均匀：下方（视图下沿再留 26 mm 给齿宽尺寸/引线）空余的一半让给上方；左视图横向伸进右侧
+    # 技术要求/标题栏一列时，下沿不低于该栏顶部
+    n_notes = len(_notes_and_title(spec, p, sheet, scale, today)[0])
+    lim = (5 + 56 + 14 + 5 * n_notes + 6 + 16 + 4) if ex + da * sc / 2 + 16 > W - 5 - 180 else MARGIN + 2
+    free = cy - da * sc / 2 - 26 - lim
+    if free > 4:
+        cy -= round(free / 2, 1)
+    main = ViewPlan("front", sc, (b * sc, da * sc), (x0 + b * sc / 2, cy))
     end = ViewPlan("left", sc, (da * sc, da * sc), (ex, cy))
     views = [main, end]
 
