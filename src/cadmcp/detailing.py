@@ -1215,6 +1215,13 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
+    # 直径文字带极限偏差放不进该段（竖写长于直径）而只注公差带代号放得下 → 只注代号（GB/T 4458.5 允许）
+    p._dia_code_only = set()
+    for j_, (L_, d_) in enumerate(p.shaft_steps):
+        z_ = p.step_z(j_)
+        room_ = shaft_text_room(p, (z_[0] + z_[1]) / 2, d_) * scale - 2
+        if text_width(_shaft_dia_label(p, j_), 3.5) > room_ >= text_width(_shaft_dia_label(p, j_, False), 3.5):
+            p._dia_code_only.add(j_)
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
     cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8 - extra_top
@@ -1274,7 +1281,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             if gr is not None:  # 齿轮段：直径 = 齿顶圆，按齿顶圆公差带注偏差
                 tol = p.gear["tip_tolerance"]
             # 螺纹段：螺纹代号注在大径上替代 Φ（GB/T 4459.1）
-            dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(d, tol, spec.fit_deviations),
+            dims.append(Dim("front", "diameter", None, d, th["callout"] if th else _dia_text(
+                d, tol, spec.fit_deviations and i not in getattr(p, "_dia_code_only", ())),
                             f"step{i}_dia",
                             (z + L / 2, d)))
             if len(p.shaft_steps) > 1:
@@ -2478,7 +2486,7 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     tj = p.shaft_tolerances[j] if p.shaft_tolerances else None
     if p.gear and any(f["kind"] == "gear" and f["step"] == j for f in p.shaft_features):
         tj = p.gear["tip_tolerance"]
-    return _dia_text(p.shaft_steps[j][1], tj, deviations)
+    return _dia_text(p.shaft_steps[j][1], tj, deviations and j not in getattr(p, "_dia_code_only", ()))
 
 
 def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float, with_dims: bool) -> list[Dim]:
