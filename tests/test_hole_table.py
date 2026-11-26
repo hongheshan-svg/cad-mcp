@@ -109,3 +109,15 @@ def test_polygon_profile_dims_and_callout_anchor_choice():
     slot = next(d for d in plan.dims if d.kind == "callout" and "腰型孔" in d.text)
     lb = slot.extra["label"]
     assert lb["anchor"] != lb["elbow"]
+
+
+def test_callout_with_attached_gtol_keeps_instance():
+    from test_core import PLATE_PRECISION
+
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir.resolve import resolve_part
+    p = resolve_part(PartSpec.model_validate(PLATE_PRECISION))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    co = next(d for d in plan.dims if d.kind == "callout" and d.ref == "Pin")
+    g = next(d for d in plan.dims if d.kind == "gtol" and d.ref.endswith("hole:Pin"))
+    assert co.at == g.at   # 位置度框格挂在孔标注下方，必须是同一个孔

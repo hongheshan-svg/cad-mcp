@@ -94,7 +94,11 @@ def general_roughness(s, x, y, ra_text):
 def draw(s, kind, px, py, extra, text):
     n = tuple(extra.get("normal", (0, 1))) if extra else (0, 1)
     if kind == "gtol" and extra and extra.get("attach") == "callout":
-        fcf_box(s, px + 12, py + 9, extra["cells"])  # 孔标注横线起点 (px+12, py+9)
+        lb = extra.get("callout_label")  # 孔标注的引线布置：框格顶边贴着标注横线，左端对齐文字
+        if lb:
+            fcf_box(s, min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1], extra["cells"])
+        else:
+            fcf_box(s, px + 12, py + 9, extra["cells"])  # 无布置信息：孔标注横线起点 (px+12, py+9)
     elif kind == "datum":
         datum(s, px, py, n, text)
     elif kind == "gtol":

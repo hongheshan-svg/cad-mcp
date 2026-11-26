@@ -1122,18 +1122,26 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         cx, cy = v.origin_on_sheet
         anchors = [d.at] if d.at is not None else [None]
         h_ = next((h for h in (part.holes if part is not None else []) if h.name == d.ref), None)
-        if d.kind == "callout" and h_ is not None and not h_.circular and v.type in VIEW_AXES \
-                and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):
+        tied = any(d2.kind in ("gtol", "roughness", "datum") and d2.ref.endswith(f"hole:{d.ref}") for d2 in plan.dims)
+        if d.kind == "callout" and h_ is not None and not h_.circular and not tied and v.type in VIEW_AXES \
+                and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):  # 孔上挂了公差框格/粗糙度时不换实例
             ha_, va_ = VIEW_AXES[v.type]  # 多个同规格孔：引线可指向任一个，取最好放的
             anchors += [(vc(i.xyz, ha_), vc(i.xyz, va_)) for i in h_.instances[1:]]
         tw = _tw(d.text) + 1
+        frame = next((d2 for d2 in plan.dims if d2.kind == "gtol" and (d2.extra or {}).get("attach") == "callout"
+                      and d2.ref.endswith(f"hole:{d.ref}")), None)
+        below = 0.0
+        if frame is not None:  # 孔标注下方挂位置度框格：占位一并计入
+            cells = frame.extra.get("cells", ["", "", ""])
+            fw = 7.0 + max(7.0, len(cells[1]) * 2.2 + 3) + 6.0 * len(cells[2:]) if len(cells) > 1 else 14.0
+            tw, below = max(tw, fw + 1), 6.5
         best = None
         for at_ in anchors:
             if at_ is not None:
                 ax, ay = _uv_sheet(v, bbox, at_)
             else:
                 ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
-            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders)
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below)
         _, ex, ey, dirn, box, at_, ax, ay = best
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
@@ -1144,13 +1152,14 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                                                  "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
 
 
-def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders):
+def _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below: float = 0.0):
     """引出标注一个锚点的 8 方向 × 6 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。"""
     for L in (10, 16, 24, 34, 46, 60):
         for ang in (45, 135, -45, -135, 25, 155, -25, -155):
             ex, ey = ax + L * math.cos(math.radians(ang)), ay + L * math.sin(math.radians(ang))
             dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
-            box = (ex, ey - 0.5, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else (ex - tw, ey - 0.5, ex, ey + LABEL_H + 0.5)
+            box = (ex, ey - 0.5 - below, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else \
+                (ex - tw, ey - 0.5 - below, ex, ey + LABEL_H + 0.5)
             cost = L * 1.5
             if box[0] < 8 or box[2] > W - 8 or box[1] < 8 or box[3] > H - 8:
                 cost += 5000
@@ -1188,8 +1197,9 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if d.kind == "gtol" and (d.extra or {}).get("attach") == "callout":
             hole = d.ref.split("@hole:")[-1]
             lb = labels.get(hole)
-            if lb:  # 框格放在孔标注文字下方
-                pos = (lb["text_at"][0], lb["text_at"][1] - 7.5)
+            if lb:  # 框格放在孔标注文字下方（顶边贴标注横线，左端对齐文字）
+                pos = (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 6.0)
+                d.extra = {**(d.extra or {}), "callout_label": lb}
         d.extra = {**(d.extra or {}), "sheet_at": (round(ax, 2), round(ay, 2)), "sheet_pos": (round(pos[0], 2), round(pos[1], 2))}
 
 
