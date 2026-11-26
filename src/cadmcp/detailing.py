@@ -623,6 +623,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan.extra_findings += view_infos
     plan.revisions = list(spec.revisions)
     _plan_sections(plan, spec, p)
+    _hole_ra_to_section(plan, p)
     if spec.dimensions != "none":
         pitch_dim_sheet(plan, p)
         place_labels(plan, p.bbox, part=p)
@@ -800,6 +801,47 @@ def _hole_table(dims: list[Dim], p: ResolvedPart, views: list[ViewPlan], spec: D
     dims.append(Dim(view, "origin", None, None, "X0 Y0", f"origin:{view}", o,
                     {"sheet_at": tuple(round(c, 2) for c in _uv_sheet(vp, b, o))}))
     return rows, view
+
+
+def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """孔壁表面结构：孔被全剖/阶梯剖视图剖开且孔径够放符号时，改标在剖视图的孔壁上
+    （符号在孔腔内、尖端触孔壁，GB/T 131 常规注法），不再挤在孔所在面视图的孔旁。"""
+    from .section import AX, FRAME, hole_profile
+    vscale = {v.type: v.scale for v in plan.views}
+    for sec in plan.sections:
+        if sec.kind not in ("full", "step") or sec.view not in VIEW_AXES:
+            continue
+        hi_, di_ = AX[FRAME[sec.view][0]], AX[FRAME[sec.view][1]]
+        ha, va = VIEW_AXES[sec.view]
+        for d in plan.dims:
+            if d.kind != "roughness" or not d.ref.startswith("ra:hole:"):
+                continue
+            h = next((x for x in p.holes if x.name == d.ref[len("ra:hole:"):]), None)
+            if h is None or h.slot or h.face not in ("top", "bottom"):
+                continue
+            r = h.drill / 2
+            cut = [(abs(i.xyz[di_] - d_), i, d_) for i in h.instances for h0, h1, d_ in sec.path
+                   if h0 - 1e-6 <= i.xyz[hi_] <= h1 + 1e-6 and abs(i.xyz[di_] - d_) < r * 0.5]
+            if not cut:
+                continue
+            dist, inst, dcut = min(cut, key=lambda c: c[0])
+            half = math.sqrt(r * r - dist * dist)
+            need = 8.0 + 2 * 4.2 * 0.58 + len(d.text) * 2.0 + 3
+            if 2 * half * vscale.get(sec.view, 1.0) < need:
+                continue
+            prof = hole_profile(h)
+            depths = [dd for dd, rr in prof if abs(rr - r) < 1e-6]
+            zmid_depth = (min(depths) + max(depths)) / 2 if depths else h.depth / 2
+            walls = []
+            for sgn in (-1, 1):
+                q = list(inst.xyz)
+                q[hi_] += sgn * half
+                q[di_] = dcut
+                q[2] += -inst.normal[2] * zmid_depth
+                walls.append((vc(tuple(q), ha), vc(tuple(q), va)))
+            u, w = min(walls)
+            d.view, d.at = sec.view, (round(u, 6), round(w, 6))
+            d.extra = {**(d.extra or {}), "normal": (1, 0), "in_section": sec.label}
 
 
 def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:
@@ -1236,7 +1278,7 @@ def _ra_box(x, y, nx, ny, text, reach=None):
     return (min(x, sx - 3), min(y, sy - 1), max(x, sx + 7 + len(text) * 2.0), max(y, sy + 9))
 
 
-def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part, hard=()) -> None:
+def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part, hard=(), feat=()) -> None:
     """孔的表面结构默认在孔左侧；标注排完后选边：不被任何引线穿过、不压已放标注文字的一侧（左侧优先）。"""
     if part is None:
         return
@@ -1258,6 +1300,7 @@ def _flip_hole_roughness(plan: "DrawingPlan", vmap, bbox, part, hard=()) -> None
             n += sum(1 for lb in lbs if _box_hit(rb, (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 1,
                                                        max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + LABEL_H)) > 0)
             n += sum(1 for hb in hard if _box_hit(rb, hb) > 0)  # 总体尺寸带、其他文字
+            n += sum(1 for fb in feat if _box_hit(rb, fb) > 0)  # 别的孔、型腔（符号不压图形）
             return n
         at2 = (d.at[0] + h.max_dia, d.at[1])
         if bad(d.at, -1) and bad(at2, 1) < bad(d.at, -1):
@@ -1302,7 +1345,8 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
     for d in plan.dims:  # 精度符号大致占位
         if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap \
                 and (d.extra or {}).get("attach") != "callout" \
-                and not d.ref.startswith("ra:hole:"):  # 挂在孔标注下的框格随标注摆放（below 计入）；孔的 Ra 排完后选边
+                and not (d.ref.startswith("ra:hole:") and not (d.extra or {}).get("in_section")):
+            # 挂在孔标注下的框格随标注摆放（below 计入）；孔的 Ra 排完后选边（标在剖视图孔壁上的照常占位）
             x, y = _uv_sheet(vmap[d.view], bbox, d.at)
             nx, ny = (d.extra or {}).get("normal", (0, 1))
             if d.kind == "roughness" and (nx, ny) != (0, 1):  # 同 render_gdt.roughness：引出 8 mm 后画符号
@@ -1408,7 +1452,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                                                  "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
                                                  "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn,
                                                  **({"on_edge": True} if rr >= 5 else {})}}
-    _flip_hole_roughness(plan, vmap, bbox, part, hard)
+    _flip_hole_roughness(plan, vmap, bbox, part, hard, feat)
 
 
 def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0):

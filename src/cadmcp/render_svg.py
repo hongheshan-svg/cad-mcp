@@ -825,6 +825,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             if FACE_AXIS[h.face] != FACE_AXIS.get(v.type):
                 continue
             hid = HIDDEN if (h.face != v.type and not h.through) else None  # 背面盲孔不可见：细虚线
+            if h.circular and not (sec is not None and sec.kind in ("full", "step")):  # 分布圆：细点画线圆
+                cc = h.circular
+                cpt = V(face_point(h.face, (cc["center_u"], cc["center_v"]), box, h.at))
+                s.circle(*cpt, cc["pcd"] / 2 * sc, 0.18, "4,1,1,1")
             for inst in h.instances:
                 c = V(inst.xyz)
                 if sec is not None and sec.kind in ("full", "step"):

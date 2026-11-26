@@ -215,3 +215,21 @@ def test_through_hole_walls_stop_at_cut_pocket():
             for k in range(1, 20):  # 沿线段采样：不得有点落在型腔空腔内部
                 x, z = a[0] + (b[0] - a[0]) * k / 20, a[2] + (b[2] - a[2]) * k / 20
                 assert not (-50 + 1e-6 < x < 50 - 1e-6 and zlo + 1e-6 < z < zlo + 10 - 1e-6), (a, b)
+
+
+def test_hole_roughness_moves_to_section_wall():
+    """大孔孔壁的表面结构：孔被剖开时标在剖视图孔壁上（符号朝孔腔内），俯视图孔旁不再放。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate({
+        "name": "FLx", "part_no": "FLx", "title": "板", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 160, "height": 100}, "thickness": 20},
+        "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 60, "tolerance": "H7", "positions": [[0, 0]]}],
+        "roughness": [{"target": "hole:Bore", "ra": 0.8}]}))
+    plan = plan_part_drawing(DrawingSpec(model="FLx"), p)
+    ra = next(d for d in plan.dims if d.ref == "ra:hole:Bore")
+    assert ra.view == "front" and ra.extra["normal"] == (1, 0) and ra.extra.get("in_section")
+    assert abs(ra.at[0] - (-30)) < 1e-6 and 0 < ra.at[1] < 20
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
