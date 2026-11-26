@@ -162,8 +162,7 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
     if p.base_type == "extrude":
         ops.append(NativeOp("sketch_on_plane", {"sketch": "SK_Base", "plane": "Front Plane"}))
         ops += _profile_ops(p.profile, "SK_Base")
-        ops.append(NativeOp("dimension_profile", {"sketch": "SK_Base", "links": _base_links(base)},
-                            "加尺寸并用方程式链接全局变量"))
+        ops.append(_dimension_profile_op(p.profile, base))
         ops.append(NativeOp("extrude_boss", {"feature": "Base", "sketch": "SK_Base", "depth": p.thickness,
                                              "depth_equation": to_sw_equation(base.thickness)}))
     elif p.base_type == "shaft":
@@ -199,14 +198,20 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
     else:  # sheet_metal
         ops.append(NativeOp("sketch_on_plane", {"sketch": "SK_Base", "plane": "Front Plane"}))
         ops += _profile_ops(p.profile, "SK_Base")
+        ops.append(_dimension_profile_op(p.profile, base))
         ops.append(NativeOp("sheet_metal_base_flange", {"feature": "Base-Flange", "sketch": "SK_Base",
                                                         "thickness": p.thickness,
                                                         "bend_radius": p.bends[0]["radius"] if p.bends else p.thickness,
                                                         "k_factor": base.k_factor}))
         for i, b in enumerate(p.bends):
-            ops.append(NativeOp("sheet_metal_edge_flange", {"feature": f"Edge-Flange{i + 1}", "edge": b["edge"],
-                                                            "length": b["length"], "angle": b["angle"],
-                                                            "radius": b["radius"], "length_type": "outer_virtual_sharp"}))
+            ops.append(NativeOp("sheet_metal_edge_flange", {
+                "feature": f"Edge-Flange{i + 1}", "edge": b["edge"], "edge_point": list(b["edge_point"]),
+                "length": b["length"], "angle": b["angle"], "radius": b["radius"], "direction": b["direction"],
+                "expect_z": list(b["expect_z"]) if b["expect_z"] else None, "length_type": "outer_virtual_sharp"},
+                "按底板边线中点选边 → InsertSheetMetalEdgeFlange2（材料在内、外部虚拟交点长度）→ 回读包围盒核对方向/高度"))
+        if p.bends:
+            ops.append(NativeOp("check_body_extent", {"axis": "z", "expect": [p.bbox.zmin, p.bbox.zmax]},
+                                "翻边后实体 Z 向范围应与规划包围盒一致（方向/长度类型核对）"))
 
     for b in p.bosses:
         sk = f"SK_{b['name']}"
@@ -283,12 +288,21 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
     return ops
 
 
+def _dimension_profile_op(profile, base) -> NativeOp:
+    from ...sketch_plan import profile_dimension_plan
+    plan = profile_dimension_plan(profile, _base_links(base))
+    return NativeOp("dimension_profile", {"sketch": "SK_Base", **plan},
+                    "加几何关系 + 驱动尺寸使草图完全定义；含全局变量的尺寸用方程式链接（规划见 sketch_plan.py）")
+
+
 def _base_links(base) -> dict[str, str]:
     links = {"thickness": to_sw_equation(base.thickness)}
     prof = base.profile
     for k in ("width", "height", "diameter", "length", "corner_radius"):
         if hasattr(prof, k):
             links[k] = to_sw_equation(getattr(prof, k))
+    if hasattr(prof, "points"):
+        links["points"] = [[to_sw_equation(c) for c in pt] for pt in prof.points]
     return links
 
 

@@ -568,9 +568,16 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             # 展开图上折弯中心线位置（展开坐标 = 底板坐标延伸）
             line = {"front": ("v", v0 + ossb - ba / 2), "back": ("v", v1 - ossb + ba / 2),
                     "left": ("u", u0 + ossb - ba / 2), "right": ("u", u1 - ossb + ba / 2)}[f.edge]
+            # 翻边所在的底板边线中点（模型坐标）：向上翻取顶面（z=t）边线，向下翻取底面（z=0）边线；CAD 适配器按此选边
+            um, vm = (u0 + u1) / 2, (v0 + v1) / 2
+            ez = t if f.direction == "up" else 0.0
+            edge_point = {"front": (um, v0, ez), "back": (um, v1, ez), "left": (u0, vm, ez), "right": (u1, vm, ez)}[f.edge]
+            # 90° 翻边完成后零件 Z 向范围（外形尺寸：翻边外表面到底板另一面 = L）
+            expect_z = ((0.0, L) if f.direction == "up" else (-(L - t), t)) if abs(ang - 90) < 1e-9 else None
             bends.append({"edge": f.edge, "angle": ang, "radius": r, "length": L, "bend_allowance": round(ba, 3),
                           "direction": f.direction, "flat_axis": line[0], "flat_pos": round(line[1], 3),
-                          "k_factor": base.k_factor})
+                          "k_factor": base.k_factor, "edge_point": tuple(round(c, 6) for c in edge_point),
+                          "expect_z": expect_z})
         flat = (fu1 - fu0, fv1 - fv0)
         flat_box = (fu0, fu1, fv0, fv1)
     elif isinstance(base, WeldmentBase):

@@ -26,6 +26,8 @@ ARITY = {
     "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader
     "AddDimension2": 3, "AddDimension2().SetText": 2,  # native_shaft_dims
     "AddDimension2().SetArcEndCondition": 2, "CreateSectionViewAt5().RemoveAlignment": 0,  # shaft removed sections
+    "SketchAddConstraints": 1, "SetUserPreferenceToggle": 2, "GetUserPreferenceToggle": 1,
+    "GetConstrainedStatus": 0, "InsertSheetMetalEdgeFlange2": 14, "GetSelectedObject6": 2,  # sw-sheetmetal
     "InsertCosmeticThread3": 8, "InsertRefPlane": 6, "InsertAxis2": 1, "InsertReferencePoint": 4, "FeatureFillet3": 12, "InsertFeatureChamfer": 8, "GetBodies2": 2,  # sw-cosmetic-refs
     "CreateCoordinateSystemUsingNumericalValues": 8, "AddMate5": 15, "FixComponent": 0,  # sw-asm-mates
 }
@@ -84,6 +86,8 @@ class FakeMethod(Fake):
                "GetTitle": "doc", "RevisionNumber": "32.1.0", "SetUserPreferenceInteger": True,
                "Select2": True, "Add2": 0, "GetCount": 0, "GetNames": None, "SetSystemValue3": 0,
                "GetDocumentDependencies2": [], "GetType": 0, "AutoDimension": 0, "GetMaterialPropertyName2": ("6061-T6 (SS)", "SOLIDWORKS Materials")}
+        if name == "GetConstrainedStatus":  # 假草图总是"完全定义"
+            return FakeConstants().swConstrainedStatus_FullyConstrained
         if name in ret:
             return ret[name]
         return Fake(root, self._path + "()")
