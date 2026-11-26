@@ -138,6 +138,14 @@ def _check_precision(p: ResolvedPart) -> list[Finding]:
             out.append(_f("G005", "error", tgt, "公差以自身为基准", "改用其他基准"))
     # 配合轴段/孔的粗糙度：IT6/IT7 配合面必须标细粗糙度
     ra_of = {r["target"]: r["ra"] for r in p.roughness}
+    for h in p.holes:  # 配合孔（H7 等）
+        digits = "".join(ch for ch in (h.tolerance or "") if ch.isdigit())
+        need = IT_GRADE_RA.get(int(digits)) if digits else None
+        got = ra_of.get(f"hole:{h.name}")
+        if need and (got is None or got > need):
+            out.append(_f("G004", "warning", f"hole:{h.name}",
+                          f"{h.name} 为 {h.tolerance} 配合孔，粗糙度{'未标注' if got is None else f' Ra{got:g} 偏粗'}",
+                          f"在 roughness 中加 {{'target': 'hole:{h.name}', 'ra': {need:g}}}"))
     for i, tol in enumerate(p.shaft_tolerances):
         if not tol:
             continue

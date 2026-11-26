@@ -221,3 +221,16 @@ PLATE_PRECISION = {
                    {"type": "position", "value": 0.05, "target": "hole:Pin", "datums": ["A", "B"]}],
     "roughness": [{"target": "face:top", "ra": 1.6}, {"target": "hole:Pin", "ra": 1.6}],
 }
+
+
+def test_shaft_section_letters_skip_datums():
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate(SHAFT))
+    plan = plan_part_drawing(DrawingSpec.model_validate({"model": "SH1"}), p)
+    labels = [v.label for v in plan.views if v.type == "section"]
+    assert labels == ["C-C", "D-D"]                        # 基准已占用 A、B
+    # 基准 A 不放在键槽剖切线处
+    da = next(d for d in plan.dims if d.ref == "datum:A")
+    kw1 = p.shaft_features[0]
+    assert abs(da.at[0] - (kw1["z0"] + kw1["z1"]) / 2) > 5

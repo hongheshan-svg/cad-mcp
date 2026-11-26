@@ -43,3 +43,8 @@ def test_calc_report_in_session(svc):
     assert r["library_matches"] == ["CYL-SC32x50"]
     md = open(r["report"], encoding="utf-8").read()
     assert "计算书" in md and "D = √(4F" in md
+
+
+def test_calc_matches_library_servo(svc):
+    r = svc.calc("screw_drive", {"load_kg": 25, "stroke_mm": 300, "speed_mm_s": 400})
+    assert r["library_matches"] == ["SRV-60-200W"]

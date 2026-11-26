@@ -132,6 +132,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             # 在该轴段中找离键槽/环槽最远的位置
             cands = [z0 + (z1 - z0) * k / 20 for k in range(2, 19)]
             zz = max(cands, key=lambda z: (min(min([abs(z - (a + b) / 2) - (b - a) / 2 for a, b in busy] or [1e9]), 4.0),
+                                           min(z, Ltot - z) > c + 2,  # 避开端部倒角
                                            -abs(z - (z0 + z1) / 2)))
             x = P(zz, 0)[0]
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text)

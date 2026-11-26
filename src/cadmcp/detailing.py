@@ -286,6 +286,10 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         z0, z1 = p.step_z(i)
         d = p.shaft_steps[i][1]
         frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
+        if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号（剖切线在键槽中点）
+            cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
+            if cuts:
+                frac = max((0.5, 0.2, 0.8), key=lambda t: min(abs(z0 + t * (z1 - z0) - c) for c in cuts))
         return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
 
     for d in p.datums:
@@ -451,8 +455,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8
     views = [ViewPlan("front", scale, (Ltot * scale, D * scale), (x0 + Ltot * scale / 2, cy_main))]
     cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
+    # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
+    used = {d["name"] for d in p.datums} | {"I", "O"}
+    letters = [c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in used]
     for i, f in enumerate(kws):
-        label = f"{chr(65 + i)}-{chr(65 + i)}"
+        label = f"{letters[i]}-{letters[i]}"
         zc = (f["z0"] + f["z1"]) / 2
         views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (x0 + zc * scale, cy_sec),
                               label=label, target=f["name"]))

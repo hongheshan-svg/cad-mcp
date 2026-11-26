@@ -51,6 +51,57 @@ items:
       holes: {kind: circular, radius: 35, count: 4, start_angle: 45}
       pilot: 50
       pilot_tolerance: H7
+  - code: SRV-40-100W
+    title: 交流伺服电机 100W 40法兰
+    category: purchased
+    vendor: generic
+    model: SRV40-100W
+    mass_kg: 0.5
+    bbox: [-20, 20, -20, 20, -80, 25]
+    references:
+      CS_Flange: {origin: [0, 0, 0]}
+      AX_Shaft: {origin: [0, 0, 0], direction: [0, 0, 1]}
+    properties: {额定扭矩: "0.32 N·m", 额定转速: "3000 rpm"}
+    mount:  # 40 法兰：4-Φ4.5 PCD46，止口 Φ30h7
+      frame: CS_Flange
+      screw: M4
+      holes: {kind: circular, radius: 23, count: 4, start_angle: 45}
+      pilot: 30
+      pilot_tolerance: H7
+  - code: SRV-60-200W
+    title: 交流伺服电机 200W 60法兰
+    category: purchased
+    vendor: generic
+    model: SRV60-200W
+    mass_kg: 0.9
+    bbox: [-30, 30, -30, 30, -90, 30]
+    references:
+      CS_Flange: {origin: [0, 0, 0]}
+      AX_Shaft: {origin: [0, 0, 0], direction: [0, 0, 1]}
+    properties: {额定扭矩: "0.64 N·m", 额定转速: "3000 rpm"}
+    mount:
+      frame: CS_Flange
+      screw: M5
+      holes: {kind: circular, radius: 35, count: 4, start_angle: 45}
+      pilot: 50
+      pilot_tolerance: H7
+  - code: SRV-80-750W
+    title: 交流伺服电机 750W 80法兰
+    category: purchased
+    vendor: generic
+    model: SRV80-750W
+    mass_kg: 2.3
+    bbox: [-40, 40, -40, 40, -140, 35]
+    references:
+      CS_Flange: {origin: [0, 0, 0]}
+      AX_Shaft: {origin: [0, 0, 0], direction: [0, 0, 1]}
+    properties: {额定扭矩: "2.39 N·m", 额定转速: "3000 rpm"}
+    mount:  # 80 法兰：4-Φ6.6 PCD90，止口 Φ70h7
+      frame: CS_Flange
+      screw: M6
+      holes: {kind: circular, radius: 45, count: 4, start_angle: 45}
+      pilot: 70
+      pilot_tolerance: H7
   - code: LGR-15
     title: 直线导轨 15
     category: purchased
