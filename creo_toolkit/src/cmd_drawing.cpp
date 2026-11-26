@@ -17,6 +17,8 @@ extern "C" {
 #include <ProSelection.h>
 #include <ProModelitem.h>
 #include <ProXsec.h>
+#include <ProAxis.h>
+#include <ProAnnotation.h>
 #include <ProArray.h>
 #include <ProUtil.h>
 #include <ProDrawingView.h>
@@ -887,6 +889,34 @@ json cmd_drw_readback(const json& a) {
     return out;
 }
 
+ProError axis_collect(ProAxis axis, ProError /*status*/, ProAppData data) {
+    static_cast<std::vector<ProAxis>*>(data)->push_back(axis);
+    return PRO_TK_NO_ERROR;
+}
+
+// drw.show_axes：在视图中显示零件的基准轴（孔、圆柱的中心线，GB 孔须画中心线）。
+// TODO(实机核对): ProAnnotationShow 对 PRO_AXIS 模型项是否有效（Creo 7/9/10）；
+//   不行时改用"显示模型注释"对应的 API，或在 drawing setup 打开 show_axes_for_extr_arcs。
+json cmd_drw_show_axes(const json& a) {
+    ProDrawing d = find_drawing(arg_str(a, "drawing"));
+    std::string vname = arg_str(a, "view");
+    ProView view = find_view(d, vname);
+    ProSolid solid = nullptr;
+    check(ProDrawingViewSolidGet(d, view, &solid), "ProDrawingViewSolidGet");
+    std::vector<ProAxis> axes;
+    // TODO(实机核对): ProSolidAxisVisit(solid, visit, filter, data)
+    ProSolidAxisVisit(solid, (ProAxisVisitAction)axis_collect, nullptr, &axes);
+    int shown = 0, failed = 0;
+    for (ProAxis ax : axes) {
+        int id = -1;
+        if (ProAxisIdGet(ax, &id) != PRO_TK_NO_ERROR) { ++failed; continue; }
+        ProModelitem mi;
+        if (ProModelitemInit((ProMdl)solid, id, PRO_AXIS, &mi) != PRO_TK_NO_ERROR) { ++failed; continue; }
+        if (ProAnnotationShow((ProAnnotation*)&mi, nullptr, view) == PRO_TK_NO_ERROR) ++shown; else ++failed;
+    }
+    return json{{"view", vname}, {"axes", (int)axes.size()}, {"shown", shown}, {"failed", failed}};
+}
+
 }  // namespace
 
 void register_drawing_cmds() {
@@ -900,6 +930,7 @@ void register_drawing_cmds() {
     register_cmd("drw.removed_section", cmd_drw_removed_section);
     register_cmd("drw.balloon", cmd_drw_balloon);
     register_cmd("drw.readback", cmd_drw_readback);
+    register_cmd("drw.show_axes", cmd_drw_show_axes);
 }
 
 }  // namespace cadmcp

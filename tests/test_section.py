@@ -264,3 +264,17 @@ def test_sw_center_marks_after_section_views():
     if "section_cut" in names or "section_view" in names:
         last_sec = max(i for i, n in enumerate(names) if n in ("section_cut", "section_view"))
         assert names.index("center_marks") > last_sec
+
+
+def test_creo_show_axes_per_view():
+    """Creo TOOLKIT 出图：每个正投影视图显示基准轴（孔中心线）。"""
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    p = resolve_part(PartSpec.model_validate({
+        "name": "CA", "part_no": "CA", "title": "板", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 100, "height": 60}, "thickness": 10},
+        "features": [{"feature": "hole", "name": "P", "type": "simple", "size": 8, "positions": [[0, 0]]}]}))
+    ops = tk_detail_ops(plan_part_drawing(DrawingSpec(model="CA"), p))
+    views = {o.args["view"] for o in ops if o.op == "tk.drw.show_axes"}
+    assert "V_TOP" in views and not any("ISO" in v for v in views)

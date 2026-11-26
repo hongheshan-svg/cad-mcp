@@ -413,3 +413,5 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
   `swCenterMarkConnectionLine_e` 后告诉我们。
 - 孔壁粗糙度：大孔被剖开时 `surface_finish` 的 `sheet_at` 落在剖视图孔壁上，检查符号是否附着到孔壁边线、方向朝孔内。
 - 钣金展开图：`overall_dimension` 的 `flat_bend0/1` 一端选外轮廓边、一端选折弯线，检查能否选中折弯线（草图线）。
+- Creo `drw.show_axes`：每个正投影视图应显示孔/圆柱的基准轴（中心线）。核对 `ProSolidAxisVisit` 与
+  `ProAnnotationShow`（PRO_AXIS 模型项）在 Creo 7/9/10 的可用性；应答 `failed > 0` 时把 oplog 发回。

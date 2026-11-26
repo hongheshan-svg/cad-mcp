@@ -245,6 +245,10 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 "垂直轴线的剖截面 + 只显示切面"))
         elif v.type == "flat_pattern":
             skip("钣金展开图")
+    for v in plan.views:  # 孔/圆柱中心线：显示零件基准轴（轴类主视图也要轴线）
+        if v.type in ("iso", "flat_pattern", "section") or plan.model_kind != "part":
+            continue
+        ops.append(NativeOp("tk.drw.show_axes", {"drawing": D, "view": view_name(v.type)}, "显示基准轴（孔中心线）"))
 
     for d in plan.dims:
         ex = d.extra or {}
