@@ -26,6 +26,7 @@ ARITY = {
     "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader
     "AddDimension2": 3, "AddDimension2().SetText": 2,  # native_shaft_dims
     "InsertCosmeticThread3": 8, "InsertRefPlane": 6, "InsertAxis2": 1, "InsertReferencePoint": 4, "FeatureFillet3": 12, "InsertFeatureChamfer": 8, "GetBodies2": 2,  # sw-cosmetic-refs
+    "CreateCoordinateSystemUsingNumericalValues": 8, "AddMate5": 15, "FixComponent": 0,  # sw-asm-mates
 }
 
 

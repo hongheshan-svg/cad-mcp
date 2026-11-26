@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ...errors import CAPABILITY_UNSUPPORTED, CadError
 
+from ...ir.assembly_resolve import euler_xyz, identity, matmul, ref_frame, same_frame
 from ...ir.part import PartSpec
 from ...ir.resolve import ResolvedPart
 from ..native import NativeOp, to_sw_equation
@@ -300,6 +301,7 @@ def compile_assembly(spec, asm, component_files: dict[str, str], library_root: s
     ops.append(NativeOp("set_custom_properties", {"properties": {"PartNo": spec.part_no, "Description": spec.title,
                                                                  **spec.properties}}))
     comps = {c.id: c for c in spec.components}
+    by_id = {i.id: i for i in asm.instances}
     for inst in asm.instances:
         c = comps[inst.component]
         kind, _, ref = c.source.partition(":")
@@ -314,11 +316,20 @@ def compile_assembly(spec, asm, component_files: dict[str, str], library_root: s
             ops.append(NativeOp("fix_component", {"instance": inst.id}))
         elif c.place is not None:
             tgt, _, tref = c.place.to.partition(".")
+            tinst = None if tgt == "ASM" else (tgt if tgt in by_id else f"{tgt}#1")
+            # 组件 align 坐标系的世界位姿 W 与目标坐标系的世界位姿 T；不重合（有 offset/rotate 或阵列副本）时
+            # 在装配中按 W 建参考坐标系 MC_<实例>，再与组件坐标系做坐标系重合配合。
+            W = matmul(inst.transform, ref_frame(inst.source.references[c.place.align]))
+            T = identity() if tinst is None else matmul(by_id[tinst].transform,
+                                                         ref_frame(by_id[tinst].source.references[tref]))
+            frame = None
+            if not same_frame(W, T):
+                frame = {"name": "MC_" + inst.id.replace("#", "_"), "origin": [round(W[i][3], 6) + 0.0 for i in range(3)],
+                         "rotate_deg": list(euler_xyz(W))}
             ops.append(NativeOp("mate_coordinate", {
-                "instance": inst.id, "ref": c.place.align,
-                "target_instance": None if tgt == "ASM" else (tgt if tgt in {i.id for i in asm.instances} else f"{tgt}#1"),
-                "target_ref": tref, "offset": list(c.place.offset), "rotate": list(c.place.rotate),
-                "fallback": "fix_at_transform"}))
+                "instance": inst.id, "ref": c.place.align, "target_instance": tinst, "target_ref": tref,
+                "frame": frame, "fallback": "fix_at_transform"},
+                "坐标系重合配合" + ("（经装配参考坐标系 " + frame["name"] + "：偏移/旋转/阵列）" if frame else "")))
     ops.append(NativeOp("rebuild", {"force": True}))
     ops.append(NativeOp("collect_feature_errors", {}))
     ops.append(NativeOp("interference_check", {}, "InterferenceDetectionManager"))

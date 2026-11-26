@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ...errors import CAPABILITY_UNSUPPORTED, NATIVE_ERROR, TARGET_UNAVAILABLE, CadError
+from ...errors import NATIVE_ERROR, TARGET_UNAVAILABLE, CadError
 from ...versioning import SW_PROGID, sw_version_from_revision
 from ..base import CAPABILITIES, BuildResult, CadAdapter
 from .compile import compile_assembly, compile_drawing, compile_part
@@ -214,7 +214,19 @@ class SolidWorksAdapter(CadAdapter):
         return {"kind": {".SLDPRT": "part", ".SLDASM": "assembly", ".SLDDRW": "drawing"}[ext], "name": doc.GetTitle()}
 
     def regenerate(self, path: Path) -> dict[str, Any]:
-        raise CadError(CAPABILITY_UNSUPPORTED, "P1: ForceRebuild3 on opened document")
+        """打开文档 → ForceRebuild3 → 遍历特征 GetErrorCode2；返回 {status, errors, warnings}（与 Creo/mock 一致）。"""
+        from ..native import NativeOp
+        ex, res = self._edit_run(path, [NativeOp("rebuild", {"force": True}), NativeOp("collect_feature_errors", {})],
+                                 "regen")
+        fe, fw = ex.readback.get("feature_errors", []), ex.readback.get("feature_warnings", [])
+        errors = [f"{e['feature']}: error {e['code']}" for e in fe]
+        warnings = [f"{w['feature']}: warning {w['code']}" for w in fw]
+        if res["status"] == "errors" and not errors:  # 打开/重建本身失败
+            failed = [r for r in res["log"] if not r["ok"]]
+            errors = [f"{r['op']}: {r['error']}" for r in failed[-1:]]
+        status = "errors" if errors else ("warnings" if warnings else "ok")
+        return {"status": status, "errors": errors, "warnings": warnings,
+                "oplog": str(path.parent / f"{path.stem}.regen.oplog.json")}
 
     def export(self, path: Path, fmt: str, out: Path) -> Path:
         doc = self.sw.OpenDoc6(str(path), self.constants.swDocDRAWING if path.suffix.upper() == ".SLDDRW"

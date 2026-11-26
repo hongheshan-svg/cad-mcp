@@ -328,3 +328,26 @@ creopyson 无法创建尺寸、注释、表格、剖视图、公差符号，计�
 2. SHAFT：旋转体 + 2 个键槽 + 挡圈槽；主视图直径尺寸带 Φ 和公差带。
 3. GRID（`tests/test_hole_table.py`）：孔表位置与 SVG 一致，孔号注释在孔旁。
 4. 坐标映射：在 Creo 中查看 TOP 面草绘的矩形是否与 IR 的 X/Y 一致、FRONT 命名视图是否从 −Y 看（Z 向上）。
+
+## SW 装配：偏移/旋转/阵列坐标系配合 + regenerate（sw-asm-mates）
+
+`compile_assembly` 对每个带 `place` 的实例比较两个世界位姿：组件 align 坐标系 W（= 实例位姿 × align 坐标系）与目标坐标系 T。
+- W = T（无 offset/rotate）：组件坐标系与目标坐标系直接做坐标系重合配合（AddMate5 swMateCOORDINATE）。
+- W ≠ T（有 offset/rotate，或阵列副本）：先在装配中用 `CreateCoordinateSystemUsingNumericalValues` 按 W 建参考坐标系
+  `MC_<实例>`（`#` 换成 `_`），再与组件坐标系重合。旋转角由 `euler_xyz` 分解，约定 R = Rz·Ry·Rx（固定轴 X→Y→Z）。
+- 不采用"坐标系重合 + 距离/角度配合"：坐标系配合已约束 6 个自由度，再加会过定义；拆成 3 距离 + 3 角度有翻转歧义。
+  代价：`MC_*` 是装配级数值坐标系，目标组件移动后不随动（全部位姿由 spec 重算重建，影响有限）。
+- 任一步失败仍退回"按位姿固定"（oplog `result.mate = fixed_at_transform` 与 `reason`）。
+
+`SolidWorksAdapter.regenerate(path)`：OpenDoc6 → ForceRebuild3(False) → 遍历特征 GetErrorCode2，
+返回 `{status: ok|warnings|errors, errors: ["特征: error 码"], warnings: [...], oplog}`；oplog 为 `<名>.regen.oplog.json`。
+
+### 实机核对
+1. 出 `examples/cylinder_station.py` 装配：两个螺钉（offset [12,12,0] + 阵列步距 [-24,0,0]）的 oplog 应为 `mate=coordinate, via=MC_screw_1/2`，
+   且螺钉头落在安装板 CS_Cyl 偏移 (±12, 12) 处、配合树中无过定义/错误。
+2. TODO(实机核对)：装配环境下 `IFeatureManager.CreateCoordinateSystemUsingNumericalValues` 是否可用（SW 2021+）；
+   若返回 None，记录版本，改用"装配中插入参考点 + 坐标系（原点=点，X/Y 轴=草图线）"方案。
+3. TODO(实机核对)：数值坐标系的 X/Y/Z 旋转顺序是否为固定轴 X→Y→Z。验证：在 spec 中给某组件 `rotate: [90, 0, 90]`，
+   比较 SW 中 MC_ 坐标系三轴方向与平台预测（`euler_xyz` 的逆 `rotate_xyz`）；不一致时调整 `op_mate_coordinate` 中的分解顺序。
+4. TODO(实机核对)：装配级特征 `Feature.Select2(True, 1)` 能否与 `SelectByID2(..., "COORDSYS", ..., mark=1)` 组合成坐标系配合的两个选择。
+5. regenerate：对一个故意引用丢失的零件调用，确认 errors 列出特征名与错误码。

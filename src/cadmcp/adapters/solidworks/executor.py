@@ -915,25 +915,44 @@ class SwExecutor:
         return {}
 
     def op_mate_coordinate(self, instance: str, ref: str, target_instance: str | None, target_ref: str,
-                           offset, rotate, fallback: str):
+                           frame: dict | None, fallback: str):
+        """坐标系重合配合（swMateCOORDINATE，一次约束 6 个自由度）。
+        frame 非空（有 offset/rotate 或阵列副本）：先在装配中按世界位姿建参考坐标系 frame["name"]，再与组件坐标系重合。
+        不用"坐标系重合 + 距离/角度配合"：坐标系配合已满约束，再加距离/角度会过定义；拆成 3 距离 + 3 角度又有翻转歧义。
+        失败时退回按已放入的位姿固定组件（fixed_at_transform），oplog 记原因。"""
         comp = self.features[instance]
+        asm_title = self.model.GetTitle().rsplit(".", 1)[0]
         try:
+            target_feat = None
+            if frame:
+                o = [v * MM for v in frame["origin"]]
+                r = [math.radians(v) for v in frame["rotate_deg"]]
+                self.model.ClearSelection2(True)
+                # TODO(实机核对): 装配环境下 CreateCoordinateSystemUsingNumericalValues 是否可用（SW 2021+），
+                #   以及 X/Y/Z 旋转的顺序是否为固定轴 X→Y→Z（与 IR rotate_xyz 一致：R = Rz·Ry·Rx）
+                target_feat = self.model.FeatureManager.CreateCoordinateSystemUsingNumericalValues(
+                    True, o[0], o[1], o[2], True, r[0], r[1], r[2])
+                if target_feat is None:
+                    raise OpFailed("CreateCoordinateSystemUsingNumericalValues (assembly) failed")
+                target_feat.Name = frame["name"]
+                self.features[frame["name"]] = target_feat
             self.model.ClearSelection2(True)
-            a = f"{ref}@{comp.Name2}@{self.model.GetTitle().rsplit('.', 1)[0]}"
+            a = f"{ref}@{comp.Name2}@{asm_title}"
             if not self.model.Extension.SelectByID2(a, "COORDSYS", 0, 0, 0, False, 1, None, 0):
                 raise OpFailed(f"cannot select {a}")
-            if target_instance:
+            if target_feat is not None:
+                if not target_feat.Select2(True, 1):
+                    raise OpFailed(f"cannot select assembly csys {frame['name']}")
+            elif target_instance:
                 tc = self.features[target_instance]
-                b = f"{target_ref}@{tc.Name2}@{self.model.GetTitle().rsplit('.', 1)[0]}"
+                b = f"{target_ref}@{tc.Name2}@{asm_title}"
                 if not self.model.Extension.SelectByID2(b, "COORDSYS", 0, 0, 0, True, 1, None, 0):
                     raise OpFailed(f"cannot select {b}")
-            if any(abs(v) > 1e-9 for v in list(offset) + list(rotate)):
-                raise OpFailed("offset/rotate coordinate mates: P1（当前退回固定位姿）")
             mate = self.model.AddMate5(self.c.swMateCOORDINATE, self.c.swMateAlignALIGNED, False, 0, 0, 0, 0, 0,
                                        0, 0, 0, False, False, 0, 0)
             if mate is None:
                 raise OpFailed("AddMate5 coordinate mate failed")
-            return {"mate": "coordinate"}
+            return {"mate": "coordinate", "via": frame["name"] if frame else None}
         except Exception as e:  # noqa: BLE001
             self.model.ClearSelection2(True)
             comp.Select4(False, None, False)

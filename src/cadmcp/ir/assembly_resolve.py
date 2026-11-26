@@ -62,6 +62,21 @@ def apply(m: Mat, p: tuple[float, float, float]) -> tuple[float, float, float]:
     return tuple(sum(m[i][k] * p[k] for k in range(3)) + m[i][3] for i in range(3))  # type: ignore[return-value]
 
 
+def euler_xyz(m: Mat) -> tuple[float, float, float]:
+    """rotate_xyz 的逆：旋转部分 R = Rz·Ry·Rx → (rx, ry, rz)（度）。万向锁（ry=±90°）时取 rx=0。"""
+    sy = max(-1.0, min(1.0, -m[2][0]))
+    ry = math.asin(sy)
+    if abs(abs(sy) - 1) < 1e-9:
+        rx, rz = 0.0, math.atan2(-m[0][1], m[1][1])
+    else:
+        rx, rz = math.atan2(m[2][1], m[2][2]), math.atan2(m[1][0], m[0][0])
+    return tuple(round(math.degrees(a), 9) + 0.0 for a in (rx, ry, rz))  # type: ignore[return-value]
+
+
+def same_frame(a: Mat, b: Mat, tol: float = 1e-6) -> bool:
+    return all(abs(a[i][j] - b[i][j]) <= tol for i in range(3) for j in range(4))
+
+
 def ref_frame(ref: ResolvedRef) -> Mat:
     return matmul(translate(*ref.origin), rotate_xyz(*ref.rotate))
 
