@@ -461,10 +461,27 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                   "header_bottom": True},
                             "IView.InsertWeldmentTable；失败时以注释输出"))
         ops.append(NativeOp("auto_balloon", {"view": plan.views[0].type}))
-    for d in plan.dims:  # 精度标注：先用注释承载（P1：InsertGtol / InsertDatumTag2 / InsertSurfaceFinishSymbol3 原生符号）
-        if d.kind in ("datum", "gtol", "roughness"):
-            text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
-            ops.append(NativeOp("leader_note", {"view": d.view, "text": text, "at_model": d.at, "ref": d.ref}))
+    gdt = [d for d in plan.dims if d.kind in ("datum", "gtol", "roughness")]
+    if gdt:
+        ops.append(NativeOp("probe_gdt_constants", {}, "把类型库中 swGcs*/swMc*/swSF* 常量记入 oplog（实机核对枚举名）"))
+    for d in gdt:  # 精度标注：原生符号；常量/接口不可用时执行器退回带引线注释并登记（D019）
+        ex = d.extra or {}
+        text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
+        common = {"view": d.view, "ref": d.ref, "at": ex.get("sheet_at"), "pos": ex.get("sheet_pos"),
+                  "fallback_text": text, "at_model": d.at}
+        if d.kind == "datum":
+            ops.append(NativeOp("datum_tag", {**common, "label": d.text},
+                                "选中边线 → InsertDatumTag2 → SetLabel → 放到外法向位置"))
+        elif d.kind == "gtol":
+            sym, zone, *datums = ex.get("cells", ["", "", ""])
+            ops.append(NativeOp("gtol", {**common, "type": d.ref.split(":")[1].split("@")[0],
+                                         "diameter": zone.startswith("Φ"), "value": zone.lstrip("Φ"),
+                                         "datums": datums[:3], "leader": ex.get("attach") != "callout"},
+                                "选中被测要素边线 → InsertGtol → SetFrameSymbols2/SetFrameValues2"))
+        else:
+            ops.append(NativeOp("surface_finish", {**common, "ra": d.value,
+                                                   "leader": tuple(ex.get("normal", (0, 1))) != (0, 1)},
+                                "选中边线 → IModelDocExtension.InsertSurfaceFinishSymbol3（去除材料，Ra 值）"))
     if plan.title_block.get("surface_finish") and plan.model_kind == "part":
         sf = plan.title_block["surface_finish"]
         ops.append(NativeOp("note", {"text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)",

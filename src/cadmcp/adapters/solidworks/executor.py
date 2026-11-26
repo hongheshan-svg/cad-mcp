@@ -20,7 +20,7 @@ from typing import Any
 from ..native import NativeOp
 
 MM = 0.001
-NON_CRITICAL = {"hole_tags", "hole_table", "broken_out_section", "section_cut", "cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
+NON_CRITICAL = {"probe_gdt_constants", "datum_tag", "gtol", "surface_finish", "hole_tags", "hole_table", "broken_out_section", "section_cut", "cosmetic_thread", "fillet", "chamfer", "select_edges", "dimension_profile", "ref_plane_coincident",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
@@ -847,6 +847,103 @@ class SwExecutor:
             pos = v.Position  # 视图中心（图纸坐标，m）
             ann.SetPosition2(pos[0] + 0.03, pos[1] + 0.02, 0)
         self.readback.setdefault("notes", []).append(ref)
+        return {}
+
+    # ---- 精度符号（GB/T 1182 / GB/T 131）：原生符号，失败时退回带引线注释 ----
+    # 几何特征枚举名以实机类型库为准：按候选名依次查找，都查不到就退回注释（D019）
+    GCS_NAMES = {
+        "flatness": ("swGcsFLAT", "swGcsFLATNESS"), "straightness": ("swGcsSTRAIGHT", "swGcsSTRAIGHTNESS"),
+        "roundness": ("swGcsCIRC", "swGcsCIRCULARITY", "swGcsROUND"), "cylindricity": ("swGcsCYL", "swGcsCYLINDRICITY"),
+        "parallelism": ("swGcsPAR", "swGcsPARALLEL"), "perpendicularity": ("swGcsPERP", "swGcsPERPENDICULAR"),
+        "angularity": ("swGcsANG", "swGcsANGULARITY"), "position": ("swGcsPOS", "swGcsPOSITION", "swGcsTRUE_POS"),
+        "coaxiality": ("swGcsCONC", "swGcsCONCENTRICITY", "swGcsCOAX"), "symmetry": ("swGcsSYM", "swGcsSYMMETRY"),
+        "circular_runout": ("swGcsCIRC_RUNOUT", "swGcsRUNOUT", "swGcsCIRCULAR_RUNOUT"),
+        "total_runout": ("swGcsTOTAL_RUNOUT", "swGcsTOT_RUNOUT"),
+    }
+
+    def _const(self, names) -> int | None:
+        for n in names:
+            v = getattr(self.c, n, None)
+            if isinstance(v, int):
+                return v
+        return None
+
+    def op_probe_gdt_constants(self):
+        found = {n: getattr(self.c, n) for n in dir(self.c)
+                 if n.startswith(("swGcs", "swMc", "swSF", "swLeader", "swDatum")) and isinstance(getattr(self.c, n, None), int)}
+        return {"constants": found}
+
+    def _select_edge_at(self, at) -> bool:
+        if at is None:
+            return False
+        self.model.ClearSelection2(True)
+        try:
+            return bool(self.model.Extension.SelectByID2("", "EDGE", at[0] * MM, at[1] * MM, 0, False, 0, None, 0))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _gdt_fallback(self, view, ref, text, at_model, reason):
+        self.op_leader_note(view, text, at_model, ref)
+        self.readback.setdefault("gdt_fallback", []).append(ref)
+        return {"fallback": reason}
+
+    def _place(self, obj, pos):
+        if obj is not None and pos is not None:
+            obj.GetAnnotation().SetPosition2(pos[0] * MM, pos[1] * MM, 0)
+
+    def op_datum_tag(self, view, ref, at, pos, fallback_text, at_model, label):
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        self.model.ActivateView(v.Name)
+        attached = self._select_edge_at(at)
+        tag = self.model.InsertDatumTag2()
+        if tag is None:
+            return self._gdt_fallback(view, ref, fallback_text, at_model, "InsertDatumTag2 failed")
+        tag.SetLabel(label)
+        self._place(tag, pos)
+        self.readback.setdefault("gdt_native", []).append(ref)
+        return {"attached": attached}
+
+    def op_gtol(self, view, ref, at, pos, fallback_text, at_model, type, diameter, value, datums, leader):  # noqa: A002
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        gcs = self._const(self.GCS_NAMES.get(type, ()))
+        if gcs is None:
+            return self._gdt_fallback(view, ref, fallback_text, at_model, f"常量表中没有 {type} 的几何特征枚举")
+        self.model.ActivateView(v.Name)
+        attached = self._select_edge_at(at) if leader else False
+        if not leader:
+            self.model.ClearSelection2(True)
+        g = self.model.InsertGtol()
+        if g is None:
+            return self._gdt_fallback(view, ref, fallback_text, at_model, "InsertGtol failed")
+        mc_none = self._const(("swMcNONE", "swMcNone")) or 0
+        d3 = (list(datums) + ["", "", ""])[:3]
+        g.SetFrameSymbols2(1, gcs, bool(diameter), mc_none, False, mc_none, mc_none, mc_none, mc_none)
+        g.SetFrameValues2(1, str(value), "", d3[0], d3[1], d3[2])
+        self._place(g, pos)
+        self.readback.setdefault("gdt_native", []).append(ref)
+        return {"gcs": gcs, "attached": attached}
+
+    def op_surface_finish(self, view, ref, at, pos, fallback_text, at_model, ra, leader):
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"view {view} not on sheet")
+        sym = self._const(("swSFMachining_Req", "swSFMachiningReq", "swSFMACHINING_REQ"))
+        if sym is None:
+            return self._gdt_fallback(view, ref, fallback_text, at_model, "常量表中没有 swSFMachining_Req")
+        self.model.ActivateView(v.Name)
+        self._select_edge_at(at)
+        lt = self._const(("swSTRAIGHT", "swLeaderStraight")) if leader else self._const(("swNO_LEADER", "swLeaderNone"))
+        loc = pos or at or (0, 0)
+        sf = self.model.Extension.InsertSurfaceFinishSymbol3(
+            sym, lt or 0, loc[0] * MM, loc[1] * MM, 0, self._const(("swSFNone_Lay", "swSFLayNone")) or 0,
+            self._const(("swFILLED_ARROWHEAD", "swArrowFilled")) or 0, "", "", "", "", f"Ra {ra:g}", "", "")
+        if not sf:
+            return self._gdt_fallback(view, ref, fallback_text, at_model, "InsertSurfaceFinishSymbol3 failed")
+        self.readback.setdefault("gdt_native", []).append(ref)
         return {}
 
     def op_hole_tags(self, view: str, tags):

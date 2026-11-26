@@ -502,6 +502,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     _plan_sections(plan, spec, p)
     if spec.dimensions != "none":
         place_labels(plan, p.bbox, part=p)
+        precision_sheet(plan, p)
     return plan
 
 
@@ -724,6 +725,7 @@ def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None
     reserved += [(d.extra["sheet_pos"][0] - 2, d.extra["sheet_pos"][1] - 3, d.extra["sheet_pos"][0] + 32,
                   d.extra["sheet_pos"][1] + 8) for d in plan.dims if d.kind == "weld"]
     place_labels(plan, p.bbox, reserved, part=p)
+    precision_sheet(plan, p)
     return plan
 
 
@@ -796,8 +798,10 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     if spec.dimensions != "none":
         dims += _precision_dims(p, views, {"front"}, True)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
-    return DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
+    plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
+    precision_sheet(plan, p)
+    return plan
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
     sheet, scale, views = _layout(a.bbox, spec, None, spec.sheet, kind="assembly")
@@ -1053,6 +1057,35 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                                                  "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn}}
 
 
+def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """精度符号（基准、几何公差框格、表面结构）的图纸坐标（mm），供 CAD 原生符号定位：
+    extra["sheet_at"] = 贴在被测/基准要素上的点（用于选中边线作引线附着），
+    extra["sheet_pos"] = 符号/框格放置点（与 SVG 预览一致的外法向偏移）。"""
+    vmap = {v.type: v for v in plan.views}
+    labels = {d.ref: d.extra["label"] for d in plan.dims if d.extra and "label" in d.extra}
+    for d in plan.dims:
+        if d.kind not in ("datum", "gtol", "roughness") or d.at is None or d.view not in vmap:
+            continue
+        v = vmap[d.view]
+        if plan.layout == "shaft":
+            cx, cy = v.origin_on_sheet
+            L = p.bbox.zmax - p.bbox.zmin
+            ax, ay = cx - L * v.scale / 2 + d.at[0] * v.scale, cy + d.at[1] * v.scale
+        elif d.view in VIEW_AXES:
+            ax, ay = _uv_sheet(v, p.bbox, d.at)
+        else:
+            continue
+        nx, ny = (d.extra or {}).get("normal", (0, 1))
+        reach = {"datum": 10.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else 8.0}[d.kind]
+        pos = (ax + nx * reach, ay + ny * reach)
+        if d.kind == "gtol" and (d.extra or {}).get("attach") == "callout":
+            hole = d.ref.split("@hole:")[-1]
+            lb = labels.get(hole)
+            if lb:  # 框格放在孔标注文字下方
+                pos = (lb["text_at"][0], lb["text_at"][1] - 7.5)
+        d.extra = {**(d.extra or {}), "sheet_at": (round(ax, 2), round(ay, 2)), "sheet_pos": (round(pos[0], 2), round(pos[1], 2))}
+
+
 def check_bom_association(plan: "DrawingPlan", rendered: dict[str, Any]) -> list[dict[str, Any]]:
     """图上明细表、序号与方案（= 装配 BOM）是否一致：D011 明细表行、D012 序号缺失/重复/无对应行。"""
     out = []
@@ -1169,6 +1202,10 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
             if sec.label not in done:
                 f("D016", "error", f"剖视图 {sec.label if sec.kind == 'local' else sec.label + '-' + sec.label} 未生成",
                   "查看 oplog 中 section_cut / broken_out_section 的失败原因")
+    if rendered is not None and rendered.get("gdt_fallback"):
+        fb = rendered["gdt_fallback"]
+        f("D019", "warning", f"{len(fb)} 处精度符号未能生成原生符号，已用带引线注释代替：{', '.join(fb[:4])}",
+          "查看 oplog 中 probe_gdt_constants 列出的常量名与 datum_tag/gtol/surface_finish 的失败原因，发回开发组")
     if rendered is not None and plan.hole_table and "hole_table_rows" in rendered:
         want = {(r["tag"], r["x"], r["y"]) for r in plan.hole_table}
         got = set()

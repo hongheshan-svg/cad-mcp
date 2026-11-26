@@ -180,3 +180,13 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
    回读不一致会报 D017。表格位置/列宽不对请截图。
 3. 引出标注：孔标注、4×R 圆角、型腔标注的文字位置应与预览 SVG 一致（leader_note 的 text_pos）；
    引线目前没有关联到模型边线（P1），记录 SW 中引线的实际样子。
+
+### 精度符号原生化（D019）
+用 tests/test_core.py 的 PLATE_PRECISION（基准 A/B、平面度、垂直度、位置度、粗糙度）和 SHAFT 出图，核对：
+1. oplog 中 probe_gdt_constants 的结果：把列出的 swGcs*/swMc*/swSF* 常量名和数值整段发回。
+   执行器按候选名查找（见 executor.GCS_NAMES）；如果名字不在候选里，对应公差会退回注释并报 D019。
+2. 基准：三角形是否贴在边线上、方框字母是否为 A/B（InsertDatumTag2 + SetLabel）。
+   如果没贴上边线（选边 SelectByID2("", "EDGE", x, y) 落空），记录 datum_tag 返回的 attached。
+3. 框格：符号是否正确（平面度 ⏥、位置度 ⌖ 等）、位置度前是否有 Φ、基准字母顺序；
+   孔的位置度框格应在孔标注文字下方。
+4. 表面结构符号：是否为"去除材料"√，值显示为 Ra 3.2；非顶面的符号是否带引线。

@@ -84,7 +84,35 @@ def test_sw_executor_precision(sw_svc):
     svc.build(PartSpec.model_validate(PLATE_PRECISION))
     svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
     notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
-    assert any("Φ0.05 A B" in n for n in notes) and any("其余" in n for n in notes)
+    assert any("其余" in n for n in notes) and not any("Φ0.05 A B" in n for n in notes)   # 公差走原生框格
+    names = [c[0] for c in ad.sw.calls]
+    assert names.count("InsertDatumTag2") == 2 and ("SetLabel", ("A",)) in ad.sw.calls
+    vals = [c[1] for c in ad.sw.calls if c[0] == "SetFrameValues2"]
+    assert (1, "0.05", "", "A", "B", "") in vals
+    sym = [c[1] for c in ad.sw.calls if c[0] == "SetFrameSymbols2"]
+    assert any(s[2] is True for s in sym)                                           # 位置度 Φ 公差带
+    assert "InsertSurfaceFinishSymbol3" in names
+    sf = next(c[1] for c in ad.sw.calls if c[0] == "InsertSurfaceFinishSymbol3")
+    assert sf[11].startswith("Ra ")
+
+
+def test_sw_gdt_falls_back_without_constants(sw_svc):
+    svc, ad = sw_svc
+
+    class NoGcs(FakeConstants):
+        def __getattr__(self, name):
+            if name.startswith(("swGcs", "swSF")):
+                raise AttributeError(name)
+            return super().__getattr__(name)
+
+    ad.constants = NoGcs()
+    svc.change_begin("PP")
+    svc.build(PartSpec.model_validate(PLATE_PRECISION))
+    d = svc.build(DrawingSpec.model_validate({"model": "PP", "title_block": {"designer": "AI"}}))
+    notes = [c[1][0] for c in ad.sw.calls if c[0] == "InsertNote"]
+    assert any("Φ0.05 A B" in n for n in notes)                                     # 退回注释
+    assert "InsertGtol" not in [c[0] for c in ad.sw.calls]
+    assert any(f["rule"] == "D019" for f in d["rules"]["findings"])
 
 
 def test_sw_executor_weldment(sw_svc):
