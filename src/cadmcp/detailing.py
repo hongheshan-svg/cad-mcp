@@ -261,8 +261,29 @@ FACE_N3 = {"top": (0, 0, 1), "bottom": (0, 0, -1), "front": (0, -1, 0), "back": 
 _SLOT = {"datum": 0.22, "roughness": 0.5, "gtol": 0.78}  # 同一面上三类符号沿边错开
 
 
-def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str):
-    """面在哪个视图里积聚成边线：返回 (视图, 边上一点(u,w), 视图内外法向)。"""
+OPPOSITE = {"top": "bottom", "bottom": "top", "front": "back", "back": "front", "left": "right", "right": "left"}
+
+
+def _face_gaps(face: str, p: ResolvedPart | None, axis: str) -> list[tuple[float, float]]:
+    """面上被孔口/型腔打断的区间（沿 axis，模型坐标）：符号引线不得指到空处。通孔也打断对面。"""
+    if p is None:
+        return []
+    out = []
+    for h in p.holes:
+        if h.face == face or (h.through and OPPOSITE.get(h.face) == face):
+            r = h.max_dia / 2 if h.face == face else h.drill / 2
+            out += [(vc(i.xyz, axis) - r, vc(i.xyz, axis) + r) for i in h.instances]
+    for pk in p.pockets:
+        if (pk["face"] == face or (pk.get("through") and OPPOSITE.get(pk["face"]) == face)) \
+                and pk["face"] in ("top", "bottom") and axis[-1] in "xy":
+            vals = [vc((x, y, 0), axis) for x, y in pk["profile"].outline]
+            out.append((min(vals), max(vals)))
+    return out
+
+
+def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: ResolvedPart | None = None):
+    """面在哪个视图里积聚成边线：返回 (视图, 边上一点(u,w), 视图内外法向)。
+    边上的点按符号类型错开（_SLOT），并避开孔口/型腔打断处（离空处 ≥2 mm）。"""
     n3 = FACE_N3[face]
     order = sorted((v for v in views if v.type in VIEW_AXES), key=lambda v: v.type != "front")
     for v in order:
@@ -275,8 +296,34 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str):
             continue
         (u0, u1), (w0, w1) = vrange(b, ha), vrange(b, va)
         f = _SLOT[kind]
-        u = u1 if comp[0] > 0 else u0 if comp[0] < 0 else u0 + f * (u1 - u0)
-        w = w1 if comp[1] > 0 else w0 if comp[1] < 0 else w0 + f * (w1 - w0)
+        ti = 0 if comp[0] == 0 else 1  # 沿边方向
+        lo, hi = (u0, u1) if ti == 0 else (w0, w1)
+        gaps = _face_gaps(face, p, (ha, va)[ti])
+
+        # 实体段 = 边线减去空处（各留 2 mm），按 f 在实体段总长上取点：各类符号保持顺序且彼此错开
+        segs = [(lo, hi)]
+        for a, b_ in sorted(gaps):
+            nxt = []
+            for s0, s1 in segs:
+                if b_ + 2 <= s0 or a - 2 >= s1:
+                    nxt.append((s0, s1))
+                    continue
+                if a - 2 > s0:
+                    nxt.append((s0, a - 2))
+                if b_ + 2 < s1:
+                    nxt.append((b_ + 2, s1))
+            segs = nxt
+        total = sum(s1 - s0 for s0, s1 in segs)
+        t_ = lo + f * (hi - lo)
+        if gaps and total > 0:
+            d = f * total
+            for s0, s1 in segs:
+                if d <= s1 - s0:
+                    t_ = s0 + d
+                    break
+                d -= s1 - s0
+        u = u1 if comp[0] > 0 else u0 if comp[0] < 0 else t_
+        w = w1 if comp[1] > 0 else w0 if comp[1] < 0 else t_
         return v.type, (u, w), (comp[0], comp[1])
     return None
 
@@ -287,7 +334,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
     def anchor(target: str, kind: str):
         k, _, ref = target.partition(":")
         if k == "face":
-            return _face_anchor(ref, views, p.bbox, kind)
+            return _face_anchor(ref, views, p.bbox, kind, p)
         if k == "hole":
             h = next(x for x in p.holes if x.name == ref)
             view = hole_view(h.face, vtypes) or views[0].type

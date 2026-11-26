@@ -254,7 +254,7 @@ def _draw_section(s, sec, V, v, cx, cy, g=None):
             f"<defs><pattern id='h{mid}' patternUnits='userSpaceOnUse' width='3' height='3' patternTransform='rotate(45)'>"
             f"<line x1='0' y1='0' x2='0' y2='3' stroke='{STROKE}' stroke-width='0.18'/></pattern>"
             f"<mask id='m{mid}'><path d='{path(solid)}' fill='white'/>"
-            + (f"<path d='{path(voids)}' fill='black'/>" if voids else "") + "</mask></defs>"
+            + "".join(f"<path d='{path([v_])}' fill='black'/>" for v_ in voids) + "</mask></defs>"  # 逐个画：重叠空腔不因绕向相反而抵消
             f"<rect x='{x0:.2f}' y='{s.y(y1):.2f}' width='{x1 - x0:.2f}' height='{y1 - y0:.2f}' "
             f"fill='url(#h{mid})' mask='url(#m{mid})'/>")
     openings = [(V(a), V(b)) for a, b in g["openings"]]  # 孔口/型腔口：实体轮廓上去掉
