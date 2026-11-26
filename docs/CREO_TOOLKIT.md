@@ -56,7 +56,7 @@ CREOSON 按命名视图 FRONT/TOP/RIGHT 建的工程图视图与规划层一致�
 
 **实现说明**：`feat.hole` 用拉伸切除实现——同一组孔的所有孔口圆放在一个草图里，沉孔一级、钻孔一级；沉头孔用 D×D 倒角
 （D = (csink − d)/2）；`drill_point` 首期不建钻尖（返回 `"drill_point": "omitted"`，剖视由规划层画出）。
-`feat.cosmetic_thread` 首期返回 `PRO_TK_NOT_IMPLEMENTED`（元素树需实机核对），孔标注中已写明螺纹规格。
+`feat.cosmetic_thread` 用 `PRO_FEAT_THREAD` 元素树（ProThread.h）：孔特征中每个孔（圆柱面按轴线去重）建一个简单螺纹，起始面取孔拉伸特征的草绘平面，盲深 `length`；结果 `{"id": 第一个, "features": [全部]}`，其余命名 `<feature>_2`…
 `feat.pattern_points` 预留，不注册。
 
 | cmd | 关键 args |
@@ -81,12 +81,12 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | cmd | 关键 args |
 |---|---|
 | `drw.note` | `text`（可多行）, `at`（文字左下角）, `height`（mm，默认 3.5）, `leader_to`（图纸点或 null：有则引线指向该点处的模型边） , `view`（leader 用） |
-| `drw.dim` | `view`, `kind`（`linear|diameter|radius|ordinate`）, `p1`, `p2`（被标注边上的点；diameter/radius 只用 p1）, `at`（尺寸文字位置）, `orient`（`h|v|aligned`）, `text`（覆盖文字，可空；如 `Φ20k6`） |
+| `drw.dim` | `view`, `kind`（`linear|diameter|radius|ordinate`）, `p1`, `p2`（被标注边上的点；diameter/radius 只用 p1；ordinate 的 p1 为基准轮廓边、p2 为要素边，孔量到圆心）, `at`（尺寸文字位置）, `orient`（`h|v|aligned`；ordinate 须 h/v）, `text`（覆盖文字，可空；如 `Φ20k6`） → ordinate：同视图同方向同基准边共用一条基线（首个转 `ProDrawingOrdbaselineCreate`，其余 `ProDrawingDimToOrdinate`）；p2 与基准同一条边时只返回基线 |
 | `drw.datum` | `view`, `at`（贴边点）, `pos`（方框位置）, `label` |
 | `drw.gtol` | `view`, `at`（被测要素点，null 表示不带引线）, `pos`, `type`（flatness/position/... 与 IR 同名）, `value`, `diameter`（bool）, `datums`（≤3） |
 | `drw.surface_finish` | `view`, `at`, `pos`, `ra`, `removal`（`required|prohibited`） |
 | `drw.table` | `origin`（左下角）, `columns`（`[{"title","width"}]`）, `rows`（字符串二维表）, `row_height`（默认 6）, `header_bottom`（bool：GB 明细表表头在下） |
-| `drw.section` | `parent`（画剖切线的视图）, `replaces`（被替代视图名，可空=新建投影剖视）, `label`, `kind`（full/step/half/local）, `cut_points`（模型坐标折线）, `center`（视图位置） → 创建剖截面 `X`（`ProXsecCreate` / 偏移剖截面）并设视图为 2D 剖视 |
+| `drw.section` | `parent`（画剖切线的视图，显示剖切箭头；local 可空）, `replaces`（被设为剖视的已有视图）, `label`, `kind`（full/step/half/local）, `cut_points`（模型坐标折线，在零件顶面上；full/half/local 取前两点）, `center`（视图位置，仅校验）, `boundary`（local 必填：局部区域闭合折线，图纸 mm） → `ProXSectionOffsetCreate` 建剖截面（一段=平面剖，多段=阶梯剖）后 `ProDrawingView2DSectionSet`；half 的分界面为垂直剖切线的默认基准面 |
 | `drw.balloon` | `view`, `component`（组件路径名列表）, `item`, `at`, `pos` |
 | `drw.readback` | – → `{"dims": n, "notes": n, "tables": [{"rows": [[...]]}], "views": [...], "symbols": n}` |
 

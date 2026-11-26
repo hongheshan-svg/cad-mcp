@@ -1,7 +1,7 @@
 """假 cadmcp_tk：本地线程起 JSON-lines TCP 服务，按 docs/CREO_TOOLKIT.md §3 的命令表校验请求。
 
 - 未知命令 → UNKNOWN_CMD；args 含文档该命令 args 列未出现的键 → BAD_ARGS（防止 Python 端与协议漂移）。
-- 与 C++ 端一致：feat.cosmetic_thread 返回 PRO_TK_NOT_IMPLEMENTED；drw.section 的 step/local 同样。
+- 与 C++ 端一致：drw.section kind=local 缺 boundary → BAD_ARGS；ordinate 缺 orient=h|v → BAD_ARGS。
 - `fail` 集合中的命令一律返回 ok=false。
 """
 from __future__ import annotations
@@ -85,8 +85,10 @@ class FakeToolkit:
             return self._err(rid, "BAD_ARGS", f"{cmd}: 文档未定义的参数 {sorted(extra)}")
         if cmd in self.fail:
             return self._err(rid, "PRO_TK_GENERAL_ERROR", f"{cmd} failed")
-        if cmd == "feat.cosmetic_thread" or (cmd == "drw.section" and args.get("kind") in ("step", "local")):
-            return self._err(rid, "PRO_TK_NOT_IMPLEMENTED", cmd)
+        if cmd == "drw.section" and args.get("kind") == "local" and len(args.get("boundary") or []) < 3:
+            return self._err(rid, "BAD_ARGS", "local 需要 boundary")
+        if cmd == "drw.dim" and args.get("kind") == "ordinate" and args.get("orient") not in ("h", "v"):
+            return self._err(rid, "BAD_ARGS", "ordinate 须给 orient=h|v")
         return {"id": rid, "ok": True, "result": self._result(cmd, args)}
 
     def _result(self, cmd: str, a: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +103,9 @@ class FakeToolkit:
         if cmd == "model.feature_status":
             return {"features": [{"name": x.get("feature"), "id": i, "type": c, "status": "active"}
                                  for i, (c, x) in enumerate(self.calls) if c.startswith(("feat.", "datum."))]}
+        if cmd == "feat.cosmetic_thread":  # 每个孔一个螺纹特征；假服务按 1 个
+            self._next_id += 1
+            return {"id": self._next_id, "features": [self._next_id]}
         if cmd.startswith(("feat.", "datum.")):
             self._next_id += 1
             return {"id": self._next_id}

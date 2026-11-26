@@ -19,11 +19,18 @@ extern "C" {
 #include <ProXsec.h>
 #include <ProArray.h>
 #include <ProUtil.h>
+#include <ProDrawingView.h>
+#include <ProEdge.h>
+#include <ProPoint.h>
+#include <ProCurvedata.h>
+#include <Pro2dEntdef.h>
 }
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
@@ -264,10 +271,118 @@ json cmd_drw_note(const json& a) {
     return json{{"id", id}};
 }
 
+// ---------- drw.dim ----------
+// 签名依据 Creo TOOLKIT API 参考（ProDrawing.h / ProDimension.h）：
+//   ProDrawingDimensionCreate(ProDrawing, ProDimAttachment* attachment_arr /*ProArray*/, ProDimSense* dsense_arr /*ProArray*/,
+//                             ProDimOrient orient_hint, ProVector location, ProBoolean ref_dim, ProDimension*)
+//   typedef ProSelection ProDimAttachment[2];  ProDimSense{type, sense, angle_sense, orient_hint}
+//   ProDrawingOrdbaselineCreate(drawing, ProDimension* linear, ProVector location, ProDimension* base_out)
+//     —— 线性尺寸转为坐标尺寸，同时生成基线（0）尺寸；location 为线性尺寸某条尺寸界线上的点
+//   ProDrawingDimToOrdinate(drawing, ProDimension* linear, ProDimension* base)
+//   ProDrawingDimIsOrdinate(drawing, ProDimension*, ProBoolean*, ProDimension* base_out)
+
+// 选中边的尺寸意义：直线边 → 整条边；圆/圆弧 → 圆心（孔位坐标、孔距都量到圆心）
+ProDimSense sense_for(ProSelection sel, bool center_for_arcs) {
+    ProDimSense s;
+    std::memset(&s, 0, sizeof(s));
+    s.type = PRO_DIM_SNS_TYP_NONE;
+    s.orient_hint = PRO_DIM_ORNT_NONE;
+    if (!center_for_arcs) return s;
+    ProModelitem mi;
+    if (ProSelectionModelitemGet(sel, &mi) != PRO_TK_NO_ERROR || mi.type != PRO_EDGE) return s;
+    ProEdge edge;
+    ProEnttype et;
+    // TODO(实机核对): ProGeomitemToEdge / ProEdgeTypeGet(ProEdge, ProEnttype*)，PRO_ENT_CIRCLE / PRO_ENT_ARC
+    if (ProGeomitemToEdge(&mi, &edge) == PRO_TK_NO_ERROR && ProEdgeTypeGet(edge, &et) == PRO_TK_NO_ERROR &&
+        (et == PRO_ENT_CIRCLE || et == PRO_ENT_ARC)) {
+        s.type = PRO_DIM_SNS_TYP_PNT;
+        s.sense = PRO_POINT_TYP_CENTER;
+    }
+    return s;
+}
+
+bool same_item(ProSelection a, ProSelection b) {
+    ProModelitem ma, mb;
+    if (ProSelectionModelitemGet(a, &ma) != PRO_TK_NO_ERROR || ProSelectionModelitemGet(b, &mb) != PRO_TK_NO_ERROR)
+        return false;
+    return ma.id == mb.id && ma.type == mb.type && ma.owner == mb.owner;
+}
+
+ProDimension create_dim(ProDrawing d, const std::vector<ProSelection>& sels, bool center_for_arcs, ProDimOrient ori,
+                        const Pt& at) {
+    ProDimAttachment* atts = nullptr;
+    ProDimSense* senses = nullptr;
+    check(ProArrayAlloc(0, sizeof(ProDimAttachment), 2, (ProArray*)&atts), "ProArrayAlloc(attachments)");
+    check(ProArrayAlloc(0, sizeof(ProDimSense), 2, (ProArray*)&senses), "ProArrayAlloc(senses)");
+    for (ProSelection s : sels) {
+        ProDimAttachment att;
+        att[0] = s;
+        att[1] = nullptr;
+        ProDimSense sn = sense_for(s, center_for_arcs);
+        ProArrayObjectAdd((ProArray*)&atts, PRO_VALUE_UNUSED, 1, &att);
+        ProArrayObjectAdd((ProArray*)&senses, PRO_VALUE_UNUSED, 1, &sn);
+    }
+    ProPoint3d loc;
+    sheet_mm_to_drw(d, at, loc);
+    ProDimension dim;
+    // ref_dim：文档写"PRO_B_TRUE 建 PRO_DIMENSION"。TODO(实机核对): 若建出参考尺寸（带 REF/括号）则改 PRO_B_FALSE
+    ProError e = ProDrawingDimensionCreate(d, atts, senses, ori, loc, PRO_B_TRUE, &dim);
+    ProArrayFree((ProArray*)&atts);
+    ProArrayFree((ProArray*)&senses);
+    check(e, "ProDrawingDimensionCreate");
+    return dim;
+}
+
+// 坐标尺寸基线缓存：同一图纸、同一视图、同一方向、同一基准边点 → 共用一条基线（0 尺寸）
+struct OrdBase {
+    std::string key;
+    ProDimension base;
+};
+std::vector<OrdBase> g_ord_bases;
+
+std::string ord_key(const std::string& drawing, const std::string& view, const std::string& orient, const Pt& p1) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "|%s|%.2f|%.2f", orient.c_str(), p1[0], p1[1]);
+    return drawing + "|" + view + buf;
+}
+
+bool find_base(ProDrawing d, const std::string& key, ProDimension* out) {
+    for (auto it = g_ord_bases.begin(); it != g_ord_bases.end(); ++it) {
+        if (it->key != key) continue;
+        ProBoolean is_ord = PRO_B_FALSE;
+        ProDimension bb;
+        // 基线可能已被删除或图纸已重开：校验仍是坐标尺寸
+        if (ProDrawingDimIsOrdinate(d, &it->base, &is_ord, &bb) == PRO_TK_NO_ERROR && is_ord) {
+            *out = it->base;
+            return true;
+        }
+        g_ord_bases.erase(it);
+        return false;
+    }
+    return false;
+}
+
+void set_dim_text(ProDimension* dim, const std::string& text) {
+    std::wstring w = widen(text);
+    ProWstring* lines = nullptr;
+    check(ProArrayAlloc(1, sizeof(ProWstring), 1, (ProArray*)&lines), "ProArrayAlloc");
+    lines[0] = (ProWstring)w.c_str();
+    // TODO(实机核对): ProDimensionTextWstringsSet(ProDimension*, ProWstring* /*ProArray*/)；@D 保留实测值时文字写 "@D" 前后缀
+    ProError e = ProDimensionTextWstringsSet(dim, lines);
+    ProArrayFree((ProArray*)&lines);
+    check(e, "ProDimensionTextWstringsSet");
+}
+
 // drw.dim
+//  linear：p1/p2 两条被标注边上的点；diameter/radius：p1 为圆/圆弧边上的点
+//  ordinate：p1 = 基准轮廓边上的点，p2 = 被标注要素边上的点（孔取圆周点 → 量到圆心）。
+//    同一视图同一方向同一基准边的第一个坐标尺寸：先建 p1→p2 线性尺寸，再 ProDrawingOrdbaselineCreate 转为坐标尺寸并生成基线；
+//    之后的：先建线性尺寸，再 ProDrawingDimToOrdinate 挂到已有基线。p2 选到与基准同一条边（值为 0）时不重复建，只确保基线存在。
 json cmd_drw_dim(const json& a) {
-    ProDrawing d = find_drawing(arg_str(a, "drawing"));
-    ProView view = find_view(d, arg_str(a, "view"));
+    std::string dname = arg_str(a, "drawing");
+    ProDrawing d = find_drawing(dname);
+    std::string vname = arg_str(a, "view");
+    ProView view = find_view(d, vname);
     std::string kind = arg_str(a, "kind");
     Pt p1 = arg_pt2(a, "p1");
     Pt at = arg_pt2(a, "at");
@@ -278,50 +393,50 @@ json cmd_drw_dim(const json& a) {
         throw CmdError("BAD_ARGS", "kind 须为 linear|diameter|radius|ordinate");
     if (orient != "h" && orient != "v" && orient != "aligned")
         throw CmdError("BAD_ARGS", "orient 须为 h|v|aligned");
+    if (kind == "ordinate" && orient == "aligned") throw CmdError("BAD_ARGS", "ordinate 须给 orient=h|v");
 
-    ProSelection sels[2] = {nullptr, nullptr};
-    int nsel = 0;
-    auto free_sels = [&]() { for (int i = 0; i < nsel; ++i) if (sels[i]) ProSelectionFree(&sels[i]); };
-    sels[nsel++] = pick_edge_at(d, view, p1);
-    ProDimension dim;
+    ProDimOrient ori = orient == "h" ? PRO_DIM_ORNT_HORIZ : orient == "v" ? PRO_DIM_ORNT_VERT : PRO_DIM_ORNT_SLANTED;
+    if (kind == "diameter" || kind == "radius") ori = PRO_DIM_ORNT_NONE;  // 由附着圆边决定
+
+    std::vector<ProSelection> sels;
+    auto free_sels = [&]() { for (auto& s : sels) if (s) ProSelectionFree(&s); sels.clear(); };
+    json out;
     try {
-        if (kind == "linear" || kind == "ordinate") {
-            Pt p2 = arg_pt2(a, "p2");
-            sels[nsel++] = pick_edge_at(d, view, p2);
+        sels.push_back(pick_edge_at(d, view, p1));
+        if (kind == "linear" || kind == "ordinate") sels.push_back(pick_edge_at(d, view, arg_pt2(a, "p2")));
+
+        if (kind == "ordinate") {
+            std::string key = ord_key(dname, vname, orient, p1);
+            ProDimension base;
+            bool have_base = find_base(d, key, &base);
+            if (same_item(sels[0], sels[1])) {  // 值为 0：就是基线本身
+                free_sels();
+                return json{{"id", have_base ? json(base.id) : json(nullptr)}, {"baseline", true}};
+            }
+            ProDimension dim = create_dim(d, sels, true, ori, at);
+            if (have_base) {
+                check(ProDrawingDimToOrdinate(d, &dim, &base), "ProDrawingDimToOrdinate");
+            } else {
+                ProPoint3d loc;  // 基准边一侧尺寸界线上的点
+                sheet_mm_to_drw(d, p1, loc);
+                check(ProDrawingOrdbaselineCreate(d, &dim, loc, &base), "ProDrawingOrdbaselineCreate");
+                g_ord_bases.push_back({key, base});
+            }
+            if (!text.empty()) set_dim_text(&dim, text);
+            out = json{{"id", dim.id}, {"baseline_id", base.id}};
+        } else {
+            // diameter/radius：Creo 按圆边自动加 Φ/R；TODO(实机核对): 圆边上直接建出的是直径还是半径——
+            //   若与 kind 不符，改用 ProDimSense.type=PRO_DIM_SNS_TYP_PNT + orient_hint 指定，或建后 ProDimensionTypeSet
+            ProDimension dim = create_dim(d, sels, kind == "linear", ori, at);
+            if (!text.empty()) set_dim_text(&dim, text);
+            out = json{{"id", dim.id}};
         }
-        // ordinate：p1 = 基准轮廓边，p2 = 被标注要素边（孔为圆周点）。首期按线性尺寸（基线式）创建；
-        // TODO(实机核对): 改成真正的坐标尺寸——先建基线尺寸，再用坐标尺寸接口（或 ProDimensionToOrdinate 类函数）转换。
-        // TODO(实机核对): ProDrawingDimensionCreate 真实签名（疑为 drawing, sels[], attachments[], senses[], orient, location, &dim）；
-        //   ProDimAttachment / ProDimSense 取值。diameter/radius 仅 1 个选择（圆弧/圆边）；
-        //   linear 的端点型附着（PRO_DIM_ATTACH_END1/END2/MIDDLE）需按边方向实机调试。
-        ProDimAttachment atts[2] = {PRO_DIM_ATTACH_MIDDLE, PRO_DIM_ATTACH_MIDDLE};
-        ProDimSense senses[2];
-        senses[0].type = senses[1].type = PRO_DIM_SNS_NONE;  // TODO(实机核对): ProDimSense 结构字段
-        ProDimOrient ori = PRO_DIM_ORNT_HORIZ;
-        if (orient == "v") ori = PRO_DIM_ORNT_VERT;
-        else if (orient == "aligned") ori = PRO_DIM_ORNT_SLANTED;  // TODO(实机核对): 枚举名
-        ProPoint3d loc;
-        sheet_mm_to_drw(d, at, loc);
-        check(ProDrawingDimensionCreate(d, sels, atts, senses, ori, loc, &dim), "ProDrawingDimensionCreate");
     } catch (...) {
         free_sels();
         throw;
     }
     free_sels();
-
-    // 文字覆盖（如 Φ20k6）；diameter/radius 的 Φ/R 符号由 Creo 按附着圆边自动加
-    if (!text.empty()) {
-        std::wstring w = widen(text);
-        // TODO(实机核对): ProDimensionTextWstringsSet(ProDimension*, ProWstring* lines)——lines 为 ProArray；
-        //   也可改用 ProDimensionTextSet
-        ProArray arr;
-        check(ProArrayAlloc(1, sizeof(ProWstring), 1, &arr), "ProArrayAlloc");
-        ((ProWstring*)arr)[0] = (ProWstring)w.c_str();
-        ProError e = ProDimensionTextWstringsSet(&dim, (ProWstring*)arr);
-        ProArrayFree(&arr);
-        check(e, "ProDimensionTextWstringsSet");
-    }
-    return json{{"id", dim.id}};
+    return out;
 }
 
 // drw.datum：基准符号（方框内字母，贴边引线）
@@ -499,69 +614,160 @@ json cmd_drw_table(const json& a) {
     return json{{"id", table.id}, {"rows", nrows}, {"cols", ncols}};
 }
 
-// drw.section：为 parent 视图所属模型创建平面剖截面，并把 replaces 视图设为 2D 剖视（首期仅 full/half）
+// ---------- drw.section ----------
+// 剖截面一律用 ProXSectionOffsetCreate（ProXsec.h，Creo 7+ 取代 ProXsecOffsetCreate）：
+//   ProXSectionOffsetCreate(ProSolid, ProMdlName, double trf[4][3], Pro2dLinedef* ent_arr /*ProArray*/,
+//                           ProXsecOffsetSide side, int flip, ProXsecExcludeModels, ProSelection* exclude_items,
+//                           ProXSectionCreateData data, ProXsecMdlname* r_xsec)
+//   折线所在平面 = trf 给出的局部坐标系（x 轴、y 轴、z 轴、原点）；只有一段的折线即平面剖（full/half），多段即阶梯剖（step）。
+// 视图设剖视：ProDrawingView2DSectionSet(drawing, view, ProName sec_name, ProDrawingViewSectionAreaType,
+//                                       ProSelection ref_sel, ProCurvedata* curve_data, ProView arrow_display_view)
+//   FULL：ref_sel = NULL；HALF：ref_sel = 分界基准面；LOCAL：ref_sel = 局部区域内模型边上的点，curve_data = 样条边界。
+//
+// cut_points 是 IR 坐标（Z 向上）：剖切折线画在零件顶面（z = cut_points[0].z）上，剖切面沿 IR −Z 方向穿过零件。
+// 折线平面局部系：x = IR +X → Creo (1,0,0)；y = IR +Y → Creo (0,0,−1)；z = x×y = Creo (0,1,0)（= IR +Z）；
+// 原点 = IR (0,0,z) → Creo (0,z,0)。于是折线二维坐标就是 IR 的 (x, y)。
+
+// 被替代视图的观察方向（IR）：剖切后保留"远离观察者"一侧的材料。GB 第一角：主视图从 −Y 看向 +Y，左视图从 −X 看向 +X
+std::array<double, 2> view_keep_dir(const std::string& view) {
+    if (view == "V_FRONT") return {0, 1};
+    if (view == "V_BACK") return {0, -1};
+    if (view == "V_LEFT") return {1, 0};
+    if (view == "V_RIGHT") return {-1, 0};
+    throw CmdError("BAD_ARGS", "剖视只能替代主/后/左/右视图（视线水平），收到 " + view);
+}
+
+void create_offset_xsec(ProSolid solid, const std::string& name, const std::vector<std::array<double, 3>>& cp,
+                        int flip) {
+    double f = model_mm_factor((ProMdl)solid);
+    double trf[4][3] = {{1, 0, 0}, {0, 0, -1}, {0, 1, 0}, {0, cp[0][2] * f, 0}};
+    Pro2dLinedef* ents = nullptr;
+    check(ProArrayAlloc(0, sizeof(Pro2dLinedef), (int)cp.size(), (ProArray*)&ents), "ProArrayAlloc(lines)");
+    for (size_t i = 0; i + 1 < cp.size(); ++i) {
+        Pro2dLinedef l;
+        std::memset(&l, 0, sizeof(l));
+        l.type = PRO_2D_LINE;
+        l.end1[0] = cp[i][0] * f;
+        l.end1[1] = cp[i][1] * f;
+        l.end2[0] = cp[i + 1][0] * f;
+        l.end2[1] = cp[i + 1][1] * f;
+        ProArrayObjectAdd((ProArray*)&ents, PRO_VALUE_UNUSED, 1, &l);
+    }
+    ProMdlName wname;
+    std::wstring wl = widen(name);
+    if (wl.size() >= sizeof(wname) / sizeof(wname[0])) {
+        ProArrayFree((ProArray*)&ents);
+        throw CmdError("BAD_ARGS", "剖截面名过长: " + name);
+    }
+    std::wcscpy(wname, wl.c_str());
+    ProXsecMdlname xs = nullptr;
+    // side = SIDE_2：折线在顶面，材料都在局部 z 的负侧（IR 下方）。TODO(实机核对): 若剖面为空改 SIDE_1
+    ProError e = ProXSectionOffsetCreate(solid, wname, trf, ents, PRO_XSEC_OFFSET_SIDE_2, flip,
+                                         PRO_XSEC_MODEL_EXCLUDE, nullptr, nullptr, &xs);
+    ProArrayFree((ProArray*)&ents);
+    check(e, "ProXSectionOffsetCreate");
+    if (xs) ProXsecMdlnameFree(&xs);
+}
+
+// 局部剖边界：图纸 mm 闭合折线 → 过各点的闭合样条（图纸坐标）
+// TODO(实机核对): curve_data 的坐标系（图纸坐标 / 视图坐标）与 ProSplinedataInit(par, pnts, tans, n, ProCurvedata*) 签名
+void make_boundary_spline(ProDrawing d, const std::vector<Pt>& pts_mm, ProCurvedata* cd) {
+    size_t n = pts_mm.size();
+    std::vector<ProPoint3d> pnts(n + 1), tans(n + 1);
+    std::vector<double> par(n + 1);
+    for (size_t i = 0; i <= n; ++i) sheet_mm_to_drw(d, pts_mm[i % n], pnts[i]);
+    double acc = 0;
+    for (size_t i = 0; i <= n; ++i) {
+        if (i > 0) {
+            double dx = pnts[i][0] - pnts[i - 1][0], dy = pnts[i][1] - pnts[i - 1][1];
+            acc += std::sqrt(dx * dx + dy * dy);
+        }
+        par[i] = acc;
+        const ProPoint3d& a = pnts[(i + n - 1) % n];  // 闭合：首尾切线一致
+        const ProPoint3d& b = pnts[(i + 1) % n];
+        tans[i][0] = (b[0] - a[0]) / 2;
+        tans[i][1] = (b[1] - a[1]) / 2;
+        tans[i][2] = 0;
+    }
+    for (auto& v : par) v /= acc > 0 ? acc : 1;
+    check(ProSplinedataInit(par.data(), pnts.data(), tans.data(), (int)(n + 1), cd), "ProSplinedataInit");
+}
+
+// drw.section：full / half / step 先建剖截面（label 为名）再把 replaces 视图设为 2D 剖视；
+// local 在 replaces 视图上按 boundary（图纸 mm 闭合折线）做局部剖。
 json cmd_drw_section(const json& a) {
     ProDrawing d = find_drawing(arg_str(a, "drawing"));
-    std::string parent = arg_str(a, "parent");
+    std::string parent = has(a, "parent") ? arg_str(a, "parent") : "";
     std::string label = arg_str(a, "label");
     std::string kind = arg_str(a, "kind");
-    if (kind == "step")
-        throw CmdError("PRO_TK_NOT_IMPLEMENTED",
-                       "阶梯剖需要偏移剖截面（草绘折线 + 偏移 ProXsec），TOOLKIT 无稳定公开的创建接口，首期未实现");
-    if (kind == "local")
-        throw CmdError("PRO_TK_NOT_IMPLEMENTED", "局部剖需要样条边界 + 视图局部剖设置，首期未实现");
-    if (kind != "full" && kind != "half") throw CmdError("BAD_ARGS", "kind 须为 full|half|step|local");
-
-    ProView pv = find_view(d, parent);
+    if (kind != "full" && kind != "half" && kind != "step" && kind != "local")
+        throw CmdError("BAD_ARGS", "kind 须为 full|half|step|local");
     std::string replaces = has(a, "replaces") ? arg_str(a, "replaces") : "";
     if (replaces.empty())
-        throw CmdError("BAD_ARGS", "首期要求 replaces 指向已存在的视图（由 CREOSON 先建投影视图），再由本命令设为剖视");
+        throw CmdError("BAD_ARGS", "replaces 须指向已存在的视图（由 CREOSON 先建好），本命令把它设为剖视");
     if (has(a, "center")) (void)arg_pt2(a, "center");  // 仅校验格式；位置由已存在的视图决定
+    ProView rv = find_view(d, replaces);
+    ProView pv = parent.empty() ? nullptr : find_view(d, parent);
 
-    // cut_points：模型坐标折线（mm）。full/half 取前两点，剖切平面为过该直线、平行于视图法向的平面。
     if (!has(a, "cut_points") || !a["cut_points"].is_array() || a["cut_points"].size() < 2)
         throw CmdError("BAD_ARGS", "cut_points 至少 2 个模型坐标点");
-    std::vector<std::array<double, 3>> cp;
+    std::vector<std::array<double, 3>> cp;  // 仍是 IR 坐标；create_offset_xsec 内换到 Creo
     for (const auto& pt : a["cut_points"]) {
         if (!pt.is_array() || pt.size() < 2) throw CmdError("BAD_ARGS", "cut_points 元素须为 [x,y(,z)]");
-        // 协议给 IR 坐标（Z 向上）；与 cmd_model.cpp 一致映射为 Creo 坐标 (x, z, −y)。
-        // 剖切平面 = 过 p0→p1、含 IR Z 轴（Creo Y 轴）方向的竖直面。
-        double x = pt[0].get<double>(), y = pt[1].get<double>(), z = pt.size() > 2 ? pt[2].get<double>() : 0.0;
-        cp.push_back({x, z, -y});
+        cp.push_back({pt[0].get<double>(), pt[1].get<double>(), pt.size() > 2 ? pt[2].get<double>() : 0.0});
     }
+    if (kind != "step") cp.resize(2);  // full/half/local：平面剖，取前两点
 
-    // 取视图所属模型
     ProSolid solid = nullptr;
-    // TODO(实机核对): ProDrawingViewSolidGet? 或 ProViewModelGet(drawing, view, &mdl)
-    check(ProDrawingViewSolidGet(d, pv, &solid), "ProDrawingViewSolidGet");
+    // TODO(实机核对): ProDrawingViewSolidGet(drawing, view, &solid)
+    check(ProDrawingViewSolidGet(d, rv, &solid), "ProDrawingViewSolidGet");
 
-    // 1) 创建平面剖截面，名为 label
-    // TODO(实机核对): TOOLKIT 创建截面的函数——ProXsec.h 以 ProXsecdata 为主，创建入口名与平面数据设置
-    //   （以下 ProXsecdataAlloc/NameSet/PlanarSet/ProXsecCreate 均为推测）；若无，备选：建剖切基准面特征再引用。
-    ProXsec xs;
-    {
-        ProXsecdata xd = nullptr;
-        check(ProXsecdataAlloc(&xd), "ProXsecdataAlloc");
-        std::wstring wl = widen(label);
-        check(ProXsecdataNameSet(xd, (wchar_t*)wl.c_str()), "ProXsecdataNameSet");
-        double f = model_mm_factor((ProMdl)solid);  // mm → 模型单位
-        double p0[3], p1[3];
-        for (int i = 0; i < 3; ++i) { p0[i] = cp[0][i] * f; p1[i] = cp[1][i] * f; }
-        check(ProXsecdataPlanarSet(xd, p0, p1), "ProXsecdataPlanarSet");
-        check(ProXsecCreate(solid, xd, &xs), "ProXsecCreate");
-        ProXsecdataFree(xd);
-    }
+    // 保留侧：折线方向 (dx,dy) 从 +Z 看的右侧为 (dy,−dx)；flip=FALSE 保留右侧（ProXsec.h 说明）
+    auto keep = view_keep_dir(replaces);
+    double dx = cp[1][0] - cp[0][0], dy = cp[1][1] - cp[0][1];
+    int flip = (dy * keep[0] - dx * keep[1]) > 0 ? 0 : 1;
+    create_offset_xsec(solid, label, cp, flip);
 
-    // 2) 把 replaces 视图设为 2D 剖视
-    ProView rv = find_view(d, replaces);
-    // TODO(实机核对): ProDrawingView2DSectionSet 参数与剖面范围枚举 PRO_VIEW_SECTION_TOTAL
-    check(ProDrawingView2DSectionSet(d, rv, &xs, PRO_VIEW_SECTION_TOTAL, nullptr), "ProDrawingView2DSectionSet");
+    ProName sname;
+    to_proname(label, sname);
+    ProDrawingViewSectionAreaType area = kind == "half" ? PRO_VIEW_SECTION_AREA_HALF
+                                         : kind == "local" ? PRO_VIEW_SECTION_AREA_LOCAL
+                                                           : PRO_VIEW_SECTION_AREA_FULL;
+    ProSelection ref = nullptr;
+    ProCurvedata curve;
+    ProCurvedata* curve_p = nullptr;
     if (kind == "half") {
-        // TODO(实机核对): 半剖需指定“半截面 + 参照平面 + 保留侧”，此处函数名为推测
-        check(ProDrawingViewSectionAreaSet(d, rv, PRO_VIEW_SECTION_HALF), "ProDrawingViewSectionAreaSet(HALF)");
+        // 分界面：过原点、法向沿剖切线方向的默认基准面（IR X 向 → RIGHT，IR Y 向 → FRONT）
+        // TODO(实机核对): 保留哪一半由 ProDrawingViewHalfVisibleAreaSet 的 keep_side 决定；此处用默认侧
+        std::string pln = std::fabs(dx) >= std::fabs(dy) ? "RIGHT" : "FRONT";
+        ProModelitem surf;
+        if (!find_datum_plane(solid, pln, &surf)) throw CmdError("PRO_TK_E_NOT_FOUND", "半剖分界面 " + pln + " 不存在");
+        check(ProSelectionAlloc(nullptr, &surf, &ref), "ProSelectionAlloc(half plane)");
+    } else if (kind == "local") {
+        if (!has(a, "boundary") || !a["boundary"].is_array() || a["boundary"].size() < 3)
+            throw CmdError("BAD_ARGS", "local 需要 boundary：图纸 mm 闭合折线（≥3 点）");
+        std::vector<Pt> bd;
+        Pt c{0, 0};
+        double xmin = 1e30, xmax = -1e30;
+        for (const auto& q : a["boundary"]) {
+            if (!q.is_array() || q.size() < 2) throw CmdError("BAD_ARGS", "boundary 元素须为 [x,y]");
+            bd.push_back({q[0].get<double>(), q[1].get<double>()});
+            c[0] += bd.back()[0];
+            c[1] += bd.back()[1];
+            xmin = std::min(xmin, bd.back()[0]);
+            xmax = std::max(xmax, bd.back()[0]);
+        }
+        c[0] /= bd.size();
+        c[1] /= bd.size();
+        // ref_sel：区域中心附近的模型边（局部剖以它所在的位置为"剖开处"）
+        ref = pick_edge_at(d, rv, c, std::max(1.5, (xmax - xmin) / 2));
+        make_boundary_spline(d, bd, &curve);
+        curve_p = &curve;
     }
-    // TODO(实机核对): 剖切箭头/剖切线显示（ProDrawingViewSectionArrowsShow?）
-    return json{{"xsec", label}, {"view", replaces}};
+    ProError e = ProDrawingView2DSectionSet(d, rv, sname, area, ref, curve_p, kind == "local" ? nullptr : pv);
+    if (ref) ProSelectionFree(&ref);
+    check(e, "ProDrawingView2DSectionSet");
+    return json{{"xsec", label}, {"view", replaces}, {"kind", kind}};
 }
 
 // drw.balloon：BOM 球标（首期降级为带引线的序号注释）

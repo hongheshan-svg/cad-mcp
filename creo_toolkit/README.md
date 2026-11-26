@@ -44,10 +44,10 @@ cmake --build build --config Release
 
 ## 首期限制（服务端如实报错，Python 端记警告、不中断）
 
-- `feat.cosmetic_thread`：返回 `PRO_TK_NOT_IMPLEMENTED`（螺纹规格已写在孔标注里）。
 - `feat.hole` 用拉伸切除实现，不建 118° 钻尖。
-- `drw.section`：只做 full / half；step / local 返回 `PRO_TK_NOT_IMPLEMENTED`。
-- `drw.dim kind=ordinate` 首期按基线式线性尺寸创建。
+- `feat.cosmetic_thread` 只建简单螺纹（不查 .hol 螺纹表），深度方向先试正向、失败再反向。
+- `drw.section` 的 half：分界面固定取垂直剖切线的默认基准面，保留哪一半用 Creo 默认；local 需要 Python 端给出 `boundary`
+  （规划层局部剖区域的图纸坐标），目前 Python 端仍跳过局部剖。
 - 钣金、焊接件、装配建模仍不走 TOOLKIT。
 
 ## 实机核对顺序（建议）
