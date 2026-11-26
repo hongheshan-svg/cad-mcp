@@ -757,17 +757,23 @@ GR_W, GR_H = 48.0, 10.0  # "其余 √Ra x (√)" 占位（render_gdt.general_ro
 
 
 def _balance_views(plan: "DrawingPlan") -> None:
+    for v, m in _balance_moves(plan):
+        v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - m)
+
+
+def _balance_moves(plan: "DrawingPlan") -> list:
     """视图组整体下移，使图纸上下留白均匀（工程师不会把视图全挤在左上角）。
     视图外扩：下/左各 30 mm（总体尺寸、坐标尺寸带），上 12 mm（剖视名称），右 16 mm；
     与右侧标题栏/技术要求栏横向重叠的视图，下沿不得低于该栏顶部。"""
     W, H = plan.sheet_size
     if not plan.views:
-        return
+        return []
     col_x = W - 5 - 180
-    col_top = 5 + 56 + 14 + 5 * len(plan.notes) + 6 + 16  # 同 right_column_bottom（含"其余"粗糙度）
+    col_top = 5 + 56 + 14 + 5 * len(plan.notes) + 6 + 16 \
+        + (7 * (len(plan.bom) + 1) if plan.bom else 0)  # 同 right_column_bottom（含"其余"粗糙度、明细表）
     proj = [v for v in plan.views if v.type != "iso"]  # 轴测图不标尺寸、不与投影对齐：原位不动
     if not proj:
-        return
+        return []
     top_gap, bot_gap = float("inf"), float("inf")
     for v in proj:
         cx, cy = v.origin_on_sheet
@@ -777,7 +783,7 @@ def _balance_views(plan: "DrawingPlan") -> None:
         bot_gap = min(bot_gap, y0 - ((col_top + 4) if x1 > col_x else MARGIN + 2))
     m = (bot_gap - top_gap) / 2
     if m <= 2:
-        return
+        return []
     m = min(m, bot_gap)
 
     def box(v, dy, pad):
@@ -798,11 +804,10 @@ def _balance_views(plan: "DrawingPlan") -> None:
             break
         m -= 2  # 下移后压到轴测图：少移一点
     if m <= 2:
-        return
+        return []
     m = round(m, 1)
     mv = moves(m)
-    for v in proj + isos:
-        v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - mv.get(id(v), m))
+    return [(v, mv.get(id(v), m)) for v in proj + isos]
 
 
 def notes_x(plan: "DrawingPlan") -> float:
@@ -1444,6 +1449,10 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
                                     f"{_extent(a.bbox, axis):g}", f"overall_{axis}"))
                     done.add(axis)
     bom = a.bom() if (spec.bom_table or spec.balloons) else []
+    # 视图组上下居中（先定视图位置，序号气泡与安装尺寸再按新位置排）
+    probe = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, [],
+                        ["技术要求："] + ["x"] * (3 + len(spec.notes)), {}, bom=bom if spec.bom_table else [])
+    _balance_views(probe)
     balloons: list[dict[str, Any]] = []
     if spec.balloons and bom:
         bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet])
