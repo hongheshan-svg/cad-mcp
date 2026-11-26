@@ -1169,6 +1169,16 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         for h in p.end_holes:  # 轴端螺孔：GB/T 4459.1 简化标注（螺纹代号↓螺纹深 孔↓底孔深），从端面轴线处引出
             dims.append(Dim("front", "callout", None, h["d"], h["callout"], f"eh:{h['side']}",
                             (0.0 if h["side"] == "start" else Ltot, 0.0)))
+        for h in p.cross_holes:  # 径向横孔：主视图上是圆，引线标注 + 孔心到轴段起点的定位尺寸
+            text = h["callout"]
+            if not h["thread"]:
+                text = _dia_text(h["d"], h["tol"] or None, spec.fit_deviations) + text[len(f"Φ{h['d']:g}{h['tol']}"):]
+            dims.append(Dim("front", "callout", None, h["d"], text, f"xh:{h['name']}", (h["z"], 0.0)))
+            sz0 = p.step_z(h["step"])[0]
+            if h["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1:  # 轴端段：从轴端面定位
+                dims.append(Dim("front", "linear", "z", Ltot - h["z"], f"{Ltot - h['z']:g}", f"{h['name']}_pos", (h["z"], Ltot)))
+            else:
+                dims.append(Dim("front", "linear", "z", h["z"] - sz0, f"{h['z'] - sz0:g}", f"{h['name']}_pos", (sz0, h["z"])))
         for h in p.center_holes:  # 中心孔：GB/T 4459.5 简化标注，从端面轴线处引出
             dims.append(Dim("front", "callout", None, h["d"], f"GB/T 4459.5-{h['code']}", f"ch:{h['end']}",
                             (0.0 if h["end"] == "start" else Ltot, 0.0), {"keep": h["keep"]}))
@@ -1210,6 +1220,12 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                 if f["z0"] - sz0 > 1e-6:
                     dims.append(Dim("front", "linear", "z", f["z0"] - sz0, f"{f['z0'] - sz0:g}", f"{f['name']}_pos",
                                     (sz0, f["z0"])))
+    top = [d for d in dims if d.view == "front" and d.kind == "linear" and d.axis == "z"
+           and not d.ref.startswith(("step", "overall"))]
+    for d in top:  # 横孔定位尺寸与上方其它尺寸重叠：放到轮廓与尺寸行之间的低一道
+        if d.ref.startswith("XH") and any(o is not d and min(d.at) < max(o.at) - 1e-6 and min(o.at) < max(d.at) - 1e-6
+                                          and not (o.extra or {}).get("track") for o in top):
+            d.extra = {**(d.extra or {}), "track": 1}
     if spec.dimensions != "none":
         dims += _precision_dims(p, views, {"front"}, True)
         nrow = max((r for _, r in shaft_gtol_layout(p, scale).values()), default=0)
@@ -2108,6 +2124,10 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
             a_, b_ = (f["z1"], Ltot) if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1 else (sz0, f["z0"])
             if b_ - a_ > 1e-6:
                 texts.append(((a_ + b_) / 2, (text_width(f"{b_ - a_:g}", 3.5) / 2 + 1.5) / sc))
+    for h in p.cross_holes:  # 横孔定位尺寸的界线与文字
+        lines.append(h["z"])
+        sz0 = p.step_z(h["step"])[0]
+        texts.append(((sz0 + h["z"]) / 2, (text_width(f"{h['z'] - sz0:g}", 3.5) / 2 + 1.5) / sc))
     shoulder_faces = [p.step_z(int(g["target"][9:]))[1] for g in p.geotols if g["target"].startswith("shoulder:")]
     ra_steps = {r["target"] for r in p.roughness}  # 这些段的框格上方可能还要标 Ra（占上一行）
 
@@ -2345,6 +2365,8 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
     # 文字的障碍：键槽/环槽轮廓、各竖线、轴端螺孔虚线；螺纹只有终止线（小径细线是水平的）
     obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
     obst += [(h["z0"], h["z1"] + 0.3 * h["tap"]) for h in p.end_holes]
+    obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) for h in p.cross_holes]
+    busy += [(h["z"] - h["d"] / 2, h["z"] + h["d"] / 2) for h in p.cross_holes if h["step"] == i]
     for f in p.shaft_features:
         if f["step"] == i and f["kind"] == "thread":
             zt = f["z0"] if f["side"] == "end" else f["z1"]
@@ -2419,9 +2441,11 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             elif d.ref.startswith("step"):
                 y = y_bot - 15
             else:
-                y = y_top + 14
+                y = y_top + 14 - 7 * (d.extra or {}).get("track", 0)
             kw = not d.ref.startswith(("step", "overall"))
-            pts = [edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
+            xh = {round(h["z"], 6): h for h in p.cross_holes} if d.ref.startswith("XH") else {}
+            pts = [(round(X(z), 2), round(cy + xh[round(z, 6)]["hole"] / 2 * sc, 2)) if round(z, 6) in xh
+                   else edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": (round((pts[0][0] + pts[1][0]) / 2, 2), round(y, 2)),
                        "orient": "h"}
         elif d.kind == "diameter" and d.ref.startswith("bore"):
@@ -2450,6 +2474,17 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                                                      "text_at": (round(sx + sym, 2), round(ey_ + 0.8, 2)),
                                                      "end": (round(end[0], 2), round(end[1], 2)), "dir": sgn,
                                                      "sym_at": (round(sx, 2), round(ey_, 2))}}
+        elif d.kind == "callout" and d.ref.startswith("xh:"):
+            # 横孔：箭头在孔圆周右上 45°，引线斜向上到轮廓上方，文字向右（同环槽标注行）
+            h = next(h for h in p.cross_holes if h["name"] == d.ref[3:])
+            rh = h["hole"] / 2 * sc
+            ax, ay = X(h["z"]) + rh * 0.7071, cy + rh * 0.7071
+            ty = y_top + 18
+            ex_ = ax + (ty - ay)
+            w = text_width(d.text, 3.5) + 1
+            d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex_, 2), round(ty, 2)),
+                                                     "text_at": (round(ex_ + 0.5, 2), round(ty + 0.8, 2)),
+                                                     "end": (round(ex_ + w, 2), round(ty, 2)), "dir": 1}}
         elif d.kind == "callout" and d.ref in ({"chamfer"} | {f["name"] for f in p.shaft_features}):
             # 位置同 render_shaft：引线从轮廓点斜向上到主视图上方的水平线
             z, r = d.at

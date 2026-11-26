@@ -131,6 +131,7 @@ class ResolvedPart:
     shaft_chamfer: float = 0.0
     shoulder_fillets: list[dict[str, Any]] = field(default_factory=list)  # 轴肩圆角 {z, r 小端半径, R, step 小端段号}
     flange_holes: list[dict[str, Any]] = field(default_factory=list)  # 法兰均布孔 {name, step, z0, z1, count, pcd, d, angles, pts, callout}
+    cross_holes: list[dict[str, Any]] = field(default_factory=list)  # 径向横孔 {name, step, z, d, hole, through, depth, drill, thread, callout}
     end_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端螺孔 {name, side, size, d, d1, tap, depth, drill, z0, z1, callout}
     shaft_bores: list[dict[str, Any]] = field(default_factory=list)  # 内孔 {name, z0, z1, d, tol, side, through}
     center_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端中心孔 {end: start|end, type, d, D, l1, code, keep}
@@ -808,6 +809,11 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 shaft_feats.append({"kind": "groove", "type": f.type, "name": f.name, "step": f.step, "d": d,
                                     "d2": d2, "width": m, "z0": sz0 + pos, "z1": sz0 + pos + m, "offset": pos,
                                     "callout": label})
+    cross_holes: list[dict[str, Any]] = []
+    if isinstance(base, ShaftBase):
+        cross_holes = _cross_holes(base, steps, shaft_feats, shaft_bores, shaft_chamfer, ev)
+        for h in cross_holes:
+            volume -= h["volume"]
     for f in spec.features:
         if isinstance(f, Boss):
             pr = resolve_profile(f.profile, ev)
@@ -961,7 +967,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes, flange_holes=flange_holes, shoulder_fillets=shoulder_fillets,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes, cross_holes=cross_holes, flange_holes=flange_holes, shoulder_fillets=shoulder_fillets,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,
@@ -1037,3 +1043,72 @@ def shaft_thread_points(p: "ResolvedPart", f: dict) -> tuple[list[float], list[f
     z = f["z0"]
     on_end = z < 1e-6 and c > 0
     return [r, 0.0, z + c if on_end else z], [r - c if on_end else r, 0.0, z]
+
+
+def _cross_holes(base, steps, feats, bores, chamfer, ev) -> list[dict[str, Any]]:
+    """径向横孔：位置、孔径、深度校验；不与键槽/环槽/螺纹/其它横孔重叠，离轴肩/端面（含倒角）≥ 1 mm。"""
+    from ..standards import ext_thread
+    out: list[dict[str, Any]] = []
+    Lt = sum(L for L, _ in steps)
+    for k, h in enumerate(base.cross_holes):
+        name = f"XH{k + 1}"
+        i = h.step
+        if not 0 <= i < len(steps):
+            raise CadError(SPEC_INVALID, f"cross_holes[{k}]: step {i} 超出范围 0..{len(steps) - 1}")
+        if (h.diameter is None) == (h.size is None):
+            raise CadError(SPEC_INVALID, f"cross_holes[{k}]: diameter（光孔）与 size（螺孔）须且只能给一个")
+        L, D = steps[i]
+        sz0 = sum(LL for LL, _ in steps[:i])
+        pos = ev(h.position) if h.position is not None else L / 2
+        thread = None
+        if h.size is not None:
+            d, pitch, _, _ = ext_thread(h.size)
+            hole = round(d - pitch, 2)
+            thread = {"size": h.size, "d": d, "pitch": pitch, "tol": h.tolerance or "6H"}
+        else:
+            d = hole = ev(h.diameter)
+        through = h.depth is None
+        r_in = max((b["d"] / 2 for b in bores if b["z0"] < sz0 + pos + d / 2 and b["z1"] > sz0 + pos - d / 2), default=0.0)
+        depth = drill = None
+        if not through:
+            depth = ev(h.depth)
+            drill = ev(h.drill_depth) if h.drill_depth is not None else (depth + math.ceil(0.5 * d) if thread else depth)
+            if depth <= 0 or drill < depth:
+                raise CadError(SPEC_INVALID, f"横孔 {name}：孔深须 > 0（螺孔底孔深 ≥ 螺纹深）")
+            if r_in > 0:
+                raise CadError(CAPABILITY_UNSUPPORTED, f"横孔 {name}：空心轴/套类上只支持通孔", hint="去掉 depth")
+            if drill > D - 2:
+                raise CadError(SPEC_INVALID, f"横孔 {name} 深 {drill:g} 超过轴径 Φ{D:g}", hint="改通孔（去掉 depth）")
+        if d > 0.5 * D:
+            raise CadError(SPEC_INVALID, f"横孔 {name} Φ{d:g} 大于轴段 {i}（Φ{D:g}）直径的一半，轴被削弱过多",
+                           hint="减小孔径或加大轴径")
+        edge0 = chamfer if i == 0 else 0.0
+        edge1 = chamfer if i == len(steps) - 1 else 0.0
+        if pos - d / 2 < edge0 + 1 - 1e-9 or pos + d / 2 > L - edge1 - 1 + 1e-9:
+            raise CadError(SPEC_INVALID, f"横孔 {name}：孔边离轴段 {i} 端面（含倒角）须 ≥ 1 mm",
+                           hint=f"position 取 {edge0 + 1 + d / 2:g}–{L - edge1 - 1 - d / 2:g}")
+        z = sz0 + pos
+        for f in feats:
+            if f["step"] == i and f["kind"] != "gear" and f["z0"] - 1 < z + d / 2 and z - d / 2 < f["z1"] + 1:
+                raise CadError(SPEC_INVALID, f"横孔 {name} 与 {f['name']} 重叠（间距须 ≥ 1 mm）")
+            if f["kind"] == "gear" and f["step"] == i:
+                raise CadError(CAPABILITY_UNSUPPORTED, f"横孔 {name} 不能开在齿轮段上")
+        for o in out:
+            if abs(o["z"] - z) < (o["d"] + d) / 2 + 1:
+                raise CadError(SPEC_INVALID, f"横孔 {name} 与 {o['name']} 重叠")
+        if r_in > 0 and D / 2 - r_in < 1:
+            raise CadError(SPEC_INVALID, f"横孔 {name}：壁厚不足")
+        if r_in > 0 and hole / 2 > r_in:
+            raise CadError(CAPABILITY_UNSUPPORTED, f"横孔 {name} Φ{hole:g} 大于内孔 Φ{2 * r_in:g}（剖视画法未支持）")
+        tol = "" if thread else (h.tolerance or "")
+        if thread:
+            code = f"{h.size.replace('x', '×')}-{thread['tol']}"
+            callout = f"{code} 通" if through else f"{code}↓{depth:g} 孔↓{drill:g}"
+        else:
+            callout = f"Φ{d:g}{tol} 通" if through else f"Φ{d:g}{tol}↓{depth:g}"
+        wall = 2 * math.sqrt(max(D * D / 4 - hole * hole / 4, 0)) - (2 * r_in if r_in else 0)
+        vol = math.pi * hole * hole / 4 * (wall if through else drill)
+        out.append({"name": name, "step": i, "z": z, "d": d, "hole": hole, "D": D, "through": through,
+                    "depth": depth, "drill": drill, "thread": thread, "tol": tol, "callout": callout, "volume": vol,
+                    "pos": pos})
+    return out

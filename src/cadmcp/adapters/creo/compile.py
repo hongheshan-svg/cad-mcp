@@ -220,6 +220,18 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
                  entities=[_circle((0, 0), h["tap"] / 2)], depth=h["drill"], direction="normal", op="cut", through_all=False)
             feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],
                  major_diameter=h["d"], length=h["depth"])
+        for h in p.cross_holes:  # 径向横孔：RIGHT（u=+Y, v=+Z，法向 +X）上画圆；通孔从 +X 外侧反向切穿，盲孔草绘面在孔底向外切
+            R = h["D"] / 2
+            circ = [_circle((0, h["z"]), h["hole"] / 2)]
+            if h["through"]:
+                feat("feat.extrude", h["name"], h["callout"], plane={"ref": "RIGHT", "offset": R + 1}, entities=circ,
+                     depth=2 * R + 2, direction="reverse", op="cut", through_all=False)
+            else:
+                feat("feat.extrude", h["name"], h["callout"], plane={"ref": "RIGHT", "offset": R - h["drill"]},
+                     entities=circ, depth=h["drill"] + 1, direction="normal", op="cut", through_all=False)
+            if h["thread"]:
+                feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],
+                     major_diameter=h["thread"]["d"], length=h["D"] if h["through"] else h["depth"])
         if p.shoulder_fillets:  # 轴肩圆角：轴肩根部圆边上的点
             feat("feat.round", "SHOULDER_FILLET", "轴肩圆角", edges=[[sf["r"], 0, sf["z"]] for sf in p.shoulder_fillets],
                  radius=p.shoulder_fillets[0]["R"])

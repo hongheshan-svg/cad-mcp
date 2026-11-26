@@ -499,3 +499,13 @@ def test_sw_shoulder_fillets(sw_svc):
     svc.change_begin("SF")
     svc.build(PartSpec.model_validate(SF))
     assert [c for c in ad.sw.calls if c[0] == "FeatureFillet3"]
+
+
+def test_sw_executor_cross_holes(sw_svc):
+    from test_cross_holes import XS
+    svc, ad = sw_svc
+    svc.change_begin("XS")
+    svc.build(PartSpec.model_validate(XS))
+    svc.build(DrawingSpec.model_validate({"model": "XS1", "title_block": {"designer": "AI"}}))
+    cuts = [c[1] for c in ad.sw.calls if c[0] == "FeatureCut4"]
+    assert len(cuts) == 4  # 键槽 + 通孔两半 + 盲螺孔

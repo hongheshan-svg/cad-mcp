@@ -37,6 +37,20 @@ class ShaftBase(Strict):
     bores: list["ShaftBore"] = Field([], description="内孔（套类/空心轴）：从轴端起的同轴圆孔；有内孔时主视图全剖")
     end_holes: list["EndHole"] = Field([], description="轴端螺孔（装挡圈/压板），主视图细虚线 + 端面引线标注")
     flange_holes: list["FlangeHoles"] = Field([], description="法兰/端盖轴向均布通孔（需有内孔，主视图全剖）")
+    cross_holes: list["CrossHole"] = Field([], description="径向横孔（销孔/油孔/紧定螺钉孔）：孔轴线垂直于主视图，"
+                                           "主视图上画成圆并引线标注，另注孔心到轴段起点的定位尺寸")
+
+
+class CrossHole(Strict):
+    """轴上径向横孔：孔轴线沿主视图投射方向（主视图上是圆）。diameter（光孔）与 size（螺孔，如 M6）二选一；
+    depth 省略 = 通孔（穿过轴线两侧）；盲孔从主视图朝向观察者的一侧钻入。"""
+    step: int
+    position: Num | None = Field(None, description="孔心距该轴段起点的距离；缺省为轴段中点")
+    diameter: Num | None = Field(None, description="光孔直径（销孔常配 tolerance H7）")
+    size: str | None = Field(None, description="螺孔：M6 或 M6x0.75")
+    depth: Num | None = Field(None, description="孔深（螺孔为螺纹深）；省略 = 通孔")
+    drill_depth: Num | None = Field(None, description="螺孔底孔深；缺省 = 螺纹深 + 0.5d（取整）")
+    tolerance: str | None = Field(None, description="光孔公差带（如 H7）；螺孔缺省 6H")
 
 
 class EndHole(Strict):

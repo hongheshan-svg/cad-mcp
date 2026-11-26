@@ -512,3 +512,10 @@ Creo：`feat.round` edges 同样给点坐标。
 - SW：`gtol` 的 `at` 落在主视图轴肩端面竖线中点，`_select_edge_at` 应选中端面轮廓边，框格引线指向它；核对引线是否
   附着在端面（而不是相邻圆柱面的轮廓线）。Creo：`tk.drw.gtol` 同一点附着。
 - SVG 预览的折线引线（小端一侧水平箭头）在原生图里是直引线，位置差异属预期。
+
+## 轴径向横孔（cross_holes，TODO(实机核对)）
+- `tests/test_cross_holes.py` 的 XS 样例：通孔 Φ6H7 = Right Plane 上两个草图各切一半（`XH1` 向 +X、`XH1_B` 向 −X，
+  起始偏移 0）；盲螺孔 M6 = 草图面偏移到孔底（R − 底孔深）向 +X 切出。核对 SW 主视图（*Right）上两个孔是圆、
+  盲孔开口朝向观察者；`XH2_THR` 装饰螺纹选边点 (√(R²−r²), r, z) 是否落在孔口交线上。
+- Creo：通孔草绘面 RIGHT 偏移 R+1、反向切 2R+2；盲孔草绘面在孔底向 +X 切。核对 Creo 主视图方向与 SW 一致（+X 朝观察者）。
+- 定位尺寸第二点选孔圆顶点：SW AddDimension 应量到圆心。

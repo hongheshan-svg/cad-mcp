@@ -181,6 +181,27 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                                                     "edge_pts": [[h["tap"] / 2, 0, zm]], "diameter": h["d"],
                                                     "external": False, "tol": h["callout"].split("-")[1].split("↓")[0]},
                                 "孔口圆边 → 内螺纹装饰线（失败不影响几何）"))
+        for h in p.cross_holes:  # 径向横孔：Right Plane(YZ) 画圆，沿 ±X 切（主视图 *Right 从 +X 看，盲孔从 +X 钻入）
+            R = h["D"] / 2
+            halves = [("", False), ("_B", True)] if h["through"] else [("", False)]
+            for suf, flip in halves:
+                sk = f"SK_{h['name']}{suf}"
+                ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Right Plane"}))
+                ops.append(NativeOp("sketch_circle_3d", {"sketch": sk, "center": [0, 0, h["z"]], "diameter": h["hole"]}))
+                if h["through"]:
+                    ops.append(NativeOp("keyway_cut", {"feature": h["name"] + suf, "sketch": sk, "start_offset": 0,
+                                                       "depth": R + 1, "flip": flip}, f"{h['callout']}：自轴线向{'−' if flip else '+'}X 切穿"))
+                else:
+                    ops.append(NativeOp("keyway_cut", {"feature": h["name"], "sketch": sk, "start_offset": R - h["drill"],
+                                                       "depth": h["drill"] + 1, "flip": False},
+                                        f"{h['callout']}：草图面在孔底（平底），向 +X 切出轴表面"))
+            if h["thread"]:
+                rh = h["hole"] / 2
+                ops.append(NativeOp("cosmetic_thread", {"feature": h["name"] + "_THR", "size": h["thread"]["size"],
+                                                        "depth": h["D"] if h["through"] else h["depth"],
+                                                        "edge_pts": [[round((R * R - rh * rh) ** 0.5, 4), rh, h["z"]]],
+                                                        "diameter": h["thread"]["d"], "external": False,
+                                                        "tol": h["thread"]["tol"]}, "孔口边 → 内螺纹装饰线（失败不影响几何）"))
         if p.shoulder_fillets:  # 轴肩圆角：按轴肩根部圆边上的点选边（小端外圆与轴肩面的交线）
             ops.append(NativeOp("select_edges_at", {"points": [[sf["r"], 0, sf["z"]] for sf in p.shoulder_fillets]},
                                 "SelectByID2(EDGE, 模型坐标点) 逐个追加"))

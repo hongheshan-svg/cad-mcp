@@ -235,6 +235,17 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         for y in (rd, -rd):
             s.line(*P(z_end, y), *P(zt, y), THIN, dash=HIDDEN)
         s.line(*P(zt, -rd), *P(zt, rd), THIN, dash=HIDDEN)
+    # 径向横孔（孔轴线沿投射方向）：孔圆粗实线；螺孔加大径 3/4 圈细实线（GB/T 4459.1）；竖直中心线
+    for h in part.cross_holes:
+        hx, hy = P(h["z"], 0)
+        rh = h["hole"] / 2 * sc
+        s.circle(hx, hy, rh, THICK)
+        if h["thread"]:
+            rd = h["thread"]["d"] / 2 * sc
+            arc = [(hx + rd * math.cos(math.radians(a)), hy + rd * math.sin(math.radians(a))) for a in range(0, 271, 6)]
+            s.poly(arc, THIN, close=False)
+        ext = (h["thread"]["d"] / 2 if h["thread"] else h["hole"] / 2) * sc + 2
+        s.line(hx, hy - ext, hx, hy + ext, THIN, CENTER)
     # 断开画法：盖住间隙内的轮廓，两侧画波浪线（细实线，GB/T 4457.4）
     for a, b in main.breaks:
         r = radius_at_seg(segs, (a + b) / 2)
@@ -296,7 +307,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 y = y_bot - 15
                 _hdim(s, xa, xb, cy - radius_at(za + 1e-6) * sc, cy - radius_at(zb - 1e-6) * sc, y, d.text)
             else:  # 键槽、环槽定位：画在主视图上方
-                y = y_top + 14
+                y = y_top + 14 - 7 * (d.extra or {}).get("track", 0)
                 _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text)
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
             from .detailing import bore_dia_overflow, bore_dia_place
@@ -330,6 +341,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             else:
                 render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
+        elif d.kind == "callout" and d.ref.startswith("xh:") and (d.extra or {}).get("label"):
+            lb = d.extra["label"]
+            s.line(*lb["anchor"], *lb["elbow"], THIN)
+            s.line(*lb["elbow"], *lb["end"], THIN)
+            _arrow(s, *lb["anchor"], lb["anchor"][0] - lb["elbow"][0], lb["anchor"][1] - lb["elbow"][1])
+            s.text(*lb["text_at"], d.text, 3.5)
         elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")) and (d.extra or {}).get("label"):
             lb = d.extra["label"]  # 中心孔 GB/T 4459.5
             s.line(*lb["anchor"], *lb["elbow"], THIN)
