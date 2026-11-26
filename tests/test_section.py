@@ -212,6 +212,6 @@ def test_through_hole_walls_stop_at_cut_pocket():
     zlo = p.bbox.zmin
     for pl in g["edges"]:
         for a, b in zip(pl, pl[1:]):
-            inside = all(-50 + 1e-6 < q[0] < 50 - 1e-6 and zlo + 1e-6 < q[2] < zlo + 10 - 1e-6 for q in ((
-                (a[0] + b[0]) / 2, 0, (a[2] + b[2]) / 2),))
-            assert not inside, (a, b)
+            for k in range(1, 20):  # 沿线段采样：不得有点落在型腔空腔内部
+                x, z = a[0] + (b[0] - a[0]) * k / 20, a[2] + (b[2] - a[2]) * k / 20
+                assert not (-50 + 1e-6 < x < 50 - 1e-6 and zlo + 1e-6 < z < zlo + 10 - 1e-6), (a, b)
