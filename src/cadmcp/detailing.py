@@ -354,6 +354,11 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
             if cuts:
                 frac = max((0.5, 0.2, 0.8), key=lambda t: min(abs(z0 + t * (z1 - z0) - c) for c in cuts))
+        elif kind == "roughness":  # 环槽等的引线从槽口斜向右上：符号（文字在右）避开，离槽越远越好
+            grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] != "keyway"
+                       and z0 - 1 <= (f["z0"] + f["z1"]) / 2 <= z1 + 1]
+            if grooves:
+                frac = max((0.7, 0.5, 0.3, 0.2), key=lambda t: round(min(abs(z0 + t * (z1 - z0) - c) for c in grooves), 3))
         return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
 
     for d in p.datums:
