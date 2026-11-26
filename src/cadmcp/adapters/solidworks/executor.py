@@ -1077,19 +1077,63 @@ class SwExecutor:
         self.readback.setdefault("sections", []).append(label)
         return {"segments": len(segs), "depth_mm": depth}
 
-    def op_section_view(self, label: str, parent: str, z: float, center):
-        raise OpFailed("section view: P1 实机实现（在主视图画垂直剖切线 + CreateSectionViewAt5，移出放置）")
+    # 移出断面图只显示切面（断面），候选枚举名按类型库实际名称查找。TODO(实机核对): swCreateSectionViewAtOptions_e 成员名
+    SURFACE_CUT_NAMES = ("swCreateSectionView_DisplayOnlySurfaceCut", "swCreateSectionView_DisplaySurfaceCut",
+                         "swCreateSectionView_PartialSection")
 
-    def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str, pts=None, pos=None, orient=None):
+    def op_section_view(self, label: str, parent: str, z: float, center, points=None):
+        """轴类移出断面图：主视图上画垂直轴线的剖切线（图纸坐标）→ 选中 → CreateSectionViewAt5（只显示切面）
+        → 解除与父视图的对齐 → 移到规划位置（断面图在主视图下方、剖切位置正下方）。登记为 views["section:<label>"]。"""
+        pv = self.views.get(parent)
+        if pv is None:
+            raise OpFailed(f"parent view {parent} not on sheet")
+        if not points or len(points) != 2:
+            raise OpFailed(f"section {label}: 规划没有给出剖切线图纸坐标")
+        self.model.ActivateView(pv.Name)
+        (ax, ay), (bx, by) = points
+        seg = self.model.SketchManager.CreateLine(ax * MM, ay * MM, 0, bx * MM, by * MM, 0)
+        if seg is None:
+            raise OpFailed("section line CreateLine failed")
+        self.model.ClearSelection2(True)
+        seg.Select4(True, None)
+        opts = self._const(self.SURFACE_CUT_NAMES) or 0
+        sv = self.model.CreateSectionViewAt5(center[0] * MM, center[1] * MM, 0, label[0], opts, None, 0)
+        if sv is None:
+            raise OpFailed(f"CreateSectionViewAt5 failed（断面 {label}）")
+        moved = True
+        try:  # 剖视图默认与剖切线正交对齐（会跑到主视图右侧同一高度）；断面图按 GB 可移出放置
+            sv.RemoveAlignment()  # TODO(实机核对): IView.RemoveAlignment
+            sv.Position = (center[0] * MM, center[1] * MM)
+        except Exception:  # noqa: BLE001  移不动只影响位置，断面本身已生成
+            moved = False
+        self.views[f"section:{label}"] = sv
+        self.readback.setdefault("sections", []).append(label)
+        return {"name": sv.Name, "surface_cut_option": opts, "moved": moved}
+
+    def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str, pts=None, pos=None, orient=None,
+                           arc_end=None):
         """轴类尺寸：线性（轴段长/总长/键槽长与定位）= 选两条垂直边线；直径 = 选上下两条轮廓线，
-        再用文字覆盖成 Φ + 公差带（text 如 Φ20k6），不依赖公差枚举。"""
+        再用文字覆盖成 Φ + 公差带（text 如 Φ20k6），不依赖公差枚举。
+        断面图槽宽 6N9 同样用后缀覆盖；arc_end = [第 1 点, 第 2 点] 的圆弧条件（"max" = 量到圆的远端，用于 d−t）。"""
         disp = self._dim_between_edges(view, ref, pts, pos, orient)
-        if kind == "diameter":
-            m = re.match(r"^\s*[Φφ⌀]?\s*[0-9.]+\s*(.*)$", text)
-            suffix = (m.group(1) if m else "").strip()
+        if arc_end:
+            conds = {"center": ("swArcEndCondition_Center",), "min": ("swArcEndCondition_Min",),
+                     "max": ("swArcEndCondition_Max",)}
+            defaults = {"center": 1, "min": 2, "max": 3}  # TODO(实机核对): swArcEndCondition_e 取值
+            for i, c in enumerate(arc_end):
+                if not c:
+                    continue
+                try:  # IDisplayDimension.SetArcEndCondition(Index 1/2, Condition)
+                    disp.SetArcEndCondition(i + 1, self._const(conds[c]) or defaults[c])
+                except Exception:  # noqa: BLE001
+                    self.readback.setdefault("dim_arc_failed", []).append(ref)
+        m = re.match(r"^\s*([Φφ⌀]?)\s*[0-9.]+\s*(.*)$", text)
+        suffix = (m.group(2) if m else "").strip()
+        prefix = "<MOD-DIAM>" if kind == "diameter" else ""
+        if kind == "diameter" or suffix:
             all_ = self._k("swDimensionTextAll", 0)
             try:  # <MOD-DIAM> 为 SW 直径符号标记，<DIM> 为尺寸值；公差带作为后缀文字
-                disp.SetText(all_, "<MOD-DIAM><DIM>" + suffix)
+                disp.SetText(all_, prefix + "<DIM>" + suffix)
             except Exception as e:  # noqa: BLE001  文字覆盖失败只影响外观，尺寸本身已生成
                 self.readback.setdefault("dim_text_failed", []).append(ref)
                 return {"text_override": f"failed: {e}"}

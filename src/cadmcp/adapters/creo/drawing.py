@@ -222,6 +222,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     for d in plan.dims:
         ex = d.extra or {}
         vw = view_name(d.view)
+        if d.view in ("section", "flat_pattern"):  # 移出断面图/展开图首期不建（见上），其标注一并跳过
+            skip("断面图/展开图标注")
+            continue
         if d.kind in ("linear", "diameter", "ordinate") and ex.get("sheet_pts"):
             p1, p2 = ex["sheet_pts"]
             args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",

@@ -222,6 +222,27 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
    - 轴类视图的边线是否能被 `SelectByID2(..., "EDGE", ...)` 按图纸坐标选中，取决于该视图当前精度；选不中时 oplog 会写明坐标。
 4. 非坐标视图的总体尺寸（零件/装配的各视图）取左右（或上下）轮廓线的中点；L 形等非矩形轮廓可能选不中，属预期的软失败。
 
+## 轴类移出断面图 / 断面图与展开图尺寸（op_section_view）
+
+规划层新增（CAD 无关，坐标与 SVG 预览一致）：`_shaft_section_dim_sheet`（断面图槽宽、d−t；`extra["section"]` = 断面标签，
+`extra["arc_end"] = ("max", None)` 表示第 1 点在圆周上、应量到圆的远端）、`flat_dim_sheet`（展开图总宽/总高，选边点避开折弯线；
+折弯说明 `sheet_pos`），以及轴类倒角/挡圈槽引出标注的 `extra["label"]`。
+
+执行器：
+- `op_section_view(label, parent, z, center, points)`：主视图上沿 `points` 画竖直剖切线（上下伸出外形 5 mm）→ `Select4` →
+  `CreateSectionViewAt5(x, y, 0, "A", opts, None, 0)` → `RemoveAlignment()` → `Position = 规划位置`；登记为 `views["section:A-A"]`。
+- 断面图尺寸走 `op_shaft_dimension`（view = `section:A-A`）：槽宽文字覆盖 `<DIM>N9`；d−t 用 `SetArcEndCondition(1, Max)`。
+- 展开图总宽/总高走 `op_overall_dimension`（view = `flat_pattern`）；折弯说明 `op_leader_note` 无引线、放到 `text_pos`。
+
+实机核对（TODO(实机核对)）：
+1. `swCreateSectionViewAtOptions_e` 中"只显示切面"的成员名：执行器按 `swCreateSectionView_DisplayOnlySurfaceCut` /
+   `_DisplaySurfaceCut` / `_PartialSection` 依次查找，查不到用 0（会生成完整剖视而不是断面），oplog 的 `surface_cut_option` 记录实际值。
+2. `IView.RemoveAlignment()` 是否存在、设置 `IView.Position` 能否把断面图移到主视图正下方（`moved` 为 false 时断面图仍在默认位置）。
+3. 断面图朝向：规划与 SVG 假定键槽朝上（沿轴线从左向右看）。SW 实际断面方向取决于剖切线画线方向与键槽角度；
+   若键槽不在上方，尺寸选边点会落空——请截图回传，按实际方向在 compile 中翻转剖切线或给断面加旋转。
+4. `IDisplayDimension.SetArcEndCondition(Index, Condition)` 与 `swArcEndCondition_e`（缺省按 Center=1/Min=2/Max=3）；失败记入 `readback["dim_arc_failed"]`。
+5. 展开图视图的 u/v 方向是否与规划 `flat_box` 一致（SW 展开图可能旋转 90°）；不一致时总宽/总高选边会失败（软失败）。
+
 ## 装饰螺纹 / 命名参考 / 边选择（sw-cosmetic-refs）
 
 以下 API 用法在假 COM 上验证了调用流程与实参个数，未经实机验证，需逐项核对（失败均为 NON_CRITICAL，不影响几何）：
