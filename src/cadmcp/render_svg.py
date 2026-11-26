@@ -334,6 +334,55 @@ def _rect_hidden(s, x0, y0, x1, y1, occ, w=THICK, show_hidden=True):
                 s.line(*pa, *pb, THIN, dash=HIDDEN)
 
 
+def _hatch_dir(s, cid, cell, angle, step):
+    """矩形单元内的剖面线（45° 或 135°，间隔 step），clipPath 裁剪。"""
+    x0, y0, x1, y1 = cell
+    s.parts.append(f"<clipPath id='{cid}'><rect x='{x0:.2f}' y='{s.y(y1):.2f}' width='{x1 - x0:.2f}' "
+                   f"height='{y1 - y0:.2f}'/></clipPath>")
+    lines = []
+    h = y1 - y0
+    k = -h - step
+    while k < (x1 - x0) + h + step:  # 全局相位：相邻单元的线接得上
+        xa = x0 + k
+        if angle == 45:
+            xa_ = xa - ((xa - 0.0) % step)
+            lines.append(f"<line x1='{xa_:.2f}' y1='{s.y(y0):.2f}' x2='{xa_ + h:.2f}' y2='{s.y(y1):.2f}' "
+                         f"stroke='#111' stroke-width='0.18'/>")
+        else:
+            xa_ = xa - ((xa - 0.0) % step)
+            lines.append(f"<line x1='{xa_:.2f}' y1='{s.y(y1):.2f}' x2='{xa_ + h:.2f}' y2='{s.y(y0):.2f}' "
+                         f"stroke='#111' stroke-width='0.18'/>")
+        k += step
+    s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
+
+
+def _draw_asm_section(s, asm, v, sec):
+    """装配图全剖主视图：被剖零件画剖面线（相邻零件方向/间隔错开）与剖面轮廓；不剖件（轴、标准件）按段画外形；
+    剖切面后方零件只画未被剖面挡住的可见轮廓（剖视图不画虚线）。"""
+    from .detailing import asm_section_regions
+    regs = asm_section_regions(asm, v, sec)
+    occ = [c for r in regs if r["state"] == "cut" for c in r["cells"]] + \
+        [q for r in regs if r["state"] == "excluded" for q in r["rects"]]
+    for r in regs:
+        if r["state"] == "behind":
+            for x0, y0, x1, y1 in r["rects"]:
+                _rect_hidden(s, x0, y0, x1, y1, occ, THICK, show_hidden=False)
+    for r in regs:
+        if r["state"] == "cut":
+            ang, step = r["hatch"]
+            for n, c in enumerate(r["cells"]):
+                _hatch_dir(s, f"as{r['id']}_{n}", c, ang, step)
+            for a_, b_ in r["edges"]:
+                s.poly([a_, b_], THICK, close=False)
+    for r in regs:
+        if r["state"] == "excluded":
+            for x0, y0, x1, y1 in r["rects"]:
+                s.rect(x0, y0, x1 - x0, y1 - y0)
+    if sec.get("label"):
+        cx, cy = v.origin_on_sheet
+        s.text(cx, cy + v.size_mm[1] / 2 + 4, f"{sec['label']}-{sec['label']}", 5, "middle")
+
+
 def _draw_asm_view(s, asm, vtype, ha, va, P, sc):
     """装配视图：零件按实体块消隐（被前方零件挡住的轮廓画细虚线）。回转件（轴、轴承）按段画阶梯轮廓；
     轴线朝向观察者时画同心圆（某段外圆被更靠近观察者的更大段挡住则不画）。标准件（螺钉等）不作遮挡体。"""
@@ -1015,8 +1064,17 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             s.line(*P(0, box.zmin - 3), *P(0, box.zmax + 3), THIN, "6,1.5,1,1.5")
         elif part is not None and part.weld_bodies:
             _draw_weld_bodies(s, part, v.type, ha, va, P)
+        elif asm is not None and plan.asm_section and plan.asm_section["view"] == v.type:
+            _draw_asm_section(s, asm, v, plan.asm_section)
+            rendered_refs.append("asm_section")
         elif asm is not None:
             _draw_asm_view(s, asm, v.type, ha, va, P, sc)
+            if plan.asm_section and plan.asm_section.get("label") and plan.asm_section["parent"] == v.type:
+                (ax_, ay_), (bx_, by_) = plan.asm_section["cut_line"]  # 剖切符号：两端粗短画 + 字母
+                lb = plan.asm_section["label"]
+                for (px_, py_), dx in (((ax_, ay_), 1), ((bx_, by_), -1)):
+                    s.line(px_, py_, px_ + dx * 5, py_, 0.7)
+                    s.text(px_ + dx * 2, py_ + 2, lb, 5, "middle")
         else:
             x0, y0 = P(ulo, wlo)
             x1, y1 = P(uhi, whi)

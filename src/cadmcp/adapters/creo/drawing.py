@@ -259,6 +259,13 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     def skip(what: str) -> None:
         skipped[what] = skipped.get(what, 0) + 1
 
+    sec_a = getattr(plan, "asm_section", None)
+    if sec_a:  # 装配图主视图全剖：剖切面过主轴线（装配坐标 y = plane），轴/标准件不剖
+        ops.append(NativeOp("tk.drw.section", {
+            "drawing": D, "parent": view_name(sec_a["parent"]), "replaces": view_name(sec_a["view"]),
+            "label": sec_a["label"] or "A", "kind": "full", "plane": {"normal": [0, 1, 0], "offset": sec_a["plane"]},
+            "exclude_components": list(sec_a["exclude"])},
+            "装配剖面（xsec）+ 排除零部件 TODO(实机核对)：组件剖面线方向/间隔、排除件"))
     # 剖视：先由 CREOSON 建好被替代的投影视图，这里设为 2D 剖视（首期 full/half；step/local 服务端报未实现）
     for s in plan.sections:
         if s.kind == "local":  # 在原视图上局部剖：边界 = 规划层波浪线区域（图纸 mm）

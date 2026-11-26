@@ -537,3 +537,7 @@ Creo：`feat.round` edges 同样给点坐标。
 ### 装配图配合尺寸（tests/test_fit_dims.py 销座组件）
 - SW：`overall_dimension` 选销 Φ20 两条轮廓边，前缀 Φ、后缀 H7/k6，核对显示为 Φ20H7/k6。
 - Creo：`tk.drw.dim` 文字覆盖 Φ20H7/k6，核对选边点落在销的轮廓上（装配视图中两零件边重合时可能选到孔边，同样正确）。
+
+### 装配图主视图全剖（tests/test_fit_dims.py 销座组件、轴承组件）
+- SW：`section_cut` 的 `exclude_components`（Section Scope 排除零部件）API 待核对；相邻零件剖面线方向是否自动错开。
+- Creo：`tk.drw.section` 装配剖面 + 排除零部件待实现/核对。

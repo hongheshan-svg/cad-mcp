@@ -116,3 +116,23 @@ def test_asm_view_draws_revolve_steps():
     plan = plan_assembly_drawing(DrawingSpec(model="FA"), a)
     svg, _ = render(plan, a)
     assert svg.count("<circle") >= 2  # 俯视：销头 Φ28 外圆（Φ20 被挡）+ 序号圈
+
+
+def test_asm_full_section():
+    """装配主视图沿轴线全剖：销不剖（exclude），座板剖面区挖去销孔；剖切面过对称面不标注；SW 剖视替代主视图。"""
+    from cadmcp.detailing import asm_section_regions
+    a = _asm()
+    plan = plan_assembly_drawing(DrawingSpec(model="FA"), a)
+    sec = plan.asm_section
+    assert sec["exclude"] == ["pin"] and list(sec["hatch"]) == ["plate"] and sec["label"] == ""
+    regs = {r["id"]: r for r in asm_section_regions(a, plan.views[0], sec)}
+    assert regs["pin"]["state"] == "excluded" and regs["plate"]["state"] == "cut"
+    xs = sorted({c[0] for c in regs["plate"]["cells"]} | {c[2] for c in regs["plate"]["cells"]})
+    assert len(regs["plate"]["cells"]) == 2 and round(xs[2] - xs[1], 3) == round(20 * plan.scale, 3)  # 中间挖去 Φ20
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    ops = compile_drawing(plan, "FA.SLDASM")
+    cut = next(o for o in ops if o.op == "section_cut")
+    assert cut.args["exclude_components"] == ["pin"]
+    assert not any(o.op == "model_view" and o.args["view"] == "front" for o in ops)
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    assert any(o.op == "tk.drw.section" and o.args.get("exclude_components") == ["pin"] for o in tk_detail_ops(plan))

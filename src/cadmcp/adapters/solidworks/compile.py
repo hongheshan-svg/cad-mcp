@@ -484,6 +484,14 @@ def section_ops(plan) -> list[NativeOp]:
             "view": s.view, "parent": s.parent, "label": s.label, "kind": s.kind,
             "points": [[round(x, 3), round(y, 3)] for x, y in pts], "center": target.origin_on_sheet},
             "父视图中画剖切折线并选中 → IDrawingDoc.CreateSectionViewAt5（阶梯剖用折线；半剖用 L 形线）"))
+    sec = getattr(plan, "asm_section", None)
+    if sec and sec.get("cut_line"):  # 装配图主视图全剖：俯视图上画剖切线；轴/标准件在"剖面范围"中排除（不剖）
+        target = next(v for v in plan.views if v.type == sec["view"])
+        ops.append(NativeOp("section_cut", {
+            "view": sec["view"], "parent": sec["parent"], "label": sec["label"] or "A", "kind": "full",
+            "points": [list(q) for q in sec["cut_line"]], "center": target.origin_on_sheet,
+            "exclude_components": list(sec["exclude"]), "hide_label": not sec["label"]},
+            "CreateSectionViewAt5 + SectionViewData 排除零部件（TODO(实机核对)：Section Scope 选组件的 API）"))
     return ops
 
 
@@ -590,7 +598,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                 "center": v.origin_on_sheet, "scale": [fr.numerator, fr.denominator]},
                 "父视图中 CreateCircleByRadius → 选中 → IDrawingDoc.CreateDetailViewAt4（锯齿轮廓 = GB 波浪线）"))
             continue
-        if any(s.view == v.type and s.kind != "local" for s in plan.sections):
+        if any(s.view == v.type and s.kind != "local" for s in plan.sections) \
+                or (getattr(plan, "asm_section", None) or {}).get("view") == v.type \
+                and plan.asm_section.get("cut_line"):
             continue  # 由剖视图替代（在父视图之后生成）
         name, angle = (SW_SHAFT_VIEW if plan.layout == "shaft" and v.type == "front"
                        else ("*Back", 180) if plan.layout == "shaft" and v.type == "left"  # 从左端看，−Y 朝上（同主视图）

@@ -117,6 +117,7 @@ class DrawingPlan:
     missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
     layout: str = "standard"  # standard | shaft（轴线水平 + 移出断面）
     cut_list: list[dict[str, Any]] = field(default_factory=list)  # 焊接件切割清单
+    asm_section: dict[str, Any] = field(default_factory=dict)  # 装配图主视图全剖（见 plan_asm_section）
     gear_table: dict[str, Any] = field(default_factory=dict)  # 齿轮参数表：origin/columns/rows/row_height/size
 
     def to_dict(self) -> dict[str, Any]:
@@ -1485,8 +1486,130 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     tb.update(spec.title_block)
     plan = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
+    plan.asm_section = plan_asm_section(a, views)
     overall_dim_sheet(plan, a)
     return plan
+
+
+def plan_asm_section(a: ResolvedAssembly, views: list[ViewPlan]) -> dict[str, Any]:
+    """装配图主视图沿主轴线全剖（GB/T 4458.6）：有回转件（轴、轴承）且其轴线平行于主视图时，剖切面取过该轴线、
+    平行于主视图的平面。实心轴与标准件（螺钉、销）纵向剖切按不剖绘制（exclude）；被剖零件剖面线方向/间隔相邻错开。
+    剖切面过装配体对称面时省略标注，否则在俯视图上画剖切符号 A。"""
+    from .ir.assembly_resolve import apply
+    front = next((v for v in views if v.type == "front"), None)
+    if front is None:
+        return {}
+    axis_pt = None
+    for inst in a.instances:
+        if not inst.source.revolve:
+            continue
+        o, z1 = apply(inst.transform, (0.0, 0.0, 0.0)), apply(inst.transform, (0.0, 0.0, 1.0))
+        if abs(z1[1] - o[1]) < 1e-6:  # 轴线垂直于 Y（主视图视向）→ 平行于主视图
+            axis_pt = o
+            break
+    if axis_pt is None:
+        return {}
+    yc = axis_pt[1]
+    cut = [i for i in a.instances if i.world_bbox.ymin < yc - 1e-6 < yc + 1e-6 < i.world_bbox.ymax]
+    exclude = [i.id for i in cut if i.source.kind == "standard" and not any(sg[3] > 0 for sg in i.source.revolve)
+               or (i.source.revolve and all(sg[3] <= 0 for sg in i.source.revolve))]
+    hatch = {}
+    for k, i in enumerate(x for x in cut if x.id not in exclude):
+        hatch[i.id] = (45 if k % 2 == 0 else 135, (2.5, 2.5, 3.5, 3.5)[k % 4])
+    sym = abs(yc - (a.bbox.ymin + a.bbox.ymax) / 2) < 1e-6
+    out = {"view": "front", "parent": "top", "axis": "y", "plane": yc, "exclude": exclude, "hatch": hatch,
+           "label": "" if sym else "A"}
+    top = next((v for v in views if v.type == "top"), None)
+    if top is not None:
+        p0 = _uv_sheet(top, a.bbox, (a.bbox.xmin - 4, yc))
+        p1 = _uv_sheet(top, a.bbox, (a.bbox.xmax + 4, yc))
+        out["cut_line"] = [(round(p0[0], 2), round(p0[1], 2)), (round(p1[0], 2), round(p1[1], 2))]
+    return out
+
+
+def _rect_minus(base, voids):
+    """矩形 base 减去若干矩形 voids → 网格单元（x0, y0, x1, y1）列表与边界线段（实体/空交界）。"""
+    xs = sorted({base[0], base[2], *[min(max(v[k], base[0]), base[2]) for v in voids for k in (0, 2)]})
+    ys = sorted({base[1], base[3], *[min(max(v[k], base[1]), base[3]) for v in voids for k in (1, 3)]})
+
+    def solid(i, j):
+        if i < 0 or j < 0 or i >= len(xs) - 1 or j >= len(ys) - 1:
+            return False
+        cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
+        return not any(v[0] < cx < v[2] and v[1] < cy < v[3] for v in voids)
+    cells, edges = [], []
+    for i in range(len(xs) - 1):
+        for j in range(len(ys) - 1):
+            if xs[i + 1] - xs[i] < 1e-6 or ys[j + 1] - ys[j] < 1e-6 or not solid(i, j):
+                continue
+            cells.append((xs[i], ys[j], xs[i + 1], ys[j + 1]))
+            if not solid(i - 1, j):
+                edges.append(((xs[i], ys[j]), (xs[i], ys[j + 1])))
+            if not solid(i + 1, j):
+                edges.append(((xs[i + 1], ys[j]), (xs[i + 1], ys[j + 1])))
+            if not solid(i, j - 1):
+                edges.append(((xs[i], ys[j]), (xs[i + 1], ys[j])))
+            if not solid(i, j + 1):
+                edges.append(((xs[i], ys[j + 1]), (xs[i + 1], ys[j + 1])))
+    return cells, edges
+
+
+def asm_section_regions(a: ResolvedAssembly, view: ViewPlan, sec: dict[str, Any]) -> list[dict[str, Any]]:
+    """全剖主视图中各零件的图纸几何：{id, state(cut|excluded|behind), cells, edges, rects}。
+    cut：剖面区域单元（回转件 = 轴线两侧的环带；其它 = 包围盒减去剖切面切到的孔）与边界；
+    excluded：不剖的轴/标准件，按段画外形；behind：剖切面后方的零件，按包围盒（由渲染按剖面区域消隐）。"""
+    from .ir.assembly_resolve import apply, solid_boxes
+    ha, va = VIEW_AXES[view.type]
+    yc = sec["plane"]
+
+    def S(q):
+        return _uv_sheet(view, a.bbox, (vc(q, ha), vc(q, va)))
+
+    def rect(p0, p1):
+        (x0, y0), (x1, y1) = S(p0), S(p1)
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    out = []
+    for inst in a.instances:
+        b = inst.world_bbox
+        if b.ymax <= yc + 1e-6 and b.ymin < yc - 1e-6:
+            continue  # 剖切面之前：移去
+        if b.ymin >= yc - 1e-6 and not (b.ymin < yc < b.ymax):
+            out.append({"id": inst.id, "state": "behind", "rects": [rect((b.xmin, b.ymin, b.zmin), (b.xmax, b.ymin, b.zmax))]})
+            continue
+        if inst.id in sec["exclude"]:
+            rects = [rect((bb.xmin, yc, bb.zmin), (bb.xmax, yc, bb.zmax)) for bb, _ in solid_boxes(inst)]
+            out.append({"id": inst.id, "state": "excluded", "rects": rects})
+            continue
+        cells, edges = [], []
+        if inst.source.revolve:
+            for z0, z1, do, di in inst.source.revolve:
+                ro, ri = do / 2, di / 2
+                for s0, s1 in ((-ro, -ri), (ri, ro)):
+                    pa = apply(inst.transform, (s0, 0.0, z0))
+                    pb = apply(inst.transform, (s1, 0.0, z1))
+                    c_, e_ = _rect_minus(rect(pa, pb), [])
+                    cells += c_
+                    edges += e_
+        else:
+            voids = []
+            for f in inst.source.fits:
+                if f["role"] != "hole":
+                    continue
+                q0, q1 = apply(inst.transform, f["p0"]), apply(inst.transform, f["p1"])
+                if abs(q1[1] - q0[1]) > 1e-6:
+                    continue  # 孔轴线不平行于剖切面
+                e = abs(q0[1] - yc)
+                r = f["d"] / 2
+                if e >= r:
+                    continue
+                hw = (r * r - e * e) ** 0.5  # 剖切面切到的孔宽之半
+                ux = 1.0 if abs(q1[0] - q0[0]) < 1e-9 else 0.0  # 孔轴线竖直（沿 z）→ 孔宽沿 x
+                lo = (min(q0[0], q1[0]) - hw * ux, yc, min(q0[2], q1[2]) - hw * (1 - ux))
+                hi = (max(q0[0], q1[0]) + hw * ux, yc, max(q0[2], q1[2]) + hw * (1 - ux))
+                voids.append(rect(lo, hi))
+            cells, edges = _rect_minus(rect((b.xmin, yc, b.zmin), (b.xmax, yc, b.zmax)), voids)
+        out.append({"id": inst.id, "state": "cut", "cells": cells, "edges": edges, "hatch": sec["hatch"].get(inst.id, (45, 2.5))})
+    return out
 
 
 def fit_dims(a: ResolvedAssembly, views: list[ViewPlan], balloons: list[dict[str, Any]] | None = None,
