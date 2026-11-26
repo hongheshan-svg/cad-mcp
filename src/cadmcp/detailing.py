@@ -2722,7 +2722,7 @@ def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | N
     否则 up（上方是粗糙度、几何公差的位置，尽量留给它们）。不溢出返回 None。与 render_shaft._vdim 一致。"""
     d = p.shaft_steps[j][1]
     tw = text_width(text, 3.5)
-    if tw <= shaft_text_room(p, shaft_dia_z(p, j, sc), d) * sc - 2:
+    if tw <= shaft_text_room(p, shaft_dia_z(p, j, sc), d) * sc - 2 and not shaft_dia_blocked(p, j, sc):
         return None
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
@@ -3039,6 +3039,17 @@ def shaft_dia_z(p: ResolvedPart, i: int, sc: float = 1.0) -> float:
 
 
 def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, str]:
+    """见 _shaft_dia_choice。"""
+    z, side, _ = _shaft_dia_choice(p, i, sc)
+    return z, side
+
+
+def shaft_dia_blocked(p: ResolvedPart, i: int, sc: float = 1.0) -> bool:
+    """第 i 段轮廓内找不到不压线的直径文字位置（如键槽占满轴段）→ 文字须伸到轮廓外。"""
+    return _shaft_dia_choice(p, i, sc)[2] < 0.2
+
+
+def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, str, float]:
     """第 i 段直径尺寸线的轴向位置与文字侧（left | right，文字竖写在尺寸线左/右）：
     尺寸线离键槽/环槽越远越好；文字不压轴肩线、倒角线、键槽轮廓（文字厚约 4.5 mm 图纸）；优先文字在左、居中；
     避开断开处。"""
@@ -3050,6 +3061,8 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
     # 文字的障碍：键槽/环槽轮廓、各竖线、轴端螺孔虚线；螺纹只有终止线（小径细线是水平的）
     obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
     obst += [(h["z0"], h["z1"] + 0.3 * h["tap"]) for h in p.end_holes]
+    for ch in getattr(p, "center_holes", None) or []:  # 轴端中心孔（主视图画出锥孔轮廓，深约 D）
+        obst.append((0.0, ch["D"] + 0.5) if ch["end"] == "start" else (Ltot - ch["D"] - 0.5, Ltot))
     obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) if h["dir"] == "view"
              else cross_hole_zone(p, h, sc)[:2] for h in p.cross_holes]
     busy += [(h["z"] - h["d"] / 2, h["z"] + h["d"] / 2) for h in p.cross_holes if h["step"] == i]
@@ -3075,7 +3088,9 @@ def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, st
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
         return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
                 -abs(z - (z0 + z1) / 2))
-    return max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
+    z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
+    span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+    return z, sd, gap(*span) * sc
 
 
 def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:

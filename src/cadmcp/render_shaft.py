@@ -394,9 +394,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             from .detailing import shaft_dia_overflow, shaft_dia_place
             zz, side = shaft_dia_place(part, i, sc)
             x = P(zz, 0)[0]
-            from .detailing import shaft_text_room
+            from .detailing import shaft_dia_blocked, shaft_text_room
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, text_left=side == "left",
-                  room=shaft_text_room(part, zz, dia) * sc, overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
+                  room=0.0 if shaft_dia_blocked(part, i, sc) else shaft_text_room(part, zz, dia) * sc,
+                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
             z, r = d.at
