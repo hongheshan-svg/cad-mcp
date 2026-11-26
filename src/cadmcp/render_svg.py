@@ -1423,6 +1423,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     if plan.cut_list:
         _draw_cut_list(s, x0, y0 + tbh + 12 + 5 * len(plan.notes), plan.cut_list, cut_rows)
         rendered_refs.append("cut_list")
+    for ax_ in plan.axes:  # 装配图回转件轴线（细点画线）
+        (xa_, ya_), (xb_, yb_) = ax_["pts"]
+        s.line(xa_, ya_, xb_, yb_, THIN, dash=CHAIN)
     # 明细表（标题栏上方）
     if plan.bom:  # GB/T 10609.2：表头在下，序号自下而上
         by = y0 + tbh + 12 + 5 * len(plan.notes)

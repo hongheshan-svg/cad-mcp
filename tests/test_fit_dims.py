@@ -184,3 +184,18 @@ def test_asm_notes_follow_content():
     assert len(n) == 2 and "配合面" in n[1]
     plan = plan_assembly_drawing(DrawingSpec(model="FA"), _asm())
     assert plan.notes[1].startswith("1. 装配前") and plan.notes[2].startswith("2. 配合面")
+
+
+def test_asm_axes():
+    """装配图回转件轴线：同轴的销与孔合并为一条，伸出轮廓 3 mm；俯视（端视）画十字中心线；SW/Creo 都生成。"""
+    a = _asm()
+    plan = plan_assembly_drawing(DrawingSpec(model="FA"), a)
+    fr = [x for x in plan.axes if x["view"] == "front"]
+    assert len(fr) == 1
+    (x0, y0), (x1, y1) = fr[0]["pts"]
+    assert x0 == x1 and abs(abs(y1 - y0) - (48 * plan.scale + 6)) < 0.02  # 销长 48
+    assert len([x for x in plan.axes if x["view"] == "top"]) == 2
+    from cadmcp.adapters.creo.drawing import tk_detail_ops
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    assert any(o.op == "sheet_centerlines" and len(o.args["lines"]) == len(plan.axes) for o in compile_drawing(plan, "FA.SLDASM"))
+    assert sum(o.op == "tk.drw.line" and o.args.get("font") == "CTRLFONT" for o in tk_detail_ops(plan)) == len(plan.axes)

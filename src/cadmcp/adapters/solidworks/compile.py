@@ -753,6 +753,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             "origin": (rx, ry), "columns": [n for n, _ in REV_COLUMNS], "widths": [w for _, w in REV_COLUMNS],
             "rows": rrows, "fallback_text": "更改记录：\n" + "\n".join("  ".join(r) for r in rrows)},
             "InsertRevisionTable2（标题栏左侧）→ AddRevision 逐行 → 写单元格 → 回读行数（D020）"))
+    if getattr(plan, "axes", None):
+        ops.append(NativeOp("sheet_centerlines", {"lines": [[list(q) for q in ax["pts"]] for ax in plan.axes]},
+                            "图纸上画回转件轴线：ISketchManager.CreateCenterLine（图纸坐标 m）"))
     if plan.bom:
         from ...detailing import bom_display
         rows = []

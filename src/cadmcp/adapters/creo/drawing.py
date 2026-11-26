@@ -421,6 +421,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
         ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": [x0, above], "columns": _cols(CUT_COLS),
                                              "rows": _rows(rows), "row_height": 7, "header_bottom": True},
                             "切割清单（GB/T 10609.2 表头在下）"))
+    for ax in getattr(plan, "axes", []):  # 装配图回转件轴线：细点画线
+        ops.append(NativeOp("tk.drw.line", {"drawing": D, "points": [_xy(q) for q in ax["pts"]],
+                                            "font": "CTRLFONT", "width": 0.25}, "回转件轴线（细点画线）"))
     if plan.bom:
         rows = [bom_display(r) for r in sorted(plan.bom, key=lambda r: r["item"])]
         ops.append(NativeOp("tk.drw.table", {"drawing": D, "origin": [x0, above], "columns": _cols(BOM_COLS),

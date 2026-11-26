@@ -1154,6 +1154,20 @@ class SwExecutor:
         self.views["flat_pattern"] = v
         return {}
 
+    def op_sheet_centerlines(self, lines):
+        """装配图回转件轴线：在图纸（非视图）草图中画中心线。TODO(实机核对)：EditSheet 后 CreateCenterLine 的坐标系为图纸 m。"""
+        try:
+            self.model.EditSheet()
+        except Exception:  # noqa: BLE001
+            pass
+        sm = self.model.SketchManager
+        n = 0
+        for (x1, y1), (x2, y2) in lines:
+            if sm.CreateCenterLine(x1 / 1000, y1 / 1000, 0, x2 / 1000, y2 / 1000, 0) is not None:
+                n += 1
+        self.model.ClearSelection2(True)
+        return {"lines": n}
+
     def op_center_marks(self, view: str, types: int = 5, connection: int = 0):
         """孔/槽中心符号（GB：孔画十字中心线）：IView.AutoInsertCenterMarks2，尺寸、间隙、延长线用文档设置。
         types 为 swAutoInsertCenterMarkTypes_e 位掩码（孔 1 | 槽 4；不含圆角 2，免得外形圆角也加中心符号）。

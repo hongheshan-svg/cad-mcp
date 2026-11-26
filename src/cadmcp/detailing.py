@@ -118,6 +118,7 @@ class DrawingPlan:
     layout: str = "standard"  # standard | shaft（轴线水平 + 移出断面）
     cut_list: list[dict[str, Any]] = field(default_factory=list)  # 焊接件切割清单
     asm_section: dict[str, Any] = field(default_factory=dict)  # 装配图主视图全剖（见 plan_asm_section）
+    axes: list[dict[str, Any]] = field(default_factory=list)  # 装配图回转件轴线/中心线：{view, pts:[(x,y),(x,y)]}（图纸 mm）
     gear_table: dict[str, Any] = field(default_factory=dict)  # 齿轮参数表：origin/columns/rows/row_height/size
 
     def to_dict(self) -> dict[str, Any]:
@@ -1493,6 +1494,7 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     plan = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        bom=bom, balloons=balloons, revisions=list(spec.revisions))
     plan.asm_section = plan_asm_section(a, views)
+    plan.axes = asm_axes(a, views)
     overall_dim_sheet(plan, a)
     return plan
 
@@ -1523,6 +1525,51 @@ def bom_display(r: dict[str, Any]) -> list[Any]:
         grade = (r.get("properties") or {}).get("等级", "")
         return [r["item"], r["standard"], r["title"], r["qty"], f"{grade}级" if grade else ""]
     return [r["item"], r["part_no"], r["title"], r["qty"], r.get("material") or r.get("spec", "")]
+
+
+def asm_axes(a: ResolvedAssembly, views: list[ViewPlan], ext: float = 3.0) -> list[dict[str, Any]]:
+    """装配图各正投影视图中回转件（轴、轴承、齿轮、螺钉）的轴线（细点画线，伸出轮廓 ext mm）；
+    轴线朝向观察者的视图画十字中心线（长度 = 外圆 + ext）。同一直线上相交/相接的轴线合并成一条。"""
+    from .ir.assembly_resolve import apply
+    out = []
+    for v in views:
+        if v.type not in VIEW_AXES:
+            continue
+        ha, va = VIEW_AXES[v.type]
+        dep = next(c for c in "xyz" if c not in (ha[-1], va[-1]))
+
+        def S(q):
+            return _uv_sheet(v, a.bbox, (vc(q, ha), vc(q, va)))
+        segs = []  # (方向 'h'|'v', 常坐标, lo, hi)
+        for inst in a.instances:
+            rev = inst.source.revolve
+            if not rev:
+                continue
+            zs = [z for sg in rev for z in sg[:2]]
+            R = max(sg[2] for sg in rev) / 2
+            p0, p1 = apply(inst.transform, (0.0, 0.0, min(zs))), apply(inst.transform, (0.0, 0.0, max(zs)))
+            a0, a1 = S(p0), S(p1)
+            if math.hypot(a1[0] - a0[0], a1[1] - a0[1]) < 1e-6:  # 端视：十字中心线
+                if abs(p1["xyz".index(dep)] - p0["xyz".index(dep)]) < 1e-9:
+                    continue
+                r = R * v.scale + ext
+                segs += [("h", a0[1], a0[0] - r, a0[0] + r), ("v", a0[0], a0[1] - r, a0[1] + r)]
+            elif abs(a0[1] - a1[1]) < 1e-6:
+                segs.append(("h", a0[1], min(a0[0], a1[0]) - ext, max(a0[0], a1[0]) + ext))
+            elif abs(a0[0] - a1[0]) < 1e-6:
+                segs.append(("v", a0[0], min(a0[1], a1[1]) - ext, max(a0[1], a1[1]) + ext))
+        segs.sort()
+        merged: list[list[Any]] = []
+        for o, c, lo, hi in segs:
+            if merged and merged[-1][0] == o and abs(merged[-1][1] - c) < 1e-3 and lo <= merged[-1][3] + 1e-6:
+                merged[-1][3] = max(merged[-1][3], hi)
+            else:
+                merged.append([o, c, lo, hi])
+        for o, c, lo, hi in merged:
+            pts = [(round(lo, 2), round(c, 2)), (round(hi, 2), round(c, 2))] if o == "h" else \
+                [(round(c, 2), round(lo, 2)), (round(c, 2), round(hi, 2))]
+            out.append({"view": v.type, "pts": pts})
+    return out
 
 
 def plan_asm_section(a: ResolvedAssembly, views: list[ViewPlan]) -> dict[str, Any]:
