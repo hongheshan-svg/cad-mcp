@@ -13,6 +13,11 @@ items:
       CS_Mount: {origin: [0, 0, 0]}
       CS_RodEnd: {origin: [0, 0, 196]}
     properties: {规格: "Φ32×50", 气源: "0.15-0.9MPa"}
+    mount:  # 前端法兰安装：螺钉从安装板穿入气缸前盖；活塞杆让位孔
+      frame: CS_Mount
+      screw: M6
+      holes: {kind: circular, radius: 17, count: 4, start_angle: 45}
+      pilot: 26
   - code: PRF-4040
     title: 铝型材 40×40
     category: purchased
@@ -25,6 +30,10 @@ items:
       CS_End0: {origin: [0, 0, 0]}
       CS_End1: {origin: [0, 0, L]}
     properties: {规格: "40×40 欧标8槽"}
+    mount:  # 端面中心孔攻 M8，板上开过孔
+      frame: CS_End0
+      screw: M8
+      holes: {positions: [[0, 0]]}
   - code: SRV-60-400W
     title: 交流伺服电机 400W 60法兰
     category: purchased
@@ -36,6 +45,12 @@ items:
       CS_Flange: {origin: [0, 0, 0]}
       AX_Shaft: {origin: [0, 0, 0], direction: [0, 0, 1]}
     properties: {额定扭矩: "1.27 N·m", 额定转速: "3000 rpm"}
+    mount:  # 60 法兰：4-Φ5.5 通孔 PCD70，止口 Φ50h7 → 安装板 Φ50H7
+      frame: CS_Flange
+      screw: M5
+      holes: {kind: circular, radius: 35, count: 4, start_angle: 45}
+      pilot: 50
+      pilot_tolerance: H7
   - code: LGR-15
     title: 直线导轨 15
     category: purchased
@@ -48,6 +63,10 @@ items:
       CS_Start: {origin: [0, 0, 0]}
       CS_Top: {origin: [0, 0, 15]}
     properties: {规格: "宽15"}
+    mount:  # 导轨安装孔：节距 60，首孔距端 20，M4 螺钉拧入安装板
+      frame: CS_Start
+      screw: M4
+      holes: {kind: linear, start: 20, pitch: 60, count: "floor((L-40)/60)+1"}
   - code: SHCS-M6x20
     title: 内六角圆柱头螺钉 M6×20
     category: standard

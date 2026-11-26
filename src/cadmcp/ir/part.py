@@ -153,7 +153,23 @@ class Groove(Strict):
     depth: Num | None = Field(None, description="undercut 默认 0.5")
 
 
-Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove, Field(discriminator="feature")]
+class Mount(Strict):
+    """外购件安装接口：按标准件库登记的接口自动开螺钉孔 + 止口/让位孔，并生成装配用坐标系 CS_<name>
+    （z 沿面外法向；把外购件的接口坐标系对齐到它即可装配）。"""
+    feature: Literal["mount"]
+    name: str
+    item: str = Field(description="库编码（可带参数，如 'LGR-15?L=400'），见 cad_search_library")
+    face: Literal["top", "bottom"] = "top"
+    center: Vec2 = (0.0, 0.0)
+    rotate: Num = Field(0.0, description="绕面法向旋转角，度")
+    screw_hole: Literal["clearance", "counterbore", "tapped"] = Field(
+        "clearance", description="螺钉从本零件穿过 clearance/counterbore；外购件螺钉拧入本零件 tapped")
+    depth: Num | Literal["through"] = "through"
+    thread_depth: Num | None = None
+    pilot: bool = Field(True, description="是否开止口/让位孔（库中登记了 pilot 时）")
+
+
+Feature = Annotated[Hole | Pocket | Boss | EdgeFinish | Keyway | Groove | Mount, Field(discriminator="feature")]
 
 
 # ---------- named references ----------

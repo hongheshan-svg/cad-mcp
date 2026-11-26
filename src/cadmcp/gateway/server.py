@@ -20,6 +20,7 @@ CAD-MCP：用"设计规格 (spec)"驱动 SolidWorks / Creo 建模与出图。你
 2. 零件：cad_build_part(spec)。用 parameters 定义驱动参数，尺寸写表达式（如 "L-2*e"）。
    孔用 type=tapped/counterbore/clearance/simple + 公制规格（M6），不要自己算底孔/沉孔尺寸。
    为装配定位建 CS_ 坐标系基准（references），装配只认命名坐标系，不选面不选边。
+   与外购件对接的孔用 mount 特征（item=库编码），自动按接口开孔并生成 CS_<name>。
 3. 装配：涉及气缸、电机、丝杠、螺栓受力时先 cad_calc 选型（生成计算书），再 cad_search_library 查标准件/外购件 → cad_build_assembly(spec)，组件 source 用 part:/lib:/asm:。
 4. 每个零件/装配都要出图：cad_build_drawing(spec)。看返回的 rules/findings，有 error 必须修。
 5. 修改：cad_set_parameters 改参数，依赖它的装配和工程图会自动重建。

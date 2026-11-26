@@ -21,7 +21,8 @@ from ..detailing import check_drawing, plan_assembly_drawing, plan_part_drawing
 from ..errors import (CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
                       TARGET_UNAVAILABLE, CadError)
 from ..ir import AssemblySpec, DrawingSpec, PartSpec
-from ..ir.assembly_resolve import ResolvedAssembly, SourceInfo, aabb_interference, resolve_assembly
+from ..ir.assembly_resolve import (ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
+                                  resolve_assembly)
 from ..ir.resolve import ResolvedPart, ResolvedRef, resolve_part
 from ..library import Library
 from ..policy import Policy
@@ -226,6 +227,7 @@ class CadService:
                 interf = aabb_interference(res)
                 findings = [{"rule": "A001", "severity": "warning", "target": f"{i['a']}~{i['b']}",
                              "message": f"包围盒重叠 {i['overlap_mm']} mm（需精确干涉检查确认）"} for i in interf]
+                findings += interface_check(spec, self._source_info)
                 out = {"summary": res.summary(), "bom": res.bom()}
                 for code in placeholders:
                     findings.append({"rule": "A002", "severity": "warning", "target": code,
@@ -290,7 +292,8 @@ class CadService:
                                hint="先用 cad_build_part 建零件；可用零件：" + str(sorted(n for n, m in models.items() if m.kind == "part")))
             p: ResolvedPart = models[ref].resolved
             return SourceInfo(source, "part", p.part_no, p.title, p.material, p.mass_kg, p.bbox, p.references,
-                              properties={"surface_treatment": p.surface_treatment or ""})
+                              properties={"surface_treatment": p.surface_treatment or ""},
+                              mounts={f"CS_{m['name']}": m for m in p.mounts})
         if kind == "asm":
             if ref not in models or models[ref].kind != "assembly":
                 raise CadError(DOC_NOT_FOUND, f"assembly {ref!r} not built in this session")
@@ -300,7 +303,8 @@ class CadService:
         if kind == "lib":
             lp = self.library.get(ref)
             return SourceInfo(source, lp.category, lp.code + "".join(f"-{k}{v:g}" for k, v in lp.parameters.items()), lp.title, None,
-                              lp.mass_kg, lp.bbox, lp.references, model=lp.model, properties=lp.properties)
+                              lp.mass_kg, lp.bbox, lp.references, model=lp.model, properties=lp.properties,
+                              interface_frame=(self.library.items[lp.code].get("mount") or {}).get("frame"))
         raise CadError(CAPABILITY_UNSUPPORTED, "file: components need open_existing support (P1)",
                        hint="先把现有零件转成 spec，或等待真实 CAD 目标支持")
 

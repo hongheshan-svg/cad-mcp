@@ -97,7 +97,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 }
 ```
 
-孔只需写类型和公制规格，底孔、过孔、沉孔尺寸由平台按标准查表；装配只按命名坐标系（`CS_*`）定位，不选面、不选边。完整示例见 [`examples/cylinder_station.py`](examples/cylinder_station.py)。
+孔只需写类型和公制规格，底孔、过孔、沉孔尺寸由平台按标准查表；与外购件对接的孔用 `mount` 特征按库登记的接口自动生成，装配时还会校验装的是不是同一个件；装配只按命名坐标系（`CS_*`）定位，不选面、不选边。完整示例见 [`examples/cylinder_station.py`](examples/cylinder_station.py)。
 
 ## MCP 工具
 

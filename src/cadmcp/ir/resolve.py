@@ -14,7 +14,7 @@ from .. import materials, standards
 from ..errors import SPEC_INVALID, CadError
 from ..expr import evaluate, resolve_parameters
 from .common import FACE_NORMAL, REF_PREFIXES, Circle, Polygon, Rect, Slot
-from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
+from .part import (GEOTOL_SYMBOL, CircularPattern, EdgeFinish, Mount, ExtrudeBase, GridPattern, Groove, Hole, Keyway, PartSpec, Pocket,
                    SheetMetalBase, ShaftBase, Boss)
 
 
@@ -129,6 +129,7 @@ class ResolvedPart:
     datums: list[dict[str, Any]] = field(default_factory=list)
     geotols: list[dict[str, Any]] = field(default_factory=list)
     roughness: list[dict[str, Any]] = field(default_factory=list)
+    mounts: list[dict[str, Any]] = field(default_factory=list)
 
     def step_z(self, i: int) -> tuple[float, float]:
         z0 = sum(L for L, _ in self.shaft_steps[:i])
@@ -319,6 +320,52 @@ def _positions(h: Hole, ev) -> list[tuple[float, float]]:
         pts += [(cx + r * math.cos(math.radians(a0 + 360 * i / n)), cy + r * math.sin(math.radians(a0 + 360 * i / n)))
                 for i in range(n)]
     return pts
+
+
+def expand_mount(m: Mount, ev) -> tuple[list[Hole], dict[str, Any]]:
+    """把安装接口展开成孔特征（坐标在面内 uv，已旋转平移）。"""
+    from ..library import Library
+    lib = Library.default()
+    code = m.item.partition("?")[0]
+    raw = lib.items.get(code)
+    if raw is None:
+        raise CadError(SPEC_INVALID, f"mount {m.name}: library item {code!r} not found", hint="用 cad_search_library 查询")
+    if "mount" not in raw:
+        raise CadError(SPEC_INVALID, f"mount {m.name}: {code} has no registered mounting interface",
+                       hint="在 library.yaml 中为该件登记 mount（frame/screw/holes/pilot）")
+    lp = lib.get(m.item)
+    mi = raw["mount"]
+    lev = lambda v: evaluate(v, lp.parameters)  # noqa: E731
+    cx, cy, rot = ev(m.center[0]), ev(m.center[1]), ev(m.rotate)
+    ca, sa = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+    if m.face == "bottom":  # 底面从下方看，面内 x 镜像
+        sa = -sa
+
+    def tr(x, y):
+        return [round(cx + ca * x - sa * y, 6), round(cy + sa * x + ca * y, 6)]
+
+    holes_spec = mi["holes"]
+    common = {"face": m.face, "size": mi["screw"], "type": m.screw_hole}
+    if m.screw_hole == "tapped":
+        common.update(depth=m.depth, thread_depth=m.thread_depth)
+    if holes_spec.get("kind") == "circular":
+        r, n, a0 = lev(holes_spec["radius"]), lev(holes_spec["count"]), lev(holes_spec.get("start_angle", 0))
+        screw = Hole(name=f"{m.name}_Screw", pattern=CircularPattern(center=tuple(tr(0, 0)), radius=r, count=n,
+                                                                     start_angle=a0 + (rot if m.face == "top" else -rot)),
+                     **common)
+    elif holes_spec.get("kind") == "linear":
+        n = int(lev(holes_spec["count"]))
+        s0, pitch = lev(holes_spec.get("start", 0)), lev(holes_spec["pitch"])
+        screw = Hole(name=f"{m.name}_Screw", positions=[tr(s0 + i * pitch, 0) for i in range(n)], **common)
+    else:
+        screw = Hole(name=f"{m.name}_Screw", positions=[tr(lev(x), lev(y)) for x, y in holes_spec["positions"]], **common)
+    out = [screw]
+    if m.pilot and mi.get("pilot"):
+        out.append(Hole(name=f"{m.name}_Pilot", face=m.face, type="simple", size=lev(mi["pilot"]),
+                        tolerance=mi.get("pilot_tolerance"), positions=[tr(0, 0)]))
+    info = {"name": m.name, "item": code, "item_ref": m.item, "frame": mi["frame"], "face": m.face,
+            "center": (cx, cy), "rotate": rot, "screw": mi["screw"]}
+    return out, info
 
 
 def resolve_hole(h: Hole, ev, box: Box, section: list[tuple[float, float]] | None = None) -> ResolvedHole:
@@ -522,7 +569,16 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     for b in bosses:
         box.zmax = max(box.zmax, b["z0"] + b["height"])
 
+    mounts: list[dict[str, Any]] = []
+    feats: list[Any] = []
     for f in spec.features:
+        if isinstance(f, Mount):
+            hs, info = expand_mount(f, ev)
+            feats += hs
+            mounts.append(info)
+        else:
+            feats.append(f)
+    for f in feats:
         if isinstance(f, Hole):
             section = profile.outline if (isinstance(base, (ExtrudeBase, SheetMetalBase)) and profile) else None
             rh = resolve_hole(f, ev, box, section if isinstance(base, ExtrudeBase) else None)
@@ -560,6 +616,10 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     else:
         refs["MP_Top"] = ResolvedRef("MP_Top", "plane", (0.0, 0.0, thickness), direction=(0.0, 0.0, 1.0), auto=True)
         refs["MP_Bottom"] = ResolvedRef("MP_Bottom", "plane", (0.0, 0.0, 0.0), direction=(0.0, 0.0, -1.0), auto=True)
+    for m in mounts:
+        o = face_point(m["face"], m["center"], box)
+        rot = (0.0, 0.0, m["rotate"]) if m["face"] == "top" else (180.0, 0.0, -m["rotate"])
+        refs[f"CS_{m['name']}"] = ResolvedRef(f"CS_{m['name']}", "csys", o, rot, auto=True)
     for r in spec.references:
         kind = REF_PREFIXES[r.name[:3]]
         if kind == "plane":
@@ -600,7 +660,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
     return ResolvedPart(
-        datums=datums, geotols=geotols, roughness=rough,
+        datums=datums, geotols=geotols, roughness=rough, mounts=mounts,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
         category=spec.category, surface_treatment=spec.surface_treatment, base_type=base.type,
         parameters=params, bbox=box, volume_mm3=volume, mass_kg=volume * 1e-9 * dens, thickness=thickness,

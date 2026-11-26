@@ -85,6 +85,8 @@ class SourceInfo:
     references: dict[str, ResolvedRef]
     model: str | None = None
     properties: dict[str, str] = field(default_factory=dict)
+    mounts: dict[str, dict[str, Any]] = field(default_factory=dict)  # 零件：CS_<mount> → 接口信息
+    interface_frame: str | None = None  # 外购件：登记的安装接口坐标系
 
 
 @dataclass
@@ -206,4 +208,42 @@ def aabb_interference(asm: ResolvedAssembly, tol: float = 0.01) -> list[dict[str
             if dx > tol and dy > tol and dz > tol:
                 out.append({"a": ins[a].id, "b": ins[b].id, "overlap_mm": [round(dx, 3), round(dy, 3), round(dz, 3)],
                             "volume_mm3": round(dx * dy * dz, 1)})
+    return out
+
+
+def interface_check(spec: AssemblySpec, source_info: Callable[[str], SourceInfo]) -> list[dict[str, Any]]:
+    """外购件安装接口校验：装在 mount 接口上的必须是同一个件、用登记的接口坐标系对齐；
+    外购件装在没有 mount 的位置上提示孔位未经校验。"""
+    out: list[dict[str, Any]] = []
+    comps = {c.id: c for c in spec.components}
+    for c in spec.components:
+        if c.place is None:
+            continue
+        tgt_id, _, tgt_ref = c.place.to.partition(".")
+        if tgt_id == "ASM" or tgt_id not in comps:
+            continue
+        src, tgt = source_info(c.source), source_info(comps[tgt_id].source)
+        where = f"{c.id}→{tgt_id}.{tgt_ref}"
+        m = tgt.mounts.get(tgt_ref)
+        if m is not None and src.kind == "standard":
+            continue  # 紧固件借用接口坐标系定位，不校验
+        if m is not None:
+            ref = c.source.partition(":")[2]
+            code = ref.partition("?")[0]
+            if not c.source.startswith("lib:") or code != m["item"]:
+                out.append({"rule": "A003", "severity": "error", "target": where,
+                            "message": f"{tgt_id}.{tgt_ref} 是按 {m['item']} 开的安装接口，但装的是 {c.source}",
+                            "fix": f"改装 lib:{m['item_ref']}，或修改零件的 mount.item"})
+            elif c.place.align != m["frame"]:
+                out.append({"rule": "A003", "severity": "error", "target": where,
+                            "message": f"应以 {m['frame']} 对齐安装接口，实际用 {c.place.align}",
+                            "fix": f"place.align = {m['frame']!r}"})
+            elif ref != m["item_ref"] and "?" in (ref + m["item_ref"]):
+                out.append({"rule": "A003", "severity": "warning", "target": where,
+                            "message": f"接口按 {m['item_ref']} 开孔，装配件参数为 {ref}（孔数/孔位可能不同）",
+                            "fix": "两处参数保持一致"})
+        elif src.interface_frame and c.place.align == src.interface_frame and tgt.kind == "part":
+            out.append({"rule": "A004", "severity": "warning", "target": where,
+                        "message": f"{c.source} 装在 {tgt_id}.{tgt_ref}，该处没有按接口开孔（mount），孔位未经校验",
+                        "fix": f"在 {tgt_id} 中用 mount 特征（item={c.source.partition(':')[2]}）生成安装孔"})
     return out

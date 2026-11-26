@@ -32,13 +32,11 @@ MOUNT_PLATE = {
     "features": [
         {"feature": "hole", "name": "Post", "type": "counterbore", "size": "M8",
          "positions": [["-pitch/2", 0], ["pitch/2", 0]]},
-        {"feature": "hole", "name": "Cyl", "type": "clearance", "size": "M6",
-         "pattern": {"kind": "circular", "radius": 17, "count": 4, "start_angle": 45}},
-        {"feature": "hole", "name": "Rod", "type": "simple", "size": 26, "positions": [[0, 0]]},
+        # 气缸安装接口：按库登记的法兰孔位自动开 4×M6 过孔 + Φ26 活塞杆让位孔，并生成 CS_Cyl
+        {"feature": "mount", "name": "Cyl", "item": "CYL-SC32x50"},
     ],
     "references": [
         {"name": "CS_PostL", "origin": ["-pitch/2", 0, 0]},
-        {"name": "CS_Cyl", "origin": [0, 0, "T"]},
     ],
 }
 
