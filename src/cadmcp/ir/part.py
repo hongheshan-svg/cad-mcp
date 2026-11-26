@@ -341,7 +341,8 @@ class RefSpec(Strict):
 # ---------- 精度：基准、几何公差、表面粗糙度 ----------
 TARGET_DOC = ("被标注对象：face:<top|bottom|front|back|left|right>（外表面）、hole:<孔特征名>（孔轴线/孔壁）、"
               "step:<段号>（轴段圆柱面/轴线）、bore:<内孔序号，从 0 起>（套类内孔孔壁/轴线）、"
-              "shoulder:<i>（第 i 与 i+1 段之间的轴肩端面；仅几何公差，如轴承定位轴肩的端面圆跳动）")
+              "shoulder:<i>（第 i 与 i+1 段之间的轴肩端面；仅几何公差，如轴承定位轴肩的端面圆跳动）、"
+              "keyway:<键槽名>（键槽中心平面；仅几何公差，如对称度，画在断面图槽宽尺寸线上）")
 
 
 class Datum(Strict):

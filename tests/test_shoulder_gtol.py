@@ -107,3 +107,22 @@ def test_cast_material_notes_without_casting_spec():
     assert any("人工时效" in x for x in notes) and any("砂眼" in x for x in notes)
     q = resolve_part(PartSpec.model_validate({**EC, "material": "45#"}))
     assert not any("砂眼" in x for x in plan_part_drawing(DrawingSpec(model="EC1"), q).notes)
+
+
+def test_keyway_symmetry():
+    """键槽对称度：auto_precision 补基准 C + ⌯；框格在断面图槽宽尺寸线左侧；原生按断面标签找视图。"""
+    from cadmcp.precision import keyway_symmetry
+    p = resolve_part(PartSpec.model_validate({**GS, "auto_precision": True}))
+    sym = next(g for g in p.geotols if g["type"] == "symmetry")
+    assert sym["target"] == "keyway:KW" and sym["datums"] == ["C"] and sym["value"] == keyway_symmetry(6)
+    plan = plan_part_drawing(DrawingSpec(model="GS1"), p)
+    d = next(d for d in plan.dims if d.kind == "gtol" and d.view == "section")
+    sec = next(v for v in plan.views if v.type == "section")
+    assert d.extra["section"] == sec.label and d.extra["sheet_at"][0] < sec.origin_on_sheet[0]
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    sw = next(o for o in compile_drawing(plan, "GS1.SLDPRT") if o.op == "gtol" and o.args["type"] == "symmetry")
+    assert sw.args["view"] == f"section:{sec.label}"
+    assert any(o.op == "tk.drw.gtol" and o.args["type"] == "symmetry" for o in tk_detail_ops(plan))
+    with pytest.raises(CadError, match="invalid target"):
+        resolve_part(PartSpec.model_validate({**GS, "datums": [{"name": "A", "target": "keyway:KW"}]}))

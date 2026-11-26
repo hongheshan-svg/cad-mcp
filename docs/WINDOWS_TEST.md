@@ -455,6 +455,7 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 | GB/T 275 轴颈圆柱度（0 级轴承） | `precision._BEARING_CYL` | 未核实 |
 | GB/T 275 轴肩端面圆跳动（0 级轴承） | `precision._BEARING_SHOULDER` | 未核实 |
 | GB/T 1184 垂直度 7/8 级 | `precision._PERP` | 未核实 |
+| GB/T 1184 对称度 8 级（键槽，主参数键宽） | `precision._SYM8` | 未核实 |
 | GB/T 1184 圆跳动 6/7 级 | `precision._RUNOUT` | 未核实 |
 | 齿坯跳动公差 | `gear._BLANK_RUNOUT` | 未核实 |
 | 按轴端直径推荐中心孔 d | `standards._CH_BY_DIA` | 经验值，非标准表 |
@@ -519,3 +520,8 @@ Creo：`feat.round` edges 同样给点坐标。
   盲孔开口朝向观察者；`XH2_THR` 装饰螺纹选边点 (√(R²−r²), r, z) 是否落在孔口交线上。
 - Creo：通孔草绘面 RIGHT 偏移 R+1、反向切 2R+2；盲孔草绘面在孔底向 +X 切。核对 Creo 主视图方向与 SW 一致（+X 朝观察者）。
 - 定位尺寸第二点选孔圆顶点：SW AddDimension 应量到圆心。
+
+## 键槽对称度（keyway:<name>，TODO(实机核对)）
+- 齿轮轴 auto_precision 样例：断面图 D-D 左侧 ⌯ 0.015 C。SW `gtol` 的 view = `section:D-D`，`at` 在槽宽尺寸线左端
+  （槽侧壁延长线上，模型边线不一定在那里）——核对 `_select_edge_at` 是否选中槽侧壁；选不中时框格无引线附着，
+  需改为附着到槽宽尺寸（SW：选中尺寸后 InsertGtol）。Creo `tk.drw.gtol` 同。

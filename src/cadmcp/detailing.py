@@ -356,6 +356,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
         if k == "bore":
             return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
+        if k == "keyway":  # 键槽中心平面：断面图槽宽尺寸线上（图纸坐标在 _shaft_section_dim_sheet 中算）
+            return "section", None, (-1, 0), {"keyway": ref}
         if k == "shoulder":  # 轴肩端面：锚点 = 端面上半段中点；框格位置见 shoulder_gtol_geom
             g = shoulder_gtol_geom(p, int(ref), views[0].scale if views else 1.0)
             return "front", (g["z"], g["r_at"]), (-g["from"], 0), {"shoulder": int(ref)}
@@ -2514,6 +2516,12 @@ def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         r, hb, t1 = f["d"] / 2 * sc, f["width"] / 2 * sc, f["depth"] * sc
         y_floor = vy + r - t1
         y_rim = vy + math.sqrt(max(r * r - hb * hb, 0.0))
+        for d in plan.dims:  # 键槽对称度：箭头与槽宽尺寸线对齐（GB/T 1182 中心要素），框格在断面左侧
+            if d.view == "section" and d.kind == "gtol" and (d.extra or {}).get("keyway") == f["name"]:
+                y_dim = vy + r + 5
+                d.extra = {**d.extra, "sheet_at": (round(vx - hb, 2), round(y_dim, 2)), "normal": (-1, 0),
+                           "reach": round(r - hb + 3, 2), "sheet_pos": (round(vx - r - 3, 2), round(y_dim, 2)),
+                           "section": v.label}
         for d in plan.dims:
             if d.view != "section" or not d.ref.startswith(f["name"] + "_"):
                 continue

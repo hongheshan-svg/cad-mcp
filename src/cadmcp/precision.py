@@ -54,6 +54,16 @@ def perpendicularity(L: float, grade: int) -> float:
     return _PERP[grade][i] / 1000
 
 
+# GB/T 1184 对称度 8 级（µm），主参数 = 键槽宽 b：≤6、>6–10、>10–18、>18–30、>30–50。TODO(核对原文)
+_SYM_STEPS = (6, 10, 18, 30, 50)
+_SYM8 = (15, 20, 25, 30, 40)
+
+
+def keyway_symmetry(b: float) -> float:
+    i = next((k for k, hi in enumerate(_SYM_STEPS) if b <= hi), len(_SYM_STEPS) - 1)
+    return _SYM8[i] / 1000
+
+
 def bearing_cylindricity(d: float) -> float:
     i = next((k for k, hi in enumerate(_DIA) if d <= hi), len(_DIA) - 1)
     return _BEARING_CYL[i] / 1000
@@ -111,6 +121,18 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
                 j = max(nb, key=lambda j: steps[j][1])
                 tols.append(GeoTol(type="circular_runout", value=bearing_shoulder_runout(steps[i][1]),
                                    target=f"shoulder:{min(i, j)}", datums=letters))
+        # 键槽对称度：键槽中心平面对所在轴段轴线（该段为基准；已是基准则沿用字母），GB/T 1184 8 级
+        from .standards import keyway as kw_table
+        for f in spec.features:
+            if getattr(f, "feature", "") != "keyway":
+                continue
+            i = f.step
+            dn = next((d.name for d in datums if d.target == f"step:{i}"), None)
+            if dn is None:
+                dn = "ABCDEFGH"[len(datums)]
+                datums.append(Datum(name=dn, target=f"step:{i}"))
+            b = float(ev(f.width)) if f.width is not None else kw_table(steps[i][1])[0]
+            tols.append(GeoTol(type="symmetry", value=keyway_symmetry(b), target=f"keyway:{f.name}", datums=[dn]))
         gear_of = {f.step: f for f in spec.features if isinstance(f, ShaftGear)}
         for i in sorted((set(fits) | gears) - set(base)):
             it = fits[i][1] if i in fits else 7

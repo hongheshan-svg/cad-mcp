@@ -20,7 +20,8 @@ def test_tables():
 
 def test_gear_shaft_auto():
     p = resolve_part(PartSpec.model_validate({**GS, "auto_precision": True}))
-    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "step:0"), ("B", "step:4")]  # 键槽轴伸不当轴承位
+    # 键槽轴伸不当轴承位；键槽所在段为对称度基准 C
+    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "step:0"), ("B", "step:4"), ("C", "step:5")]
     tl = {(g["type"], g["target"]): g for g in p.geotols}
     assert tl[("cylindricity", "step:0")]["value"] == 0.004
     assert tl[("circular_runout", "step:2")]["value"] == 0.018  # 齿坯：d=40、8 级

@@ -117,6 +117,7 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   `auto_precision: true` 时套类自动以精度最高的配合内孔为基准 A，外圆配合段注对 A 的径向圆跳动，内孔补 Ra。
 - 轴类可设 `"auto_precision": true` 让平台按工程惯例补精度：两端无键槽的轴承位（js/k/m/n、IT5–6）为基准 A、B 并注
   圆柱度（GB/T 275），轴承定位轴肩（轴承位相邻较大段的端面）注对 A-B 的端面圆跳动（GB/T 275），
+  键槽注对所在轴段轴线（新基准 C…）的对称度（GB/T 1184 8 级，按键宽；画在断面图槽宽尺寸线上），
   其余配合段注对 A-B 的径向圆跳动（GB/T 1184），齿轮段按齿坯公差，配合面按公差等级补 Ra。
   已写了 datums/tolerances 时这两类不动，只补粗糙度。设计意图特殊（如轴承不在两端）时自己写。
 - 盘盖类（带 `flange_holes` 的法兰 + 相邻较小、有公差的止口段，IT ≤ 9）设 `auto_precision: true`：止口为基准 A，
@@ -124,6 +125,8 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   有配合内孔时仍按套类规则以内孔为基准。
 - 材料为铸造材料（HT/QT/ZG/ZL）但没写 `casting` 毛坯设计（如车削的灰铸铁端盖）时，技术要求自动加铸件质量与
   去应力（HT 人工时效、QT 退火、ZG 正火）两条。
+- 键槽可作几何公差目标 `keyway:<键槽名>`（键槽中心平面，只用于 tolerances）：如
+  `{"type": "symmetry", "value": 0.02, "target": "keyway:KW", "datums": ["C"]}`，基准 C 写在键槽所在轴段 `step:<i>`。
 - 轴肩端面可作几何公差目标 `shoulder:<i>`（第 i 与 i+1 段之间的端面，两段直径须不同；只用于 tolerances，
   不能作基准）：如 `{"type": "circular_runout", "value": 0.012, "target": "shoulder:0", "datums": ["A", "B"]}`。
   图上引线从小端一侧水平指向端面，框格与轴段框格一起在主视图上方排布（避免重叠/穿线，必要时排到第二、三行）。

@@ -701,8 +701,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
     for d in gdt:  # 精度标注：原生符号；常量/接口不可用时执行器退回带引线注释并登记（D019）
         ex = d.extra or {}
         text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
-        common = {"view": d.view, "ref": d.ref, "at": ex.get("sheet_at"), "pos": ex.get("sheet_pos"),
-                  "fallback_text": text, "at_model": d.at}
+        common = {"view": f"section:{ex['section']}" if ex.get("section") else d.view, "ref": d.ref,
+                  "at": ex.get("sheet_at"), "pos": ex.get("sheet_pos"), "fallback_text": text, "at_model": d.at}
         if d.kind == "datum":
             ops.append(NativeOp("datum_tag", {**common, "label": d.text},
                                 "选中边线 → InsertDatumTag2 → SetLabel → 放到外法向位置"))

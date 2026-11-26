@@ -480,6 +480,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         for yy, sign in ((y_top + 3, 1), (y_bot - 3, -1)):
             s.line(mx, yy, mx, yy + sign * 5, 0.7)
             s.text(mx + 1.5, yy + (sign * 2 if sign > 0 else -4.5), v.label[0], 3.5)
+        for d in plan.dims:  # 键槽对称度：箭头与槽宽尺寸线对齐，框格在断面左侧
+            if d.view == "section" and d.kind == "gtol" and (d.extra or {}).get("keyway") == f["name"] \
+                    and "sheet_at" in d.extra:
+                from . import render_gdt
+                render_gdt.fcf(s, *d.extra["sheet_at"], (-1, 0), d.extra["cells"], reach=d.extra["reach"])
+                refs.append(d.ref)
         for d in plan.dims:
             if d.view != "section" or not d.ref.startswith(f["name"] + "_"):
                 continue

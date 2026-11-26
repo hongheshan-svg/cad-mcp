@@ -32,7 +32,7 @@ def fcf_box(s, x0, y0, cells):
     x = x0
     for w, c in zip(_widths(cells), cells):
         s.rect(x, y0 - CELL_H, w, CELL_H, THIN)
-        s.text(x + w / 2, y0 - CELL_H + 1.6, c, 3.5, "middle")
+        _cell(s, x + w / 2, y0 - CELL_H, c)
         x += w
 
 
@@ -54,8 +54,18 @@ def fcf(s, ax, ay, n, cells, reach: float = 10.0, arrow: bool = True):
     x = x0
     for w, c in zip(widths, cells):
         s.rect(x, y0, w, CELL_H, THIN)
-        s.text(x + w / 2, y0 + 1.6, c, 3.5, "middle")
+        _cell(s, x + w / 2, y0, c)
         x += w
+
+
+def _cell(s, xc, y0, c) -> None:
+    """框格内容；对称度符号常用字体里没有 ⌯，按 GB/T 1182 画三条横线（中间长）。"""
+    if c == "⌯":
+        ym = y0 + CELL_H / 2
+        for dy, hw in ((-1.0, 1.0), (0.0, 1.8), (1.0, 1.0)):
+            s.line(xc - hw, ym + dy, xc + hw, ym + dy, THIN)
+        return
+    s.text(xc, y0 + 1.6, c, 3.5, "middle")
 
 
 def roughness(s, ax, ay, n, text, reach=None):
