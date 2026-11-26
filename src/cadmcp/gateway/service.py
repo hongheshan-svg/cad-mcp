@@ -21,7 +21,7 @@ from ..detailing import check_drawing, plan_assembly_drawing, plan_part_drawing
 from ..errors import (POLICY_DENIED, CAPABILITY_UNSUPPORTED, DOC_NOT_FOUND, NO_CHANGE_SESSION, PARAM_NOT_FOUND, SPEC_INVALID,
                       TARGET_UNAVAILABLE, CadError)
 from ..ir import AssemblySpec, DrawingSpec, PartSpec
-from ..ir.assembly_resolve import (part_fits, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
+from ..ir.assembly_resolve import (fit_gaps, part_fits, ResolvedAssembly, SourceInfo, aabb_interference, interface_check,
                                   resolve_assembly)
 from ..ir.resolve import ResolvedPart, ResolvedRef, resolve_part
 from ..library import Library
@@ -245,6 +245,7 @@ class CadService:
                 findings = [{"rule": "A001", "severity": "warning", "target": f"{i['a']}~{i['b']}",
                              "message": f"包围盒重叠 {i['overlap_mm']} mm（需精确干涉检查确认）"} for i in interf]
                 findings += interface_check(spec, self._source_info)
+                findings += fit_gaps(res)
                 out = {"summary": res.summary(), "bom": res.bom()}
                 for code in placeholders:
                     findings.append({"rule": "A002", "severity": "warning", "target": code,

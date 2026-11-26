@@ -53,3 +53,20 @@ def test_no_fit_when_offset():
     svc.build(AssemblySpec.model_validate(a_spec))
     from cadmcp.ir.assembly_resolve import assembly_fits
     assert assembly_fits(svc._models()["FB"].resolved) == []
+
+
+def test_fit_gap_rule():
+    """销孔没写公差带：A005 警告，配合尺寸不标。"""
+    from cadmcp.ir.assembly_resolve import assembly_fits, fit_gaps
+    plate = {**PLATE, "name": "FP2", "features": [{**PLATE["features"][0], "tolerance": None}]}
+    a_spec = {**ASM, "name": "FC", "components": [{"id": "plate", "source": "part:FP2"}, ASM["components"][1]]}
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("F")
+    for d in (plate, PIN):
+        svc.build(PartSpec.model_validate(d))
+    r = svc.build(AssemblySpec.model_validate(a_spec))
+    a = svc._models()["FC"].resolved
+    assert assembly_fits(a) == []
+    g = fit_gaps(a)
+    assert len(g) == 1 and "plate.Pin[0]（孔）" in g[0]["message"]
+    assert any(f["rule"] == "A005" for f in r["rules"]["findings"])
