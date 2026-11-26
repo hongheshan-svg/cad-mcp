@@ -170,6 +170,8 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             px, py = P(z, r)
             if d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
                 render_gdt.fcf(s, px, py, (0, 1), d.extra["cells"], reach=y_top + 22 - py)
+            elif d.kind == "roughness" and d.extra.get("on_frame"):  # 标在框格上方（GB/T 131）
+                render_gdt.roughness(s, px - 3.5 + 2.5, y_top + 22 + render_gdt.CELL_H, (0, 1), d.text)
             else:
                 render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
         elif d.kind == "callout" and d.at is not None:

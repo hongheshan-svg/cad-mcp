@@ -169,3 +169,19 @@ def test_shaft_fit_steps_without_geotol_warn():
             "tolerances": [{"type": "circular_runout", "value": 0.012, "target": f"step:{i}", "datums": ["A", "B"]}
                            for i in (0, 2, 4, 5)]}
     assert not [f for f in check_part(_p(spec)) if f["rule"] == "G006"]
+
+
+def test_crowded_gear_shaft_annotations_joint_layout():
+    """拥挤轴段（基准 + 圆柱度 + Ra 同在 20 mm 段上）：框格联合排布、Ra 标在框格上方，无压字、不出图框。"""
+    spec = {**GS, "datums": [{"name": "A", "target": "step:0"}, {"name": "B", "target": "step:4"}],
+            "tolerances": [{"type": "circular_runout", "value": 0.012, "target": f"step:{i}", "datums": ["A", "B"]}
+                           for i in (2, 5)] + [{"type": "cylindricity", "value": 0.005, "target": f"step:{i}"} for i in (0, 4)],
+            "roughness": [{"target": f"step:{i}", "ra": 0.8} for i in (0, 4, 5)]}
+    p = _p(spec)
+    plan = plan_part_drawing(DrawingSpec(model="GS1"), p)
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    on_frame = [d for d in plan.dims if d.kind == "roughness" and (d.extra or {}).get("on_frame")]
+    assert on_frame
+    W, H = plan.sheet_size
+    assert all(d.extra["sheet_at"][1] + 10 < H - 5 for d in on_frame)  # 不出图框

@@ -332,6 +332,8 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: Resolve
 def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], shaft: bool) -> list[Dim]:
     dims: list[Dim] = []
 
+    gkey = None  # 当前几何公差（type@target），轴类框格联合排布用
+
     def anchor(target: str, kind: str):
         k, _, ref = target.partition(":")
         if k == "face":
@@ -353,7 +355,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         d = p.shaft_steps[i][1]
         frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
         if kind == "gtol":
-            frac = shaft_gtol_frac(p, i, views[0].scale if views else 1.0)
+            frac = shaft_gtol_fracs(p, views[0].scale if views else 1.0).get(gkey, 0.3)
         if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号（剖切线在键槽中点）
             cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
             if cuts:
@@ -378,7 +380,13 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             cands = [(clash(t, top), 0, 0.0 if t == fr0 else 1.0, t, 1) for t in (fr0, 0.5, 0.3, 0.2, 0.1, 0.85)]
             if bottom_ok:
                 cands += [(clash(t, bot), 1, 0.0 if t == fr0 else 1.0, t, -1) for t in (fr0, 0.5, 0.3, 0.2, 0.1, 0.85)]
-            _, _, _, frac, side = min(cands)
+            best = min(cands)
+            _, _, _, frac, side = best
+            g_here = [g for g in p.geotols if g["target"] == f"step:{i}"]
+            if best[0] > 0 and g_here:  # 上下都无干净位置：标在该要素几何公差框格的上方（GB/T 131）
+                g = g_here[0]
+                fr = shaft_gtol_fracs(p, sc).get(f"{g['type']}@{g['target']}", 0.3)
+                return "front", (z0 + fr * (z1 - z0), d / 2), (0, 1), {"on_frame": f"{g['type']}@{g['target']}"}
             if side < 0:
                 return "front", (z0 + frac * (z1 - z0), -(d / 2)), (0, -1)
         return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
@@ -388,6 +396,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         if a:
             dims.append(Dim(a[0], "datum", None, None, d["name"], f"datum:{d['name']}", a[1], {"normal": a[2]}))
     for g in p.geotols:
+        gkey = f"{g['type']}@{g['target']}"
         a = anchor(g["target"], "gtol")
         if a:
             dims.append(Dim(a[0], "gtol", None, g["value"], g["text"], f"gtol:{g['type']}@{g['target']}", a[1],
@@ -397,7 +406,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         a = anchor(r["target"], "roughness")
         if a:
             dims.append(Dim(a[0], "roughness", None, r["ra"], f"Ra {r['ra']:g}", f"ra:{r['target']}", a[1],
-                            {"normal": a[2]}))
+                            {"normal": a[2], **(a[3] if len(a) > 3 else {})}))
     return dims
 
 def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: float, today: date | None):
@@ -1043,12 +1052,15 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     kws = [f for f in p.shaft_features if f["kind"] == "keyway"]
     sec_d = max((f["d"] for f in kws), default=0.0)
     col_w = [Ltot + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
-    row_h = [D] + ([sec_d] if kws else [])
+    # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm），同段还有粗糙度时可能标在框格上方（再高 ~12 mm）
+    g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
+    extra_top = 0.0 if not g_steps else (16.0 if g_steps & {r["target"] for r in p.roughness} else 6.0)
+    row_h = [D + extra_top] + ([sec_d] if kws else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
-    cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8
+    cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8 - extra_top
     views = [ViewPlan("front", scale, (Ltot * scale, D * scale), (x0 + Ltot * scale / 2, cy_main))]
     cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
     # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
@@ -1602,6 +1614,15 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         else:
             continue
         nx, ny = (d.extra or {}).get("normal", (0, 1))
+        if plan.layout == "shaft" and d.kind in ("gtol", "roughness") and (d.kind == "gtol" or (d.extra or {}).get("on_frame")):
+            R = max(dd for _, dd in p.shaft_steps) / 2
+            row = cy + R * v.scale + 22  # 框格行（与 render_shaft 一致）
+            if d.kind == "gtol":
+                d.extra = {**(d.extra or {}), "sheet_at": (round(ax, 2), round(ay, 2)), "sheet_pos": (round(ax, 2), round(row, 2))}
+            else:  # 标在框格上方：√ 尖端在框格顶边、距左端 2.5
+                at = (round(ax - 3.5 + 2.5, 2), round(row + 6.0, 2))
+                d.extra = {**(d.extra or {}), "sheet_at": at, "sheet_pos": at}
+            continue
         reach = {"datum": 10.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else (d.extra or {}).get("reach") or ra_reach(nx, d.text)}[d.kind]
         pos = (ax + nx * reach, ay + ny * reach)
         if d.kind == "gtol" and (d.extra or {}).get("attach") == "callout":
@@ -1674,18 +1695,56 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
         zs += [f["z0"], f["z1"], p.step_z(f["step"])[0]]
         if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1:
             zs.append(Ltot)
+    fr = shaft_gtol_fracs(p, sc)
     for g in p.geotols:
         if g["target"].startswith("step:"):
-            i = int(g["target"][5:])
-            z0, z1 = p.step_z(i)
-            zs.append(z0 + shaft_gtol_frac(p, i, sc) * (z1 - z0))
+            z0, z1 = p.step_z(int(g["target"][5:]))
+            zs.append(z0 + fr.get(f"{g['type']}@{g['target']}", 0.3) * (z1 - z0))
     return zs
 
 
 def shaft_gtol_frac(p: ResolvedPart, i: int, sc: float) -> float:
-    """轴段几何公差框格引线在段内的位置（比例）。"""
-    z0, z1 = p.step_z(i)
-    return 0.3  # TODO：与粗糙度、相邻框格联合排布（单独避让会让相邻框格相撞）
+    """轴段 i 上第一个几何公差框格引线的位置（比例）。"""
+    fr = shaft_gtol_fracs(p, sc)
+    return next((fr[k] for k in fr if k.endswith(f"@step:{i}")), 0.3)
+
+
+def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
+    """轴类主视图上方几何公差框格的联合排布（从左到右贪心）：框格都在同一行（轮廓上方），
+    引线位置避开已放框格的横向范围、齿面粗糙度符号的文字范围与尺寸界线。返回 {type@target: 段内比例}。"""
+    from .render_gdt import _widths
+    flank = [(f["z1"] - 3 / sc, f["z1"] + 25 / sc) for f in p.shaft_features if f["kind"] == "gear"]
+    lines = []
+    texts = []  # 上方尺寸文字（键槽/环槽长度、定位）的中点与半宽（模型 mm）
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    for f in p.shaft_features:
+        if f["kind"] != "gear":
+            lines += [f["z0"], f["z1"]]
+            texts.append(((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 1.5) / sc))
+            sz0 = p.step_z(f["step"])[0]
+            a, b = (f["z1"], Ltot) if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1 else (sz0, f["z0"])
+            if b - a > 1e-6:
+                texts.append(((a + b) / 2, (text_width(f"{b - a:g}", 3.5) / 2 + 1.5) / sc))
+    placed: list[tuple[float, float]] = []
+    out: dict[str, float] = {}
+    gs = sorted((g for g in p.geotols if g["target"].startswith("step:")), key=lambda g: p.step_z(int(g["target"][5:]))[0])
+    for g in gs:
+        z0, z1 = p.step_z(int(g["target"][5:]))
+        w = sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
+
+        def cost(t):
+            z = z0 + t * (z1 - z0)
+            a, b = z - 3.5 / sc, z + (w - 3.5) / sc
+            c = sum(10 for pa, pb in placed if a < pb + 1 / sc and pa < b + 1 / sc)
+            c += sum(5 for fa, fb in flank if fa <= z <= fb)
+            c += sum(3 for x in lines if abs(x - z) < 1.5 / sc)
+            c += sum(3 for m, hw in texts if abs(m - z) < hw)
+            return c + abs(t - 0.3)
+        t = min((0.3, 0.5, 0.7, 0.15, 0.85), key=cost)
+        z = z0 + t * (z1 - z0)
+        placed.append((z - 3.5 / sc, z + (w - 3.5) / sc))
+        out[f"{g['type']}@{g['target']}"] = t
+    return out
 
 
 def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
