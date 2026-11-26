@@ -26,6 +26,7 @@ def creo_kind(path: Path) -> str:
 
 class CreoAdapter(CadAdapter):
     cad = "creo"
+    supports_broken_view = False  # Toolkit 没有创建断开视图的函数（只有 ProDrawingViewBrokenVisibleArea Get/Set）
     tk: Any = None  # ToolkitClient（配置 toolkit 时）
 
     def __init__(self, version: str, host: str = "localhost", port: int = 9056, start_part: str = "",

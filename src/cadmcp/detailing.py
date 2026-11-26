@@ -84,6 +84,7 @@ class ViewPlan:
     origin_on_sheet: tuple[float, float]  # 视图中心在图纸上的位置
     label: str = ""  # 断面图名称（如 A-A）
     target: str = ""  # 断面图对应的特征
+    breaks: list = field(default_factory=list)  # 断开画法：去掉的模型 z 区间 [(a, b)]（轴类主视图），每处在图上留 BREAK_GAP
 
 
 @dataclass
@@ -388,8 +389,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
                 fr = shaft_gtol_fracs(p, sc).get(f"{g['type']}@{g['target']}", 0.3)
                 return "front", (z0 + fr * (z1 - z0), d / 2), (0, 1), {"on_frame": f"{g['type']}@{g['target']}"}
             if side < 0:
-                return "front", (z0 + frac * (z1 - z0), -(d / 2)), (0, -1)
-        return "front", (z0 + frac * (z1 - z0), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
+                return "front", (unbreak_z(p, z0 + frac * (z1 - z0)), -(d / 2)), (0, -1)
+        return "front", (unbreak_z(p, z0 + frac * (z1 - z0)), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
 
     for d in p.datums:
         a = anchor(d["target"], "datum")
@@ -1049,9 +1050,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     b = p.bbox
     Ltot = b.zmax - b.zmin
     D = b.xmax - b.xmin
-    kws = [f for f in p.shaft_features if f["kind"] == "keyway"]
+    kws = sorted((f for f in p.shaft_features if f["kind"] == "keyway"), key=lambda f: f["z0"])  # 断面字母从左到右
     sec_d = max((f["d"] for f in kws), default=0.0)
-    col_w = [Ltot + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
+    brk = shaft_breaks(p) if spec.broken_view else []
+    Lv = Ltot - sum(b_ - a_ for a_, b_ in brk) + len(brk) * BREAK_GAP  # 断开后的视图长（模型 mm，间隙按 1:1 估）
+    col_w = [Lv + (92 if p.gear else 0)]  # 齿轮轴：右上角参数表宽 80 + 间隙（按 1:1 预留）
     # 主视图上方：几何公差框格一行（轮廓上方 22–28 mm，比默认余量多约 3 mm）；
     # 同段还有粗糙度时可能标在框格上方（再高 ~12 mm，真出现时才整体下移，见下文）
     g_steps = {g["target"] for g in p.geotols if g["target"].startswith("step:")}
@@ -1062,7 +1065,11 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
     cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8 - extra_top
-    views = [ViewPlan("front", scale, (Ltot * scale, D * scale), (x0 + Ltot * scale / 2, cy_main))]
+    front = ViewPlan("front", scale, (Ltot * scale, D * scale), (0.0, cy_main), breaks=brk)
+    wv = shaft_view_width(front, Ltot)
+    front.size_mm = (wv, D * scale)
+    front.origin_on_sheet = (x0 + wv / 2, cy_main)
+    views = [front]
     cy_sec = cy_main - D * scale / 2 - 44 - sec_d * scale / 2 - 6
     # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
     used = {d["name"] for d in p.datums} | {"I", "O"}
@@ -1070,7 +1077,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     for i, f in enumerate(kws):
         label = f"{letters[i]}-{letters[i]}"
         zc = (f["z0"] + f["z1"]) / 2
-        views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (x0 + zc * scale, cy_sec),
+        views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (shaft_sx(front, Ltot, zc), cy_sec),
                               label=label, target=f["name"]))
     dims: list[Dim] = []
     if spec.dimensions != "none":
@@ -1612,7 +1619,7 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if plan.layout == "shaft":
             cx, cy = v.origin_on_sheet
             L = p.bbox.zmax - p.bbox.zmin
-            ax, ay = cx - L * v.scale / 2 + d.at[0] * v.scale, cy + d.at[1] * v.scale
+            ax, ay = shaft_sx(v, L, d.at[0]), cy + d.at[1] * v.scale
         elif d.view in VIEW_AXES:
             ax, ay = _uv_sheet(v, p.bbox, d.at)
         else:
@@ -1691,7 +1698,7 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     """轴类主视图轮廓上方的竖线位置（模型 z）：向上伸出的直径文字、键槽/环槽/螺纹尺寸界线、几何公差框格引线。
     上方的粗糙度符号（文字向右约 21 mm）要避开它们。"""
     Ltot = p.bbox.zmax - p.bbox.zmin
-    zs = [shaft_dia_z(p, j) for j in range(len(p.shaft_steps))
+    zs = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))
           if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up"]
     for f in p.shaft_features:
         if f["kind"] == "gear":
@@ -1753,7 +1760,7 @@ def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
 
 def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     """轴类主视图轮廓下方的占位（模型 z）：基准符号、键槽剖切符号、向下伸出的直径文字。"""
-    zs = [shaft_dia_z(p, j) for j in range(len(p.shaft_steps))
+    zs = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))
           if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "down"]
     zs += [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway"]
     z = 0.0
@@ -1768,16 +1775,94 @@ def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     return zs
 
 
-def shaft_dia_z(p: ResolvedPart, i: int) -> float:
-    """第 i 段直径尺寸线的轴向位置：该轴段内离键槽/环槽最远、避开端部倒角的位置（SVG 与原生标注共用）。"""
+BREAK_GAP = 8.0  # 断开处图上间隙（mm）
+
+
+def shaft_breaks(p: ResolvedPart) -> list[tuple[float, float]]:
+    """细长轴的断开区间（模型 z）：轴长 ≥ 8 倍最大直径时，无键槽/环槽/螺纹/齿轮、无基准与几何公差的长光轴段
+    （去掉部分 > 2 倍最大直径）中段断开，两端各保留 max(该段直径, 10 mm)。GB/T 4458.1：较长且沿长度方向形状一致的
+    机件可断开缩短绘制，尺寸仍注实长。"""
+    if not p.shaft_steps:
+        return []
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    Dm = max(d for _, d in p.shaft_steps)
+    if Ltot < 8 * Dm:
+        return []
+    busy = {f["step"] for f in p.shaft_features}
+    busy |= {int(x["target"][5:]) for x in (*p.datums, *p.geotols) if x["target"].startswith("step:")}
+    out = []
+    for i, (L, d) in enumerate(p.shaft_steps):
+        if i in busy:
+            continue
+        z0, z1 = p.step_z(i)
+        keep = max(d, 10.0)
+        if (z1 - z0) - 2 * keep > 2 * Dm:
+            out.append((round(z0 + keep, 6), round(z1 - keep, 6)))
+    return out
+
+
+def unbreak_z(p: ResolvedPart, z: float) -> float:
+    """落在断开区间内的模型 z 移到左侧保留段中部（符号、尺寸线不能放在断开处）。"""
+    for a, b in shaft_breaks(p):
+        if a - 1e-9 < z < b + 1e-9:
+            i = next(j for j in range(len(p.shaft_steps)) if p.step_z(j)[0] <= a <= p.step_z(j)[1])
+            return (p.step_z(i)[0] + a) / 2
+    return z
+
+
+def shaft_view_width(v: "ViewPlan", Ltot: float) -> float:
+    return (Ltot - sum(b - a for a, b in v.breaks)) * v.scale + len(v.breaks) * BREAK_GAP
+
+
+def shaft_sx(v: "ViewPlan", Ltot: float | None, z: float) -> float:
+    """轴类主视图：模型 z → 图纸 x（考虑断开）。断开区间内线性映射到间隙。Ltot=None 时由视图宽度反推。"""
+    sc = v.scale
+    if Ltot is None:
+        Ltot = (v.size_mm[0] - len(v.breaks) * BREAK_GAP) / sc + sum(b - a for a, b in v.breaks)
+    x = v.origin_on_sheet[0] - shaft_view_width(v, Ltot) / 2 + z * sc
+    for a, b in v.breaks:
+        if z >= b:
+            x -= (b - a) * sc - BREAK_GAP
+        elif z > a:
+            x -= (z - a) * sc - (z - a) / (b - a) * BREAK_GAP
+    return x
+
+
+def shaft_dia_z(p: ResolvedPart, i: int, sc: float = 1.0) -> float:
+    """第 i 段直径尺寸线的轴向位置（SVG 与原生标注共用），见 shaft_dia_place。"""
+    return shaft_dia_place(p, i, sc)[0]
+
+
+def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, str]:
+    """第 i 段直径尺寸线的轴向位置与文字侧（left | right，文字竖写在尺寸线左/右）：
+    尺寸线离键槽/环槽越远越好；文字不压轴肩线、倒角线、键槽轮廓（文字厚约 4.5 mm 图纸）；优先文字在左、居中；
+    避开断开处。"""
     Ltot = p.bbox.zmax - p.bbox.zmin
     c = p.shaft_chamfer
     z0, z1 = p.step_z(i)
     busy = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] != "gear"]
-    cands = [z0 + (z1 - z0) * k / 20 for k in range(2, 19)]
-    return max(cands, key=lambda z: (min(min([abs(z - (a + b) / 2) - (b - a) / 2 for a, b in busy] or [1e9]), 4.0),
-                                      min(z, Ltot - z) > c + 2,  # 避开端部倒角
-                                      -abs(z - (z0 + z1) / 2)))
+    lines = [z0, z1] + ([c] if c and z0 == 0 else []) + ([Ltot - c] if c and abs(z1 - Ltot) < 1e-6 else [])
+    # 文字的障碍：键槽/环槽轮廓、各竖线；螺纹只有终止线（小径细线是水平的）
+    obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
+    for f in p.shaft_features:
+        if f["step"] == i and f["kind"] == "thread":
+            zt = f["z0"] if f["side"] == "end" else f["z1"]
+            obst.append((zt, zt))
+    obst += [(x, x) for x in lines]
+    brk = shaft_breaks(p)
+    cands = [z0 + (z1 - z0) * k / 40 for k in range(2, 39)]
+    cands = [z for z in cands if not any(a - 2 <= z <= b + 2 for a, b in brk)] or [unbreak_z(p, (z0 + z1) / 2)]
+    tw = 4.5 / sc  # 文字厚度（模型 mm）
+
+    def gap(lo, hi):  # 区间 [lo, hi] 到障碍的最小净距（模型 mm；重叠为负）
+        return min(max(a - hi, lo - b) for a, b in obst)
+
+    def key(zs):
+        z, side = zs
+        span = (z - tw, z - 0.2 / sc) if side == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+        line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
+        return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), side == "left", -abs(z - (z0 + z1) / 2))
+    return max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
 
 
 def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -1791,7 +1876,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     sc = main.scale
     Ltot = p.bbox.zmax - p.bbox.zmin
     cx, cy = main.origin_on_sheet
-    xl = cx - Ltot * sc / 2
+    X = lambda z: shaft_sx(main, Ltot, z)  # noqa: E731
     c = p.shaft_chamfer
     segs = _profile(p)
     R = max(d for _, d in p.shaft_steps) / 2
@@ -1806,11 +1891,11 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     def edge_pt(z, keyway_end):
         """z 处垂直边线上的一点：键槽端部取圆弧最远点（轴线高度），轴肩/端面取偏离轴线的点避开键槽。"""
         if keyway_end:
-            return (round(xl + z * sc, 2), round(cy, 2))
+            return (round(X(z), 2), round(cy, 2))
         rs = [r for r in (radius_at(z - 1e-6), radius_at(z + 1e-6)) if r > 0]
         r = min(rs)
         off = min(0.85 * r, max(r - c - 0.5, 0.3 * r))
-        return (round(xl + z * sc, 2), round(cy - off * sc, 2))
+        return (round(X(z), 2), round(cy - off * sc, 2))
 
     kw_ends = {round(f[k], 6) for f in p.shaft_features if f["kind"] == "keyway" for k in ("z0", "z1")}
     for d in plan.dims:
@@ -1830,14 +1915,14 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                        "orient": "h"}
         elif d.kind == "diameter" and d.ref.startswith("step"):
             i = int(d.ref[4:].split("_")[0])
-            x = xl + shaft_dia_z(p, i) * sc
+            x = X(shaft_dia_z(p, i, sc))
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
                        "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
         elif d.kind == "callout" and d.ref in ({"chamfer"} | {f["name"] for f in p.shaft_features}):
             # 位置同 render_shaft：引线从轮廓点斜向上到主视图上方的水平线
             z, r = d.at
-            ax, ay = xl + z * sc, cy + r * sc
+            ax, ay = X(z), cy + r * sc
             ty = y_top + 4 + (4 if d.ref == "chamfer" else 14)
             tx = ax - 4 - len(d.text) * 2 if d.ref == "chamfer" else ax + 6
             w = len(d.text) * 2.4

@@ -515,7 +515,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             z = (f["z0"] + f["z1"]) / 2 if f else 0.0
             main = plan.views[0]  # 轴类主视图：轴线水平，左端 = z 0（与 render_shaft 一致）
             (mcx, mcy), (mw, mh) = main.origin_on_sheet, main.size_mm
-            mx = mcx - mw / 2 + z * main.scale
+            from ...detailing import shaft_sx
+            mx = shaft_sx(main, None, z)
             ops.append(NativeOp("section_view", {
                 "label": v.label, "parent": main.type, "z": z, "center": v.origin_on_sheet,
                 "points": [[round(mx, 3), round(mcy + mh / 2 + 5, 3)], [round(mx, 3), round(mcy - mh / 2 - 5, 3)]]},
@@ -527,6 +528,11 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ops.append(NativeOp("model_view", {"view": v.type, "sw_view": name, "model": model_file,
                                            "center": v.origin_on_sheet, "scale": v.scale * (0.5 if v.type == "iso" else 1),
                                            "rotate_deg": angle, "display": "hidden_removed" if v.type == "iso" else "hidden_visible"}))
+        if v.breaks:  # 断开画法（GB/T 4458.1）：竖直断裂线，模型 z（mm，轴左端 = 0）；断开后移回规划中心
+            from ...detailing import BREAK_GAP
+            ops.append(NativeOp("break_view", {"view": v.type, "breaks": [list(b) for b in v.breaks], "scale": v.scale,
+                                               "gap": BREAK_GAP, "center": v.origin_on_sheet},
+                                "IView.InsertBreak3（竖直、曲线断裂线）→ IDrawingDoc.BreakView → 视图移到规划中心"))
     ops += section_ops(plan)
     for v in plan.views:  # 孔/槽中心符号（中心线）：每个正投影视图自动插入（剖视图建好后，替代视图同名）
         if v.type != "iso" and plan.model_kind == "part" and plan.layout != "shaft":

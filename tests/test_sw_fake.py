@@ -391,3 +391,15 @@ def test_sw_gear_part_and_drawing(sw_svc):
     assert r["rules"]["passed"], r["rules"]
     calls = [c[0] for c in ad.sw.calls]
     assert "CreateSectionViewAt5" in calls and "InsertTableAnnotation2" in calls
+
+
+def test_sw_broken_shaft_view(sw_svc):
+    """细长轴：主视图插入断裂线并 BreakView，规则检查通过。"""
+    from test_broken_view import LS
+    svc, ad = sw_svc
+    svc.change_begin("LS")
+    svc.build(PartSpec.model_validate(LS))
+    r = svc.build(DrawingSpec.model_validate({"model": "LS1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]
+    calls = [c[0] for c in ad.sw.calls]
+    assert "InsertBreak3" in calls and "BreakView" in calls

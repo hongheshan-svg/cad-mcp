@@ -1095,6 +1095,45 @@ class SwExecutor:
         self.views[view] = v
         return {"name": v.Name}
 
+    def op_break_view(self, view: str, breaks, scale: float, gap: float, center):
+        """断开画法：每个断开区间插入一对竖直断裂线（位置 = 相对视图原点的 x，轴左端为模型原点），BreakView 后
+        把视图移回规划中心（断开后 SW 以视图包围盒重新定位）。
+        TODO 实机核对：swBreakLineOrientation_e / swBreakLineStyle_e 取值；Position 单位（模型 m 还是图纸 m）；
+        断开间隙取文档设置 swDetailingBreakLineGap（此处设为 gap mm）。"""
+        v = self.views.get(view)
+        if v is None:
+            raise OpFailed(f"break_view: no view {view!r}")
+        c = self.c
+        orient = getattr(c, "swBreakLineVertical", 1)
+        style = getattr(c, "swBreakLine_Curve", 2)
+        try:
+            self.model.Extension.SetUserPreferenceDouble(getattr(c, "swDetailingBreakLineGap", 0), 0, gap * MM)
+        except Exception:  # noqa: BLE001
+            pass
+        made = 0
+        for a, b in breaks:
+            for fn, args in (("InsertBreak3", (orient, a * MM, b * MM, style, 1, False)),
+                             ("InsertBreak2", (orient, a * MM, b * MM, style, 1)),
+                             ("InsertBreak", (orient, a * MM, b * MM, style))):
+                try:
+                    if getattr(v, fn)(*args) is not None:
+                        made += 1
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+        if not made:
+            raise OpFailed("InsertBreak failed")
+        self.model.ClearSelection2(True)
+        self.model.ActivateView(v.Name)
+        self.model.Extension.SelectByID2(v.Name, "DRAWINGVIEW", 0, 0, 0, False, 0, None, 0)
+        self.model.BreakView()
+        self.model.ClearSelection2(True)
+        try:
+            v.Position = (center[0] * MM, center[1] * MM)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"breaks": made}
+
     def op_flat_pattern_view(self, model: str, center, scale: float):
         v = self.model.CreateFlatPatternViewFromModelView3(model, "", center[0] * MM, center[1] * MM, 0, False, False)
         if v is None:

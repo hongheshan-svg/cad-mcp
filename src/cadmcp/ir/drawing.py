@@ -42,6 +42,7 @@ class DrawingSpec(Strict):
         "auto", description="孔表：auto = 一个视图孔数 ≥16 或坐标值过多时，用孔号 + 孔表代替逐孔坐标标注")
     general_tolerance: str = "GB/T 1804-m"
     fit_deviations: bool = Field(True, description="配合尺寸在公差带代号后附极限偏差（GB/T 1800.2 查表），如 Φ20k6(+0.015/+0.002)；false 只注代号")
+    broken_view: bool = Field(True, description="细长轴（长 ≥ 8 倍直径、有长光轴段）自动断开画法缩短绘制（GB/T 4458.1），尺寸注实长；false 画全长")
     surface_finish: str | None = "Ra 3.2"
     notes: list[str] = Field([], description="额外技术要求。平台已自动生成：未注公差、锐边倒钝去毛刺、表面处理（来自零件）、钣金折弯半径——不要重复写")
     sections: Literal["auto", "none"] | list[SectionSpec] = Field(

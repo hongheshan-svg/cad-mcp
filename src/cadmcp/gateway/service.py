@@ -256,6 +256,8 @@ class CadService:
                                    hint=f"models: {sorted(models)}")
                 mm = models[spec.model]
                 if mm.kind == "part":
+                    if spec.broken_view and not getattr(t.adapter, "supports_broken_view", True):
+                        spec = spec.model_copy(update={"broken_view": False})  # 该 CAD 画全长，保证图纸坐标一致
                     plan = plan_part_drawing(spec, mm.resolved)
                 elif mm.kind == "assembly":
                     plan = plan_assembly_drawing(spec, mm.resolved)

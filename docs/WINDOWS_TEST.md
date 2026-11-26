@@ -425,3 +425,17 @@ TOOLKIT 路径：CREOSON 以 `view_map.section`（默认 `TOP`，即沿 IR Z 轴
   分度线 / Φd 不生成（warn）。
 - 齿轮轴（tests/test_gear.py 的 GS）：Front Plane 上齿廓折线 + 外圆，`keyway_cut` 起始偏移 40、深 36 切出 20 个齿槽；
   核对 FeatureCut4 对嵌套轮廓只切两轮廓之间的区域。Creo 同理（TOP 偏移 40 拉伸切除）。
+
+## 细长轴断开画法（break_view，TODO(实机核对)）
+
+样例：`tests/test_broken_view.py` 的 LS（652 mm 长轴，第 3 段 520 mm 光轴）。规划 A3 1:1，断开区间 z 82–542，图上间隙 8 mm。
+
+SW：
+- `IView.InsertBreak3(orientation, pos1, pos2, style, 1, False)`（失败时退到 InsertBreak2 / InsertBreak），然后选中视图 `IDrawingDoc.BreakView()`。
+- 核对：`swBreakLineVertical`、`swBreakLine_Curve` 常量取值（常量库缺失时用 1、2）；pos1/pos2 是相对视图原点的**模型** m 还是图纸 m
+  （当前传模型 z × 0.001，轴左端 = 模型原点）；断裂线间隙 `swDetailingBreakLineGap` 设为 8 mm 是否生效。
+- 断开后视图中心是否回到规划位置（`IView.Position`）；尺寸、剖切线、精度符号的选边点是否落在断开后的几何上。
+- 520 尺寸应注实长（SW 断开视图默认如此）。
+
+Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenVisibleAreaGet/Set`），Creo 目标自动 `broken_view: false` 画全长。
+如需支持，可核对 `ProDrawingViewBrokenVisibleAreaSet` 能否把一般视图改成断开视图（PTC 文章 CS412079）。

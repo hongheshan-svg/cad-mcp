@@ -34,6 +34,7 @@ class CadAdapter(ABC):
     cad: str
     version: str
     ext: dict[str, str]  # kind → 文件扩展名
+    supports_broken_view: bool = True  # 能生成原生断开视图（细长轴缩短绘制）；否则平台按全长规划
 
     @abstractmethod
     def info(self) -> dict[str, Any]: ...

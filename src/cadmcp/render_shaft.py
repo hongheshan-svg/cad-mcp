@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from .detailing import DrawingPlan, shaft_dia_z
+from .detailing import DrawingPlan
 from .ir.resolve import ResolvedPart
 
 THIN, THICK = 0.25, 0.5
@@ -77,15 +77,22 @@ def _profile(part: ResolvedPart) -> list[tuple[float, float, float]]:
     return segs
 
 
+def radius_at_seg(segs, z):
+    for a, b, r in segs:
+        if a - 1e-9 <= z <= b + 1e-9:
+            return r
+    return 0.0
+
+
 def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> None:
     main = plan.views[0]
     sc = main.scale
     Ltot = part.bbox.zmax - part.bbox.zmin
     cx, cy = main.origin_on_sheet
-    xl = cx - Ltot * sc / 2
+    from .detailing import shaft_sx
 
     def P(z, r):
-        return xl + z * sc, cy + r * sc
+        return shaft_sx(main, Ltot, z), cy + r * sc
 
     segs = _profile(part)
     c = part.shaft_chamfer
@@ -107,6 +114,16 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
     if c:
         for z, r in ((c, segs[0][2]), (Ltot - c, segs[-1][2])):
             s.line(*P(z, -r), *P(z, r), THICK)
+    # 断开画法：盖住间隙内的轮廓，两侧画波浪线（细实线，GB/T 4457.4）
+    for a, b in main.breaks:
+        r = radius_at_seg(segs, (a + b) / 2)
+        xa, xb = P(a, 0)[0], P(b, 0)[0]
+        s.parts.append(f"<rect x='{xa + 0.3:.2f}' y='{s.y(cy + r * sc + 1):.2f}' width='{xb - xa - 0.6:.2f}' "
+                       f"height='{2 * r * sc + 2:.2f}' fill='white' stroke='none'/>")
+        for x in (xa, xb):
+            n = 24
+            pts = [(x + 1.2 * math.sin(k / n * 2 * math.pi * 1.5), cy - r * sc + 2 * r * sc * k / n) for k in range(n + 1)]
+            s.poly(pts, THIN, close=False)
     s.line(*P(-3, 0), *P(Ltot + 3, 0), THIN, CENTER)
 
     # 外螺纹（GB/T 4459.1）：大径粗实线（即轮廓），小径细实线画到螺纹终止处（倒角内也画），终止线粗实线
@@ -159,10 +176,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         elif d.kind == "diameter" and d.at is not None:
             zm, dia = d.at
             i = int(d.ref[4:].split("_")[0])
-            zz = shaft_dia_z(part, i)
+            from .detailing import shaft_dia_overflow, shaft_dia_place
+            zz, side = shaft_dia_place(part, i, sc)
             x = P(zz, 0)[0]
-            from .detailing import shaft_dia_overflow
-            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text,
+            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, text_left=side == "left",
                   overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
