@@ -181,7 +181,7 @@ def test_no_read_allow_warns(svc, tmp_path):
 
 def test_many_dependents_scale(svc, tmp_path):
     import sys
-import time
+    import time
     from legacy import HDR
     designs = tmp_path / "designs"
     old = write_legacy(designs / "OLD")
