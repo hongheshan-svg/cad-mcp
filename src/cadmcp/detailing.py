@@ -437,6 +437,9 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
             uniq = [f"{x}（{names.count(x)} 处）" if names.count(x) > 1 else x for x in dict.fromkeys(names)]
             notes.append(f"{n}. {'、'.join(uniq)} 轴颈表面（图中粗点画线处）{text}。")
             n += 1
+    if p.shoulder_fillets:
+        notes.append(f"{n}. 未注轴肩圆角 R{p.shoulder_fillets[0]['R']:g}。")
+        n += 1
     if p.base_type == "shaft" and p.shaft_chamfer:
         notes.append(f"{n}. 未注倒角 C0.5。")
         n += 1

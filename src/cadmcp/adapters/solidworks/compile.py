@@ -181,6 +181,10 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                                                     "edge_pts": [[h["tap"] / 2, 0, zm]], "diameter": h["d"],
                                                     "external": False, "tol": h["callout"].split("-")[1].split("↓")[0]},
                                 "孔口圆边 → 内螺纹装饰线（失败不影响几何）"))
+        if p.shoulder_fillets:  # 轴肩圆角：按轴肩根部圆边上的点选边（小端外圆与轴肩面的交线）
+            ops.append(NativeOp("select_edges_at", {"points": [[sf["r"], 0, sf["z"]] for sf in p.shoulder_fillets]},
+                                "SelectByID2(EDGE, 模型坐标点) 逐个追加"))
+            ops.append(NativeOp("fillet", {"feature": "ShoulderFillet", "size": p.shoulder_fillets[0]["R"]}))
         for fh in p.flange_holes:  # 法兰均布孔：Front Plane(XY) 分布圆上画圆，从法兰段 z0 切到 z1
             sk = f"SK_{fh['name']}"
             ops.append(NativeOp("sketch_on_plane", {"sketch": sk, "plane": "Front Plane"}))

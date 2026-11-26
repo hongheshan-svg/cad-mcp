@@ -220,6 +220,9 @@ def compile_part_tk(spec: PartSpec, p: ResolvedPart, start_part: str = "") -> li
                  entities=[_circle((0, 0), h["tap"] / 2)], depth=h["drill"], direction="normal", op="cut", through_all=False)
             feat("feat.cosmetic_thread", h["name"] + "_THR", "内螺纹装饰（失败不影响几何）", hole_feature=h["name"],
                  major_diameter=h["d"], length=h["depth"])
+        if p.shoulder_fillets:  # 轴肩圆角：轴肩根部圆边上的点
+            feat("feat.round", "SHOULDER_FILLET", "轴肩圆角", edges=[[sf["r"], 0, sf["z"]] for sf in p.shoulder_fillets],
+                 radius=p.shoulder_fillets[0]["R"])
         for fh in p.flange_holes:  # 法兰均布孔：分布圆上各画一圆，切穿法兰段
             feat("feat.extrude", fh["name"], fh["callout"], plane={"ref": "TOP", "offset": fh["z0"]},
                  entities=[_circle(q, fh["d"] / 2) for q in fh["pts"]], depth=fh["z1"] - fh["z0"], direction="normal",

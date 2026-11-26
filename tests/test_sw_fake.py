@@ -491,3 +491,11 @@ def test_sw_flange_holes(sw_svc):
     svc.build(PartSpec.model_validate(EC))
     r = svc.build(DrawingSpec.model_validate({"model": "EC1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
+
+
+def test_sw_shoulder_fillets(sw_svc):
+    from test_shoulder_fillet import SF
+    svc, ad = sw_svc
+    svc.change_begin("SF")
+    svc.build(PartSpec.model_validate(SF))
+    assert [c for c in ad.sw.calls if c[0] == "FeatureFillet3"]

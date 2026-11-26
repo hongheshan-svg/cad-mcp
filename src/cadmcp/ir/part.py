@@ -31,6 +31,8 @@ class ShaftBase(Strict):
     type: Literal["shaft"] = "shaft"
     steps: list[ShaftStep] = Field(min_length=1)
     chamfer: Num = Field(0.0, description="两端倒角 C 值（mm），0 为不倒角")
+    shoulder_fillet: Num = Field(0.0, description="轴肩根部过渡圆角 R（mm，所有轴肩；靠轴肩有环槽处不倒）；"
+                                 "图上不画，技术要求注\"未注轴肩圆角 R…\"；0 = 不倒")
     center_holes: "CenterHoles | None" = Field(None, description="轴端中心孔（GB/T 145，图上按 GB/T 4459.5 简化标注）")
     bores: list["ShaftBore"] = Field([], description="内孔（套类/空心轴）：从轴端起的同轴圆孔；有内孔时主视图全剖")
     end_holes: list["EndHole"] = Field([], description="轴端螺孔（装挡圈/压板），主视图细虚线 + 端面引线标注")

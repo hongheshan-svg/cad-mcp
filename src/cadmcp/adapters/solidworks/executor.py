@@ -24,7 +24,7 @@ NON_CRITICAL = {"check_body_extent", "probe_gdt_constants", "datum_tag", "gtol",
                 "ref_axis", "ref_point", "auto_balloon", "readback_annotations", "export", "interference_check",
                 "set_material", "leader_note", "overall_dimension", "sketch_fillet_all_corners",
                 "section_view", "shaft_dimension", "insert_weldment", "weldment_cut_list", "count_dangling",
-                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks", "detail_view", "view_line"}
+                "bom_balloons", "cut_list_properties", "weld_symbol", "revision_table", "center_marks", "detail_view", "view_line", "select_edges_at"}
 
 
 class OpFailed(Exception):
@@ -794,6 +794,19 @@ class SwExecutor:
             raise OpFailed(f"could not select edges for rule {rule!r}")
         self.readback.setdefault("selected_edges", {})[rule] = n
         return {"count": n}
+
+    def op_select_edges_at(self, points):
+        """按模型坐标点（mm）逐个选边（追加选择），供随后的 fillet/chamfer 使用。"""
+        self._close_sketch()
+        self.model.ClearSelection2(True)
+        n = 0
+        for x, y, z in points:
+            if self.model.Extension.SelectByID2("", "EDGE", x * MM, y * MM, z * MM, n > 0, 0, None, 0):
+                n += 1
+        if n == 0:
+            raise OpFailed(f"no edge at {points}")
+        self.readback.setdefault("selected_edges", {})["points"] = n
+        return {"count": n, "requested": len(points)}
 
     def op_fillet(self, feature: str, size: float):
         """对 select_edges 选中的边倒圆角。FeatureFillet3 实参个数见 WINDOWS_TEST 待核对项。"""

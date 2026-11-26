@@ -500,3 +500,7 @@ Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺�
 样例：`tests/test_flange_holes.py`（EC1 轴承端盖）。第一个孔在模型 −Y（按 SW 轴类主视图 −Y 朝上），原位全剖时剖切面过该孔；
 **孔数为奇数时原生剖视只切到上方一个孔**，下方不会像预览（GB 规定画法：旋转到剖切平面）那样出现孔——需手工补画或接受。
 左视图（`*Back` 转 180°）核对孔的分布方位与预览一致（+X 朝右）。
+
+## 轴肩圆角（shoulder_fillet）
+SW：`select_edges_at` 按模型点 (r, 0, z) 选轴肩根部圆边（SelectByID2 EDGE，追加选择）→ FeatureFillet3；核对选中边数 = 轴肩数。
+Creo：`feat.round` edges 同样给点坐标。

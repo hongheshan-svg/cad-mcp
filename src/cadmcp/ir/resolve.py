@@ -129,6 +129,7 @@ class ResolvedPart:
     properties: dict[str, str] = field(default_factory=dict)
     shaft_tolerances: list[str | None] = field(default_factory=list)
     shaft_chamfer: float = 0.0
+    shoulder_fillets: list[dict[str, Any]] = field(default_factory=list)  # 轴肩圆角 {z, r 小端半径, R, step 小端段号}
     flange_holes: list[dict[str, Any]] = field(default_factory=list)  # 法兰均布孔 {name, step, z0, z1, count, pcd, d, angles, pts, callout}
     end_holes: list[dict[str, Any]] = field(default_factory=list)  # 轴端螺孔 {name, side, size, d, d1, tap, depth, drill, z0, z1, callout}
     shaft_bores: list[dict[str, Any]] = field(default_factory=list)  # 内孔 {name, z0, z1, d, tol, side, through}
@@ -948,6 +949,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                 what = {"thread": "螺纹小径", "groove": "槽底", "keyway": "键槽底"}[f["kind"]]
                 raise CadError(SPEC_INVALID, f"{f['name']}: 内孔 Φ{2 * r_in:g} 处壁厚不足 1 mm（{what}距轴线 {r_root:g}）")
     heat = _heat_treatment(spec, steps)
+    shoulder_fillets = _shoulder_fillets(base, steps, shaft_feats, ev) if isinstance(base, ShaftBase) else []
     return ResolvedPart(
         heat=heat, datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
         name=spec.name, part_no=spec.part_no, title=spec.title, material=spec.material, density=dens,
@@ -956,7 +958,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         profile=profile, holes=holes, pockets=pockets, bosses=bosses, finishes=finishes, references=refs,
         flat_pattern=flat, bends=bends, shaft_steps=steps, properties=dict(spec.properties),
         shaft_tolerances=[s.tolerance for s in base.steps] if isinstance(base, ShaftBase) else [],
-        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes, flange_holes=flange_holes,
+        shaft_chamfer=shaft_chamfer, shaft_features=shaft_feats, center_holes=center_holes, shaft_bores=shaft_bores, end_holes=end_holes, flange_holes=flange_holes, shoulder_fillets=shoulder_fillets,
         **({"casting": _casting_info(spec)} if spec.casting else {}), gear=gear,
         **({"weld_bodies": [asdict(b) for b in wr.bodies], "welds": wr.welds, "cut_list": wr.cut_list,
             "weld_findings": wr.findings,
@@ -964,6 +966,29 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                              "stress_relief": base.stress_relief, "process": base.weld_process}}
            if isinstance(base, WeldmentBase) else {}),
     )
+
+
+def _shoulder_fillets(base, steps, shaft_feats, ev) -> list[dict[str, Any]]:
+    """每个轴肩的根部（小端一侧）倒圆 R；该处小端有环槽紧靠轴肩时不倒（槽已让开砂轮/刀具）。"""
+    R = ev(base.shoulder_fillet)
+    if R <= 0:
+        return []
+    out, z = [], 0.0
+    for i in range(len(steps) - 1):
+        z += steps[i][0]
+        (La, da), (Lb, db) = steps[i], steps[i + 1]
+        if abs(da - db) < 1e-9:
+            continue
+        small = i if da < db else i + 1
+        if any(f["kind"] == "groove" and f["step"] == small and (abs(f["z1"] - z) < 1e-6 or abs(f["z0"] - z) < 1e-6)
+               for f in shaft_feats):
+            continue
+        h = abs(da - db) / 2
+        if R > h - 0.2 or R > steps[small][0] / 2:
+            raise CadError(SPEC_INVALID, f"轴肩圆角 R{R:g} 太大：轴段 {i}/{i + 1} 处台阶高 {h:g}、小端段长 {steps[small][0]:g}",
+                           hint="减小 shoulder_fillet")
+        out.append({"z": z, "r": min(da, db) / 2, "R": R, "step": small})
+    return out
 
 
 def _heat_treatment(spec: PartSpec, steps) -> dict[str, Any]:
