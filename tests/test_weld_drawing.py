@@ -58,3 +58,14 @@ def test_cut_list_properties_compiled():
     member = next(r for r in rows if "下料长度" in r["props"])
     assert member["props"]["LENGTH"] == member["props"]["下料长度"] and member["props"]["MATERIAL"] == "Q235"
     assert sorted(b for r in rows for b in r["bodies"]) == sorted(b["name"] for b in p.weld_bodies)
+
+
+def test_weld_top_view_hides_frame_under_plate():
+    """俯视图：顶板之下的管架被遮挡画细虚线；顶板轮廓与伸出板外的底脚仍为粗实线。"""
+    from cadmcp.render_svg import _split_hidden, render
+    p = resolve_part(PartSpec.model_validate(weld_base()))
+    plan = detailing.plan_part_drawing(DrawingSpec.model_validate({"model": p.name, "views": [{"type": "top"}]}), p)
+    svg, _ = render(plan, p)
+    assert svg.count("stroke-dasharray='3,1'") >= 8
+    assert _split_hidden((0, 5), (10, 5), [(2, 0, 4, 10)]) == [(0.0, 0.2, False), (0.2, 0.4, True), (0.4, 1.0, False)]
+    assert _split_hidden((0, 0), (10, 0), [(2, 0, 4, 10)]) == [(0.0, 1.0, False)]  # 落在遮挡框边界上：可见

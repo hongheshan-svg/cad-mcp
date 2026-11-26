@@ -216,8 +216,80 @@ def _sheet_flange_boxes(part):
     return out
 
 
+VIEW_LOOK = {"front": ("y", -1), "back": ("y", 1), "top": ("z", 1), "bottom": ("z", -1),
+             "left": ("x", -1), "right": ("x", 1)}  # 视向：(深度轴, 观察者所在一侧)
+
+
+def _occluders(part, body, vtype, ha, va, P):
+    """整体位于 body 之前（更靠近观察者）的其他杆件/板件在图上的投影矩形（消隐用）。"""
+    from .ir.resolve import Box
+    ax, sg = VIEW_LOOK.get(vtype, ("z", 1))
+    bb = Box(*body["box"])
+    lo, hi = getattr(bb, ax + "min"), getattr(bb, ax + "max")
+    out = []
+    for o in part.weld_bodies:
+        if o is body:
+            continue
+        ob = Box(*o["box"])
+        olo, ohi = getattr(ob, ax + "min"), getattr(ob, ax + "max")
+        if (sg > 0 and olo >= hi - 1e-6) or (sg < 0 and ohi <= lo + 1e-6):
+            (u0, u1), (w0, w1) = vrange(ob, ha), vrange(ob, va)
+            (x0, y0), (x1, y1) = P(u0, w0), P(u1, w1)
+            out.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+    return out
+
+
+def _split_hidden(a, b, occ, eps=1e-6):
+    """水平/竖直线段 a→b 按遮挡矩形切成 [(t0, t1, hidden)]（t ∈ [0, 1]）。线段落在矩形边界上不算被遮挡。"""
+    (xa, ya), (xb, yb) = a, b
+    horiz = abs(ya - yb) < eps
+    c, s0, s1 = (ya, xa, xb) if horiz else (xa, ya, yb)
+    L = s1 - s0
+    if abs(L) < eps:
+        return [(0.0, 1.0, False)]
+    iv = []
+    for x0, y0, x1, y1 in occ:
+        clo, chi, plo, phi = (y0, y1, x0, x1) if horiz else (x0, x1, y0, y1)
+        if clo + eps < c < chi - eps:
+            t0, t1 = sorted(((plo - s0) / L, (phi - s0) / L))
+            t0, t1 = max(t0, 0.0), min(t1, 1.0)
+            if t1 > t0 + eps:
+                iv.append((t0, t1))
+    iv.sort()
+    merged: list[list[float]] = []
+    for t0, t1 in iv:
+        if merged and t0 <= merged[-1][1] + eps:
+            merged[-1][1] = max(merged[-1][1], t1)
+        else:
+            merged.append([t0, t1])
+    out, t = [], 0.0
+    for t0, t1 in merged:
+        if t0 > t + eps:
+            out.append((t, t0, False))
+        out.append((t0, t1, True))
+        t = t1
+    if t < 1 - eps:
+        out.append((t, 1.0, False))
+    return out
+
+
+def _rect_hidden(s, x0, y0, x1, y1, occ, w=THICK, show_hidden=True):
+    """矩形按遮挡画：可见段实线，被遮挡段细虚线（show_hidden=False 时省略）。"""
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    for i in range(4):
+        a, b = corners[i], corners[(i + 1) % 4]
+        for t0, t1, hid in _split_hidden(a, b, occ):
+            pa = (a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0)
+            pb = (a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1)
+            if not hid:
+                s.poly([pa, pb], w, close=False)
+            elif show_hidden:
+                s.line(*pa, *pb, THIN, dash=HIDDEN)
+
+
 def _draw_weld_bodies(s, part, vtype, ha, va, P):
-    """焊接件视图：每个杆件/板件按包围盒投影；端视的管材画内壁（细实线），圆管画圆。"""
+    """焊接件视图：每个杆件/板件按包围盒投影并消隐（被前方杆件/板件挡住的轮廓画细虚线，GB/T 4457.4）；
+    端视的管材画内壁（细实线，被挡时省略），圆管画圆。"""
     from .ir.resolve import Box
     depth_axis = next(a for a in "xyz" if a not in (ha[-1], va[-1]))
     for body in sorted(part.weld_bodies, key=lambda b: b["kind"] != "plate"):
@@ -225,16 +297,22 @@ def _draw_weld_bodies(s, part, vtype, ha, va, P):
         (u0, u1), (w0, w1) = vrange(bb, ha), vrange(bb, va)
         x0, y0 = P(u0, w0)
         x1, y1 = P(u1, w1)
+        occ = _occluders(part, body, vtype, ha, va, P)
         sec = body.get("section")
         if body["kind"] == "member" and body["axis"] == depth_axis and sec and sec["kind"] == "CHS":
             r = (x1 - x0) / 2
-            s.circle((x0 + x1) / 2, (y0 + y1) / 2, r)
-            s.circle((x0 + x1) / 2, (y0 + y1) / 2, r * (1 - 2 * sec["t"] / sec["h"]), THIN)
+            cx_, cy_ = (x0 + x1) / 2, (y0 + y1) / 2
+            hid = any(ox0 <= cx_ - r and cx_ + r <= ox1 and oy0 <= min(cy_ - r, cy_ + r) and max(cy_ - r, cy_ + r) <= oy1
+                      for ox0, oy0, ox1, oy1 in occ)
+            s.circle(cx_, cy_, r, THIN if hid else THICK, dash=HIDDEN if hid else None)
+            if not hid:
+                s.circle(cx_, cy_, r * (1 - 2 * sec["t"] / sec["h"]), THIN)
             continue
-        s.rect(x0, y0, x1 - x0, y1 - y0)
+        X0, X1, Y0, Y1 = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        _rect_hidden(s, X0, Y0, X1, Y1, occ)
         if body["kind"] == "member" and body["axis"] == depth_axis and sec and sec["hollow"]:
-            k = (x1 - x0) * sec["t"] / (bb.xmax - bb.xmin if ha[-1] == "x" else (bb.ymax - bb.ymin if ha[-1] == "y" else bb.zmax - bb.zmin))
-            s.rect(x0 + k, y0 + k, x1 - x0 - 2 * k, y1 - y0 - 2 * k, THIN)
+            k = (X1 - X0) * sec["t"] / (bb.xmax - bb.xmin if ha[-1] == "x" else (bb.ymax - bb.ymin if ha[-1] == "y" else bb.zmax - bb.zmin))
+            _rect_hidden(s, X0 + k, Y0 + k, X1 - k, Y1 - k, occ, THIN, show_hidden=False)
 
 
 def _weld_symbol(s, px, py, d):
