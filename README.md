@@ -38,7 +38,7 @@ AI 不再一步步"点 CAD"：它写一份与 CAD 无关的**设计规格（spec
 git clone https://github.com/hongheshan-svg/cad-mcp.git
 cd cad-mcp
 uv sync
-uv run pytest -q          # 15 passed
+uv run pytest -q          # 全部通过
 uv run cadmcp doctor      # 查看可用目标（默认两个模拟目标：mock-sw2024、mock-creo10）
 ```
 
@@ -112,7 +112,7 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 
 | 支持 | 暂不支持 |
 |------|---------|
-| 板/块类机加工件（外形、螺纹孔/过孔/沉孔/销孔、型腔、凸台、倒角圆角） | 键槽、退刀槽、斜孔 |
+| 板/块/L 形件（外形、螺纹孔/过孔/沉孔/销孔/腰型孔、型腔、凸台、倒角圆角，含内侧面特征） | 键槽、退刀槽、斜孔 |
 | 阶梯轴 | 焊接件、铸件 |
 | 简单钣金（直边折弯、展开尺寸） | 复杂曲面 |
 | 标准件/外购件装配、BOM | Creo 从零建模（需 UDF 库或 TOOLKIT 授权） |

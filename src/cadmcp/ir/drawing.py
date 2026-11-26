@@ -23,7 +23,8 @@ class DrawingSpec(Strict):
     template: str = "company_default"
     projection: Literal["first_angle", "third_angle"] = "first_angle"
     views: list[ViewSpec] = Field(default_factory=lambda: [ViewSpec(type="front"), ViewSpec(type="top"),
-                                                           ViewSpec(type="right"), ViewSpec(type="iso")])
+                                                           ViewSpec(type="left"), ViewSpec(type="iso")],
+                                  description="默认 主视图+俯视图+左视图+轴测图（GB 第一角）")
     dimensions: Literal["auto", "model", "none"] = Field(
         "auto", description="auto = company dimensioning rules (overall + ordinate holes); model = import model dims")
     hole_callouts: bool = True

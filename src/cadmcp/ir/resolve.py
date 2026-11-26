@@ -75,6 +75,17 @@ class ResolvedHole:
     instances: list[HoleInstance]
     callout: str
     circular: dict[str, float] | None = None  # {center_u, center_v, pcd, count, start_angle}
+    slot: dict[str, float] | None = None  # {width, length(中心距), angle}
+    at: float | None = None
+
+    def capsule(self, inst: "HoleInstance") -> tuple[tuple[float, float], tuple[float, float], float]:
+        """孔在面内的形状：线段两端点 + 半径（圆孔两端点重合）。用于边距/孔距计算。"""
+        if self.slot:
+            a = math.radians(self.slot["angle"])
+            dx, dy = self.slot["length"] / 2 * math.cos(a), self.slot["length"] / 2 * math.sin(a)
+            u, v = inst.uv
+            return (u - dx, v - dy), (u + dx, v + dy), self.slot["width"] / 2
+        return inst.uv, inst.uv, self.max_dia / 2
 
 
 @dataclass
@@ -204,18 +215,73 @@ def dist_to_outline(pt: tuple[float, float], poly: list[tuple[float, float]]) ->
 
 
 # ---------------- face mapping ----------------
-def face_point(face: str, uv: tuple[float, float], box: Box) -> tuple[float, float, float]:
+def face_plane(face: str, box: Box, at: float | None = None) -> float:
+    """面所在平面在法向轴上的坐标；at 指定非外表面（台阶面、L 形内侧面）。"""
+    if at is not None:
+        return at
+    return {"top": box.zmax, "bottom": box.zmin, "front": box.ymin, "back": box.ymax,
+            "left": box.xmin, "right": box.xmax}[face]
+
+
+def face_depth(face: str, box: Box, at: float | None = None) -> float:
+    """从该面沿法向反方向穿透整个零件的深度（通孔深度）。"""
+    c = face_plane(face, box, at)
+    return {"top": c - box.zmin, "bottom": box.zmax - c, "front": box.ymax - c, "back": c - box.ymin,
+            "left": box.xmax - c, "right": c - box.xmin}[face]
+
+
+def face_point(face: str, uv: tuple[float, float], box: Box, at: float | None = None) -> tuple[float, float, float]:
     u, v = uv
+    c = face_plane(face, box, at)
     return {
-        "top": (u, v, box.zmax), "bottom": (u, v, box.zmin),
-        "front": (u, box.ymin, v), "back": (u, box.ymax, v),
-        "left": (box.xmin, u, v), "right": (box.xmax, u, v),
+        "top": (u, v, c), "bottom": (u, v, c),
+        "front": (u, c, v), "back": (u, c, v),
+        "left": (c, u, v), "right": (c, u, v),
     }[face]
 
 
-def face_outline(face: str, box: Box, profile: ResolvedProfile | None) -> list[tuple[float, float]]:
+SIDE_AXIS = {"front": (1, -1), "back": (1, 1), "left": (0, -1), "right": (0, 1)}  # (截面中法向轴 0=x 1=y, 方向)
+
+
+def profile_chord(outline: list[tuple[float, float]], face: str, u: float, plane: float) -> float | None:
+    """挤出件侧面上的孔：沿法向从面向内，穿过实体的长度（截面多边形与直线求交）。"""
+    ax, sgn = SIDE_AXIS[face]
+    hits = []
+    for i in range(len(outline)):
+        a, b = outline[i], outline[(i + 1) % len(outline)]
+        ua, ub = a[1 - ax], b[1 - ax]
+        if (ua > u) != (ub > u):
+            t = (u - ua) / (ub - ua)
+            hits.append(a[ax] + t * (b[ax] - a[ax]))
+    hits.sort()
+    for k in range(0, len(hits) - 1, 2):
+        lo, hi = hits[k], hits[k + 1]
+        if sgn > 0 and abs(hi - plane) < 1e-6:
+            return hi - lo
+        if sgn < 0 and abs(lo - plane) < 1e-6:
+            return hi - lo
+    return None
+
+
+def side_face_range(outline: list[tuple[float, float]], face: str, plane: float) -> tuple[float, float] | None:
+    """侧面在截面上的真实范围（与该平面共线的轮廓边的并集范围）。"""
+    ax, _ = SIDE_AXIS[face]
+    us = []
+    for i in range(len(outline)):
+        a, b = outline[i], outline[(i + 1) % len(outline)]
+        if abs(a[ax] - plane) < 1e-6 and abs(b[ax] - plane) < 1e-6:
+            us += [a[1 - ax], b[1 - ax]]
+    return (min(us), max(us)) if us else None
+
+
+def face_outline(face: str, box: Box, profile: ResolvedProfile | None,
+                 at: float | None = None, extrude: bool = False) -> list[tuple[float, float]]:
     if face in ("top", "bottom") and profile is not None:
         return profile.outline
+    if extrude and profile is not None and profile.shape == "polygon" and face in SIDE_AXIS:
+        rng = side_face_range(profile.outline, face, face_plane(face, box, at))
+        if rng:
+            return [(rng[0], box.zmin), (rng[1], box.zmin), (rng[1], box.zmax), (rng[0], box.zmax)]
     if face in ("front", "back"):
         a, b, c, d = box.xmin, box.xmax, box.zmin, box.zmax
     elif face in ("left", "right"):
@@ -243,14 +309,29 @@ def _positions(h: Hole, ev) -> list[tuple[float, float]]:
     return pts
 
 
-def resolve_hole(h: Hole, ev, box: Box) -> ResolvedHole:
+def resolve_hole(h: Hole, ev, box: Box, section: list[tuple[float, float]] | None = None) -> ResolvedHole:
     through = h.depth == "through"
-    extent = box.extent(h.face)
+    at = ev(h.at) if h.at is not None else None
+    extent = face_depth(h.face, box, at)
+    if through and section is not None and h.face in SIDE_AXIS:
+        uvs0 = _positions(h, ev)
+        chords = [profile_chord(section, h.face, uv[0], face_plane(h.face, box, at)) for uv in uvs0]
+        if chords and all(c is not None for c in chords):
+            extent = max(chords)
     depth = extent if through else ev(h.depth)
     size = h.size
     cbore = csink = None
     thread_depth = None
-    if h.type == "simple":
+    slot = None
+    if h.type == "slot":
+        w = standards.clearance(size) if isinstance(size, str) and standards.is_metric(size) else ev(size)
+        L = ev(h.slot_length)
+        if L <= 0 or w <= 0:
+            raise CadError(SPEC_INVALID, f"slot {h.name}: width and slot_length must be > 0")
+        slot = {"width": w, "length": L, "angle": ev(h.slot_angle)}
+        nominal = drill = maxd = w
+        label = f"腰型孔 宽{_fmt(w)} 中心距{_fmt(L)}"
+    elif h.type == "simple":
         d = ev(size) if not isinstance(size, str) or not standards.is_metric(size) else standards.clearance(size)
         nominal = drill = maxd = d
         label = f"Φ{_fmt(d)}{h.tolerance or ''}"
@@ -276,7 +357,7 @@ def resolve_hole(h: Hole, ev, box: Box) -> ResolvedHole:
         raise CadError(SPEC_INVALID, f"hole {h.name}: depth must be > 0")
     uvs = _positions(h, ev)
     n = len(uvs)
-    insts = [HoleInstance(h.name, i, h.face, uv, face_point(h.face, uv, box), FACE_NORMAL[h.face]) for i, uv in enumerate(uvs)]
+    insts = [HoleInstance(h.name, i, h.face, uv, face_point(h.face, uv, box, at), FACE_NORMAL[h.face]) for i, uv in enumerate(uvs)]
     prefix = f"{n}×" if n > 1 else ""
     depth_txt = "通" if through else f"↧{_fmt(depth)}"
     if h.type == "tapped":
@@ -295,11 +376,14 @@ def resolve_hole(h: Hole, ev, box: Box) -> ResolvedHole:
                 "pcd": 2 * ev(h.pattern.radius), "count": len(uvs), "start_angle": ev(h.pattern.start_angle)}
         callout += " 均布"
     return ResolvedHole(h.name, h.face, h.type, label, nominal, drill, maxd, depth, through, thread_depth,
-                        cbore, csink, h.tolerance, insts, callout, circ)
+                        cbore, csink, h.tolerance, insts, callout, circ, slot, at)
 
 
 def _hole_volume(h: ResolvedHole) -> float:
     n = len(h.instances)
+    if h.slot:
+        w, L = h.slot["width"], h.slot["length"]
+        return n * (L * w + math.pi * w * w / 4) * h.depth
     v = math.pi * h.drill ** 2 / 4 * h.depth
     if h.cbore:
         D, d = h.cbore
@@ -381,21 +465,24 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             if f.face != "top":
                 raise CadError(SPEC_INVALID, f"boss {f.name}: only face 'top' is supported in v0")
             volume += pr.area * hgt
-            box.zmax += 0  # 先记录，统一在最后扩展
-            bosses.append({"name": f.name, "face": f.face, "profile": pr, "height": hgt, "z0": box.zmax})
+            z0 = ev(f.at) if f.at is not None else box.zmax
+            bosses.append({"name": f.name, "face": f.face, "profile": pr, "height": hgt, "z0": z0})
     for b in bosses:
         box.zmax = max(box.zmax, b["z0"] + b["height"])
 
     for f in spec.features:
         if isinstance(f, Hole):
-            rh = resolve_hole(f, ev, box)
+            section = profile.outline if (isinstance(base, (ExtrudeBase, SheetMetalBase)) and profile) else None
+            rh = resolve_hole(f, ev, box, section if isinstance(base, ExtrudeBase) else None)
             volume -= _hole_volume(rh)
             holes.append(rh)
         elif isinstance(f, Pocket):
             pr = resolve_profile(f.profile, ev)
-            depth = box.extent(f.face) if f.depth == "through" else ev(f.depth)
+            at = ev(f.at) if f.at is not None else None
+            depth = face_depth(f.face, box, at) if f.depth == "through" else ev(f.depth)
             volume -= pr.area * depth
-            pockets.append({"name": f.name, "face": f.face, "profile": pr, "depth": depth, "through": f.depth == "through"})
+            pockets.append({"name": f.name, "face": f.face, "profile": pr, "depth": depth, "through": f.depth == "through",
+                            "at": at})
         elif isinstance(f, EdgeFinish):
             s = ev(f.size)
             if thickness is None:

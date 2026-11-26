@@ -126,10 +126,10 @@ class SwExecutor:
         ctx = self.sketch_ctx
         if ctx.get("plane"):
             return [uv[0], uv[1], 0.0]
-        x0, x1, y0, y1, z0, z1 = ctx["bbox"]
+        c = ctx["plane_coord"]
         u, v = uv
-        return {"top": [u, v, z1], "bottom": [u, v, z0], "front": [u, y0, v], "back": [u, y1, v],
-                "left": [x0, u, v], "right": [x1, u, v]}[ctx["face"]]
+        return {"top": [u, v, c], "bottom": [u, v, c], "front": [u, c, v], "back": [u, c, v],
+                "left": [c, u, v], "right": [c, u, v]}[ctx["face"]]
 
     def _sk(self, uv) -> tuple[float, float]:
         if self.sketch_ctx.get("plane") == "Front Plane":
@@ -210,7 +210,7 @@ class SwExecutor:
         self.sketch_ctx = {"name": sketch, "plane": plane}
         return self._name_active_sketch(sketch)
 
-    def op_sketch_on_face(self, sketch: str, face: str, ray_from, ray_dir, bbox):
+    def op_sketch_on_face(self, sketch: str, face: str, ray_from, ray_dir, bbox, plane_coord: float):
         self._close_sketch()
         self.model.ClearSelection2(True)
         p = [v * MM for v in ray_from]
@@ -219,7 +219,7 @@ class SwExecutor:
         if not ok:
             raise OpFailed(f"SelectByRay found no face for {face}")
         self.model.SketchManager.InsertSketch(True)
-        self.sketch_ctx = {"name": sketch, "face": face, "bbox": bbox}
+        self.sketch_ctx = {"name": sketch, "face": face, "bbox": bbox, "plane_coord": plane_coord}
         return self._name_active_sketch(sketch)
 
     def _name_active_sketch(self, sketch: str):
@@ -280,6 +280,15 @@ class SwExecutor:
         dx, dy = (length - width) / 2 * math.cos(a), (length - width) / 2 * math.sin(a)
         p1 = self._sk((center[0] - dx, center[1] - dy))
         p2 = self._sk((center[0] + dx, center[1] + dy))
+        res = self.model.SketchManager.CreateSketchSlot(self.c.swSketchSlotCreationType_line,
+                                                        self.c.swSketchSlotLengthType_CenterCenter, width * MM,
+                                                        p1[0], p1[1], 0, p2[0], p2[1], 0, 0, 0, 0, 1, False)
+        if res is None:
+            raise OpFailed("CreateSketchSlot failed")
+        return {}
+
+    def op_sketch_slot_uv(self, sketch: str, end1, end2, width: float):
+        p1, p2 = self._sk(end1), self._sk(end2)
         res = self.model.SketchManager.CreateSketchSlot(self.c.swSketchSlotCreationType_line,
                                                         self.c.swSketchSlotLengthType_CenterCenter, width * MM,
                                                         p1[0], p1[1], 0, p2[0], p2[1], 0, 0, 0, 0, 1, False)

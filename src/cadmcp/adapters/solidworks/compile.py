@@ -34,14 +34,23 @@ def _profile_ops(pr, sketch: str) -> list[NativeOp]:
     return [NativeOp("sketch_polyline_closed", {"sketch": sketch, "points": d["points"]})]
 
 
-def _face_sketch(face: str, box, sketch: str) -> NativeOp:
-    origin_dir, ray_dir = FACE_RAY[face]
-    c = ((box.xmin + box.xmax) / 2, (box.ymin + box.ymax) / 2, (box.zmin + box.zmax) / 2)
-    far = 10 * max(box.size)
-    pt = tuple(c[i] + origin_dir[i] * far for i in range(3))
-    return NativeOp("sketch_on_face", {"sketch": sketch, "face": face, "ray_from": pt, "ray_dir": ray_dir,
-                                       "bbox": [box.xmin, box.xmax, box.ymin, box.ymax, box.zmin, box.zmax]},
-                    "用 SelectByRay 从外部选面，不依赖面 ID；面内坐标经 ModelToSketchTransform 换算")
+def _face_sketch(face: str, box, sketch: str, at: float | None = None, uv=(None, None)) -> NativeOp:
+    """在面上开草图。射线从面外 0.5mm、目标位置处沿法向反方向打入：
+    外表面和非外表面（台阶面、L 形内侧面，用 at 指定）都能选中正确的面。"""
+    from ...ir.resolve import face_plane, face_point
+    n = FACE_RAY[face][0]
+    if uv[0] is None:
+        lo = {"top": (box.xmin, box.ymin), "bottom": (box.xmin, box.ymin), "front": (box.xmin, box.zmin),
+              "back": (box.xmin, box.zmin), "left": (box.ymin, box.zmin), "right": (box.ymin, box.zmin)}[face]
+        hi = {"top": (box.xmax, box.ymax), "bottom": (box.xmax, box.ymax), "front": (box.xmax, box.zmax),
+              "back": (box.xmax, box.zmax), "left": (box.ymax, box.zmax), "right": (box.ymax, box.zmax)}[face]
+        uv = ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2)
+    pt = face_point(face, uv, box, at)
+    start = tuple(pt[i] + n[i] * 0.5 for i in range(3))
+    return NativeOp("sketch_on_face", {"sketch": sketch, "face": face, "ray_from": start, "ray_dir": FACE_RAY[face][1],
+                                       "bbox": [box.xmin, box.xmax, box.ymin, box.ymax, box.zmin, box.zmax],
+                                       "plane_coord": face_plane(face, box, at)},
+                    "在目标位置附近沿法向打射线选面，不依赖面 ID；面内坐标经 ModelToSketchTransform 换算")
 
 
 def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via: str = "cut") -> list[NativeOp]:
@@ -88,21 +97,31 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
         ops.append(NativeOp("extrude_boss", {"feature": b["name"], "sketch": sk, "depth": b["height"]}))
     for pk in p.pockets:
         sk = f"SK_{pk['name']}"
-        ops.append(_face_sketch(pk["face"], p.bbox, sk))
+        c = pk["profile"].bbox2d
+        ops.append(_face_sketch(pk["face"], p.bbox, sk, pk.get("at"), ((c[0] + c[1]) / 2, (c[2] + c[3]) / 2)))
         ops += _profile_ops(pk["profile"], sk)
         ops.append(NativeOp("extrude_cut", {"feature": pk["name"], "sketch": sk,
                                             "end": "through_all" if pk["through"] else "blind", "depth": pk["depth"]}))
     for h in p.holes:
         sk = f"SK_{h.name}"
+        uv0 = h.instances[0].uv
+        if h.slot:
+            ops.append(_face_sketch(h.face, p.bbox, sk, h.at, uv0))
+            for inst in h.instances:
+                a, b, _ = h.capsule(inst)
+                ops.append(NativeOp("sketch_slot_uv", {"sketch": sk, "end1": a, "end2": b, "width": h.slot["width"]}))
+            ops.append(NativeOp("extrude_cut", {"feature": h.name, "sketch": sk,
+                                                "end": "through_all" if h.through else "blind", "depth": h.depth}))
+            continue
         if holes_via == "cut":
             # 稳妥路径：拉伸切除生成孔（几何一定正确）；孔标注由出图方案以注释写入
-            ops.append(_face_sketch(h.face, p.bbox, sk))
+            ops.append(_face_sketch(h.face, p.bbox, sk, h.at, uv0))
             ops.append(NativeOp("sketch_circles", {"sketch": sk, "points": [i.xyz for i in h.instances], "diameter": h.drill}))
             ops.append(NativeOp("extrude_cut", {"feature": h.name, "sketch": sk,
                                                 "end": "through_all" if h.through else "blind", "depth": h.depth}))
             if h.cbore or h.csink:
                 d2, dep2 = (h.cbore if h.cbore else (h.csink, (h.csink - h.drill) / 2))
-                ops.append(_face_sketch(h.face, p.bbox, sk + "_CB"))
+                ops.append(_face_sketch(h.face, p.bbox, sk + "_CB", h.at, uv0))
                 ops.append(NativeOp("sketch_circles", {"sketch": sk + "_CB", "points": [i.xyz for i in h.instances],
                                                        "diameter": d2}))
                 ops.append(NativeOp("extrude_cut", {"feature": h.name + "_CB", "sketch": sk + "_CB", "end": "blind",
@@ -111,7 +130,7 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
                 ops.append(NativeOp("cosmetic_thread", {"feature": h.name, "size": h.size_label,
                                                         "depth": h.thread_depth}, "装饰螺纹线（失败不影响几何）"))
             continue
-        ops.append(_face_sketch(h.face, p.bbox, sk))
+        ops.append(_face_sketch(h.face, p.bbox, sk, h.at, uv0))
         ops.append(NativeOp("sketch_points", {"sketch": sk, "points": [i.xyz for i in h.instances]}))
         ops.append(NativeOp("hole_wizard", {
             "feature": h.name, "position_sketch": sk, "generic_type": HOLE_TYPE[h.type],

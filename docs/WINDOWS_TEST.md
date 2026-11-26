@@ -27,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File scripts\win\setup.ps1
 ```
 
 期望看到：
-- `15 passed`（模拟测试，证明平台本身正常）
+- `全部通过`（模拟测试，证明平台本身正常）
 - `cadmcp doctor` 输出中 `targets` 含 `sw2024`；若 SolidWorks 连接失败会出现在 `unavailable` 中并给出原因
 - `creo10` 需要 Creo 和 CREOSON 已启动，否则也会在 `unavailable`（第 4 步再测）
 

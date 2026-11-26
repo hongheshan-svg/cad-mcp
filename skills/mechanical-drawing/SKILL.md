@@ -20,6 +20,9 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
   - 螺钉过孔 `clearance`；沉头螺钉 `counterbore`（内六角）/`countersink`
   - 销孔 `simple` + `tolerance: "H7"`
 - 阵列孔用 `pattern`（grid / circular），不要逐个列坐标。
+- 腰型孔（调节孔）`slot`：`size` 写螺钉规格（如 `"M6"`，宽度取过孔）或数值宽度，`slot_length` 为两端圆心距，`slot_angle` 为方向。
+- L 形/台阶件的内侧平面：孔、型腔、凸台写 `at`（该面所在平面的坐标），例如 L 形立板内侧面 `face: "front", at: 8`。
+- 出图结果的 `rules.findings` 中 D009（文字重叠）、D010（孔所在面缺视图）要处理：按提示调整 `views` 或 `sheet`。
 - 每个将被装配的零件都要建 `CS_` 坐标系：放在安装面上、Z 轴朝外。
 - 必填：`part_no`、`title`、`material`、`surface_treatment`（铝件常用"阳极氧化"，钢件"发黑/镀锌"）。
 

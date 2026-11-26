@@ -9,9 +9,9 @@ import math
 from html import escape
 from typing import Any
 
-from .detailing import VIEW_AXES, DrawingPlan
+from .detailing import VIEW_AXES, DrawingPlan, vc, vrange
 from .ir.assembly_resolve import ResolvedAssembly
-from .ir.resolve import ResolvedPart
+from .ir.resolve import ResolvedPart, face_point
 
 STROKE = "#111"
 THIN = 0.25
@@ -23,6 +23,22 @@ class _Svg:
     def __init__(self, W: float, H: float):
         self.W, self.H = W, H
         self.parts: list[str] = []
+        self.texts: list[tuple[str, tuple[float, float, float, float]]] = []
+
+    def collisions(self) -> list[tuple[str, str]]:
+        """文字框两两重叠（重叠面积 > 较小框的 15%）。"""
+        out = []
+        tx = self.texts
+        for i in range(len(tx)):
+            for j in range(i + 1, len(tx)):
+                (sa, a), (sb, b) = tx[i], tx[j]
+                ox = min(a[2], b[2]) - max(a[0], b[0])
+                oy = min(a[3], b[3]) - max(a[1], b[1])
+                if ox > 0 and oy > 0:
+                    small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+                    if small > 0 and ox * oy > 0.15 * small:
+                        out.append((sa, sb))
+        return out
 
     def y(self, y: float) -> float:
         return self.H - y
@@ -47,6 +63,11 @@ class _Svg:
                           f"stroke='{STROKE}' stroke-width='{w}'{da}/>")
 
     def text(self, x, y, s, size=3.5, anchor="start", rotate=0):
+        w = _text_w(s, size)
+        x0 = x - (w / 2 if anchor == "middle" else 0)
+        box = (x0, y - 0.2 * size, x0 + w, y + 0.8 * size) if not rotate else \
+              (x - 0.8 * size, y - w / 2 if anchor == "middle" else y - w, x + 0.2 * size, y + w / 2 if anchor == "middle" else y)
+        self.texts.append((s, box))
         rot = f" transform='rotate({rotate} {x:.2f} {self.y(y):.2f})'" if rotate else ""
         self.parts.append(f"<text x='{x:.2f}' y='{self.y(y):.2f}' font-size='{size}' text-anchor='{anchor}' "
                           f"{FONT}{rot}>{escape(s)}</text>")
@@ -57,8 +78,56 @@ class _Svg:
                 + "".join(self.parts) + "</svg>")
 
 
-def _coord(pt3, axis):
-    return pt3["xyz".index(axis)]
+FACE_AXIS = {"top": "z", "bottom": "z", "front": "y", "back": "y", "left": "x", "right": "x"}
+
+
+def _text_w(s: str, size: float) -> float:
+    return sum(size if ord(ch) > 0x2E80 else 0.6 * size for ch in s)
+
+
+def _iso_xy(cx, cy, sc, box):
+    sx, sy, sz = box.size
+
+    def iso(x, y, z):
+        x, y, z = x - box.xmin, y - box.ymin, z - box.zmin
+        return (cx + (x - y) * 0.866 * sc - (sx - sy) * 0.433 * sc,
+                cy + ((x + y) * 0.5 + z) * sc - ((sx + sy) * 0.25 + sz / 2) * sc)
+    return iso
+
+
+def _draw_iso(s, cx, cy, sc, box, part, asm):
+    iso = _iso_xy(cx, cy, sc, box)
+    if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
+        pts = part.profile.outline
+        z0, z1 = 0.0, part.thickness
+        s.poly([iso(x, y, z0) for x, y in pts], THIN)
+        s.poly([iso(x, y, z1) for x, y in pts], THICK)
+        if part.profile.shape == "circle":  # 只画轮廓切线
+            xs = [iso(x, y, z0)[0] for x, y in pts]
+            for k in (xs.index(min(xs)), xs.index(max(xs))):
+                s.line(*iso(*pts[k], z0), *iso(*pts[k], z1), THICK)
+        else:
+            for x, y in pts:
+                s.line(*iso(x, y, z0), *iso(x, y, z1), THICK)
+        return
+    if part is not None and part.base_type == "shaft":
+        z = 0.0
+        for L, d in part.shaft_steps:
+            ring = [(d / 2 * math.cos(2 * math.pi * k / 36), d / 2 * math.sin(2 * math.pi * k / 36)) for k in range(36)]
+            s.poly([iso(x, y, z) for x, y in ring], THIN)
+            s.poly([iso(x, y, z + L) for x, y in ring], THICK)
+            xs = [iso(x, y, z)[0] for x, y in ring]
+            for k in (xs.index(min(xs)), xs.index(max(xs))):
+                s.line(*iso(*ring[k], z), *iso(*ring[k], z + L), THICK)
+            z += L
+        return
+    boxes = [i.world_bbox for i in asm.instances] if asm is not None else [box]
+    for bb in boxes:
+        P = {(i, j, k): iso(bb.xmin + i * (bb.xmax - bb.xmin), bb.ymin + j * (bb.ymax - bb.ymin),
+                            bb.zmin + k * (bb.zmax - bb.zmin)) for i in (0, 1) for j in (0, 1) for k in (0, 1)}
+        for e1, e2 in [((0,0,0),(1,0,0)),((1,0,0),(1,1,0)),((0,0,1),(1,0,1)),((1,0,1),(1,1,1)),((0,1,1),(1,1,1)),
+                       ((0,0,1),(0,1,1)),((0,0,0),(0,0,1)),((1,0,0),(1,0,1)),((1,1,0),(1,1,1))]:
+            s.line(*P[e1], *P[e2], THIN if asm is not None else THICK)
 
 
 def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = None) -> tuple[str, dict[str, Any]]:
@@ -78,43 +147,35 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
     for v in plan.views:
         sc = v.scale * (0.5 if v.type == "iso" else 1)
         cx, cy = v.origin_on_sheet
-        s.text(cx, cy + v.size_mm[1] / 2 + 4, v.type.upper(), 3, "middle")
+        if v.type == "flat_pattern":  # 基本视图按 GB 不标名称；展开图需注明
+            s.text(cx, cy + v.size_mm[1] / 2 + 4, "展开图", 3.5, "middle")
         if box is None or v.type in ("iso", "flat_pattern"):
             if v.type == "iso" and box is not None:
-                sx, sy, sz = box.size
-                def iso(x, y, z):
-                    return (cx + (x - y) * 0.866 * sc - (sx - sy) * 0.433 * sc,
-                            cy + ((x + y) * 0.5 + z) * sc - ((sx + sy) * 0.25 + sz / 2) * sc)
-                boxes = [i.world_bbox for i in asm.instances] if asm is not None else [box]
-                for bb in boxes:
-                    x0, y0, z0 = bb.xmin - box.xmin, bb.ymin - box.ymin, bb.zmin - box.zmin
-                    bx, by, bz = bb.size
-                    P = {(i, j, k): iso(x0 + i * bx, y0 + j * by, z0 + k * bz) for i in (0, 1) for j in (0, 1) for k in (0, 1)}
-                    for a, b in [((0,0,0),(1,0,0)),((1,0,0),(1,1,0)),((0,0,1),(1,0,1)),((1,0,1),(1,1,1)),((0,1,1),(1,1,1)),
-                                 ((0,0,1),(0,1,1)),((0,0,0),(0,0,1)),((1,0,0),(1,0,1)),((1,1,0),(1,1,1))]:
-                        s.line(*P[a], *P[b], THICK if asm is None else THIN)
+                _draw_iso(s, cx, cy, sc, box, part, asm)
             else:
                 w, h = v.size_mm
                 s.rect(cx - w / 2, cy - h / 2, w, h)
             continue
         ha, va = VIEW_AXES[v.type]
-        lo = {"x": box.xmin, "y": box.ymin, "z": box.zmin}
-        hi = {"x": box.xmax, "y": box.ymax, "z": box.zmax}
-        mid = {a: (lo[a] + hi[a]) / 2 for a in "xyz"}
+        (ulo, uhi), (wlo, whi) = vrange(box, ha), vrange(box, va)
+        mid_u, mid_w = (ulo + uhi) / 2, (wlo + whi) / 2
 
-        def P(u, w_):
-            return (cx + (u - mid[ha]) * sc, cy + (w_ - mid[va]) * sc)
+        def P(u, w_, cx=cx, cy=cy, sc=sc, mid_u=mid_u, mid_w=mid_w):
+            return (cx + (u - mid_u) * sc, cy + (w_ - mid_w) * sc)
+
+        def V(p3, ha=ha, va=va, P=P):
+            return P(vc(p3, ha), vc(p3, va))
 
         if part is not None and v.type in ("top", "bottom") and part.profile is not None:
             pr = part.profile
             if pr.shape == "circle":
-                c = P(*pr.data["center"])
-                s.circle(*c, pr.data["diameter"] / 2 * sc)
+                c3 = (*pr.data["center"], 0.0)
+                s.circle(*V(c3), pr.data["diameter"] / 2 * sc)
             else:
-                s.poly([P(x, y) for x, y in pr.outline])
+                s.poly([V((x, y, 0.0)) for x, y in pr.outline])
             for pk in part.pockets:
                 if pk["face"] in ("top", "bottom"):
-                    s.poly([P(x, y) for x, y in pk["profile"].outline], THIN)
+                    s.poly([V((x, y, 0.0)) for x, y in pk["profile"].outline], THIN)
         elif part is not None and part.base_type == "shaft" and v.type in ("front", "back", "left", "right"):
             z = 0.0
             for L, d in part.shaft_steps:
@@ -125,27 +186,23 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             s.line(*P(0, box.zmin - 3), *P(0, box.zmax + 3), THIN, "6,1.5,1,1.5")
         elif asm is not None:
             for inst in asm.instances:
-                bb = inst.world_bbox
-                blo = {"x": bb.xmin, "y": bb.ymin, "z": bb.zmin}
-                bhi = {"x": bb.xmax, "y": bb.ymax, "z": bb.zmax}
-                x0, y0 = P(blo[ha], blo[va])
-                x1, y1 = P(bhi[ha], bhi[va])
+                (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
+                x0, y0 = P(bu0, bw0)
+                x1, y1 = P(bu1, bw1)
                 s.rect(x0, y0, x1 - x0, y1 - y0, THICK if inst.source.kind in ("part", "assembly") else THIN)
         else:
-            x0, y0 = P(lo[ha], lo[va])
-            x1, y1 = P(hi[ha], hi[va])
+            x0, y0 = P(ulo, wlo)
+            x1, y1 = P(uhi, whi)
             s.rect(x0, y0, x1 - x0, y1 - y0)
         # 序号气泡（主视图）
         if asm is not None and v.type == plan.views[0].type:
-            placed = 0
             anchors = []
             for b_ in plan.balloons:
                 inst = next(i for i in asm.instances if i.id == b_["instance"])
-                bb = inst.world_bbox
-                anchors.append((b_, P((getattr(bb, ha + "min") + getattr(bb, ha + "max")) / 2,
-                                      (getattr(bb, va + "min") + getattr(bb, va + "max")) / 2)))
+                (bu0, bu1), (bw0, bw1) = vrange(inst.world_bbox, ha), vrange(inst.world_bbox, va)
+                anchors.append((b_, P((bu0 + bu1) / 2, (bw0 + bw1) / 2)))
             anchors.sort(key=lambda a: -a[1][1])  # 自上而下排列，引线不交叉
-            for b_, cpt in anchors:
+            for placed, (b_, cpt) in enumerate(anchors):
                 bx_ = cx + v.size_mm[0] / 2 + 15
                 by_ = cy + v.size_mm[1] / 2 - 10 - placed * 12
                 s.line(*cpt, bx_ - 4, by_, 0.18)
@@ -153,29 +210,35 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.circle(bx_, by_, 4, THIN)
                 s.text(bx_, by_ - 1.2, str(b_["item"]), 3.5, "middle")
                 rendered_refs.append(f"balloon:{b_['item']}")
-                placed += 1
-        # 孔
+        # 孔（只在与孔所在面平行的视图中画实形）
         for h in ([] if part is None else part.holes):
+            if FACE_AXIS[h.face] != FACE_AXIS.get(v.type):
+                continue
             for inst in h.instances:
-                p3 = inst.xyz
-                if inst.face in ("top", "bottom") and v.type in ("top", "bottom") or \
-                   inst.face in ("front", "back") and v.type in ("front", "back") or \
-                   inst.face in ("left", "right") and v.type in ("left", "right"):
-                    c = P(_coord(p3, ha), _coord(p3, va))
-                    s.circle(*c, h.drill / 2 * sc)
-                    if h.type == "tapped":
-                        s.circle(*c, h.nominal / 2 * sc, THIN, "1,0.8")
-                    if h.cbore or h.csink:
-                        s.circle(*c, h.max_dia / 2 * sc, THIN)
-                    s.line(c[0] - h.max_dia * 0.7 * sc, c[1], c[0] + h.max_dia * 0.7 * sc, c[1], 0.18, "4,1,1,1")
-                    s.line(c[0], c[1] - h.max_dia * 0.7 * sc, c[0], c[1] + h.max_dia * 0.7 * sc, 0.18, "4,1,1,1")
+                c = V(inst.xyz)
+                if h.slot:
+                    p1, p2, rad = h.capsule(inst)
+                    a_ = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    uv = [(p2[0] + rad * math.cos(a_ + math.radians(d)), p2[1] + rad * math.sin(a_ + math.radians(d)))
+                          for d in range(-90, 91, 15)]
+                    uv += [(p1[0] + rad * math.cos(a_ + math.radians(d)), p1[1] + rad * math.sin(a_ + math.radians(d)))
+                           for d in range(90, 271, 15)]
+                    s.poly([V(face_point(h.face, q, box, h.at)) for q in uv])
+                    s.line(*V(face_point(h.face, p1, box, h.at)), *V(face_point(h.face, p2, box, h.at)), 0.18, "4,1,1,1")
+                    continue
+                s.circle(*c, h.drill / 2 * sc)
+                if h.type == "tapped":
+                    s.circle(*c, h.nominal / 2 * sc, THIN, "1,0.8")
+                if h.cbore or h.csink:
+                    s.circle(*c, h.max_dia / 2 * sc, THIN)
+                s.line(c[0] - h.max_dia * 0.7 * sc, c[1], c[0] + h.max_dia * 0.7 * sc, c[1], 0.18, "4,1,1,1")
+                s.line(c[0], c[1] - h.max_dia * 0.7 * sc, c[0], c[1] + h.max_dia * 0.7 * sc, 0.18, "4,1,1,1")
 
         # 尺寸
-        vx0, vy0 = P(lo[ha], lo[va])
-        vx1, vy1 = P(hi[ha], hi[va])
+        vx0, vy0 = P(ulo, wlo)
+        vx1, vy1 = P(uhi, whi)
         ord_h = ord_v = 0
         has_ord_h = any(d.view == v.type and d.kind == "ordinate" and d.axis == ha for d in plan.dims)
-        has_ord_v = any(d.view == v.type and d.kind == "ordinate" and d.axis == va for d in plan.dims)
         for d in plan.dims:
             if d.view != v.type:
                 continue
@@ -205,13 +268,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     s.text(vx1 + 5 + (ord_v % 2) * 3, py - 0.8, d.text, 2.5)
                     ord_v += 1
             elif d.kind in ("callout", "radius", "diameter"):
-                if d.at is not None:
-                    px, py = P(*d.at)
-                else:
-                    px, py = vx1, vy1
+                px, py = P(*d.at) if d.at is not None else (vx1, vy1)
                 tx, ty = px + 12, py + 9
                 s.line(px, py, tx, ty, 0.18)
-                s.line(tx, ty, tx + len(d.text) * 1.9, ty, 0.18)
+                s.line(tx, ty, tx + _text_w(d.text, 3), ty, 0.18)
                 s.text(tx + 0.5, ty + 0.8, d.text, 3)
             rendered_refs.append(d.ref)
 
@@ -252,4 +312,5 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             s.rect(xx, by, w, 7, THIN)
             s.text(xx + 1.5, by + 2.2, name, 3)
             xx += w
-    return s.render(), {"dim_refs": rendered_refs, "views": [v.type for v in plan.views]}
+    return s.render(), {"dim_refs": rendered_refs, "views": [v.type for v in plan.views],
+                        "collisions": s.collisions()}

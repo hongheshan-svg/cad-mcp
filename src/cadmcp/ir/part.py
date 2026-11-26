@@ -78,11 +78,15 @@ class Hole(Strict):
     feature: Literal["hole"] = "hole"
     name: str
     face: Face = "top"
-    type: Literal["simple", "clearance", "tapped", "counterbore", "countersink"]
+    type: Literal["simple", "clearance", "tapped", "counterbore", "countersink", "slot"] = Field(
+        description="slot = 腰型孔（调节孔）：size 为螺钉规格(取过孔宽)或宽度 mm，slot_length 为中心距")
     size: str | Num = Field(description='"M6" for metric types, or a diameter in mm for simple holes')
     depth: Num | Literal["through"] = "through"
     thread_depth: Num | None = None
     tolerance: str | None = Field(None, description='fit, e.g. "H7" for dowel holes')
+    slot_length: Num | None = Field(None, description="腰型孔两端圆心距（调节行程），mm")
+    slot_angle: Num = Field(0.0, description="腰型孔方向，相对面内第一轴，度")
+    at: Num | None = Field(None, description="非外表面时：该面所在平面在其法向轴上的坐标（如台阶面 z=10、L 形内侧面 y=8）")
     positions: list[Vec2] = []
     pattern: Pattern | None = None
 
@@ -90,8 +94,10 @@ class Hole(Strict):
     def _has_location(self):
         if not self.positions and self.pattern is None:
             raise ValueError(f"hole {self.name!r}: give positions or a pattern")
-        if self.type != "simple" and not isinstance(self.size, str):
+        if self.type not in ("simple", "slot") and not isinstance(self.size, str):
             raise ValueError(f"hole {self.name!r}: type {self.type} needs a metric size like 'M6'")
+        if self.type == "slot" and self.slot_length is None:
+            raise ValueError(f"hole {self.name!r}: slot needs slot_length (center distance)")
         return self
 
 
@@ -102,6 +108,7 @@ class Pocket(Strict):
     face: Face = "top"
     profile: Profile
     depth: Num | Literal["through"]
+    at: Num | None = Field(None, description="非外表面时：面所在平面在法向轴上的坐标")
 
 
 class Boss(Strict):
@@ -111,6 +118,7 @@ class Boss(Strict):
     face: Face = "top"
     profile: Profile
     height: Num
+    at: Num | None = Field(None, description="非外表面时：面所在平面在法向轴上的坐标")
 
 
 class EdgeFinish(Strict):

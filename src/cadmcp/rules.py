@@ -9,7 +9,24 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .ir.resolve import ResolvedPart, dist_to_outline, face_outline
+from .ir.resolve import ResolvedPart, dist_to_outline, face_depth, face_outline
+
+
+def _pt_seg(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+
+
+def _seg_dist(a1, a2, b1, b2) -> float:
+    """两线段最短距离（不相交时；平面内孔/腰型孔足够）。"""
+    def cross(o, p, q):
+        return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+    d1, d2, d3, d4 = cross(b1, b2, a1), cross(b1, b2, a2), cross(a1, a2, b1), cross(a1, a2, b2)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)):
+        return 0.0
+    return min(_pt_seg(a1, b1, b2), _pt_seg(a2, b1, b2), _pt_seg(b1, a1, a2), _pt_seg(b2, a1, a2))
 
 Finding = dict[str, Any]
 
@@ -32,10 +49,12 @@ def check_part(p: ResolvedPart) -> list[Finding]:
 
     # R002/R003 孔边距、孔是否破边
     for h in p.holes:
-        outline = face_outline(h.face, p.bbox, p.profile)
+        outline = face_outline(h.face, p.bbox, p.profile, h.at, extrude=p.base_type == "extrude")
         min_wall = max(2.0, 0.5 * h.nominal)
         for inst in h.instances:
-            wall = dist_to_outline(inst.uv, outline) - h.max_dia / 2
+            p1, p2, rad = h.capsule(inst)
+            # 凸轮廓内，到边界距离沿线段是凹函数 → 最小值在端点
+            wall = min(dist_to_outline(p1, outline), dist_to_outline(p2, outline)) - rad
             tgt = f"{h.name}[{inst.index}]"
             if wall < 0:
                 out.append(_f("R003", "error", tgt, f"孔超出零件轮廓 (壁厚 {wall:.2f} mm)", "调整孔位置或零件外形"))
@@ -44,7 +63,7 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                               f"孔中心离边至少 {h.max_dia / 2 + min_wall:.1f} mm"))
         # R004 盲孔深度
         if not h.through:
-            extent = p.bbox.extent(h.face)
+            extent = face_depth(h.face, p.bbox, h.at)
             if h.depth >= extent - 0.5:
                 out.append(_f("R004", "error", h.name, f"盲孔深度 {h.depth} 接近/超过料厚 {extent}",
                               "改为 depth='through' 或减小深度"))
@@ -60,9 +79,11 @@ def check_part(p: ResolvedPart) -> list[Finding]:
     for a in range(len(all_inst)):
         for b in range(a + 1, len(all_inst)):
             (ha, ia), (hb, ib) = all_inst[a], all_inst[b]
-            if ia.face != ib.face:
+            if ia.face != ib.face or ha.at != hb.at:
                 continue
-            wall = math.dist(ia.uv, ib.uv) - (ha.max_dia + hb.max_dia) / 2
+            a1, a2, ra = ha.capsule(ia)
+            b1, b2, rb = hb.capsule(ib)
+            wall = _seg_dist(a1, a2, b1, b2) - ra - rb
             tgt = f"{ha.name}[{ia.index}]~{hb.name}[{ib.index}]"
             if wall < 0:
                 out.append(_f("R006", "error", tgt, "两孔重叠", "调整孔位"))
@@ -71,7 +92,7 @@ def check_part(p: ResolvedPart) -> list[Finding]:
     # R007 型腔底厚
     for pk in p.pockets:
         if not pk["through"]:
-            floor = p.bbox.extent(pk["face"]) - pk["depth"]
+            floor = face_depth(pk["face"], p.bbox, pk.get("at")) - pk["depth"]
             if floor < 0:
                 out.append(_f("R007", "error", pk["name"], "型腔深度超过料厚", "改为 through 或减小深度"))
             elif floor < 1.5:

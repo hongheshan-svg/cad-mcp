@@ -15,20 +15,42 @@ from .ir.assembly_resolve import ResolvedAssembly
 from .ir.drawing import DrawingSpec
 from .ir.resolve import Box, ResolvedPart
 
-SHEETS = {"A4": (297, 210), "A3": (420, 297), "A2": (594, 420), "A1": (841, 594), "A0": (1189, 841)}
+SHEETS = {"A4": (210, 297), "A3": (420, 297), "A2": (594, 420), "A1": (841, 594), "A0": (1189, 841)}  # A4 竖放
 # GB/T 14690 优先比例
 SCALES = [5.0, 2.0, 1.0, 0.5, 0.4, 0.25, 0.2, 0.1, 0.05, 0.02]  # 含允许比例 1:2.5、1:4
 PRIMARY_SCALES = [5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.02]  # GB/T 14690 优先比例（零件图）
 TITLE_BLOCK_H = 56  # 标题栏占用高度（mm，GB/T 10609.1 简化）
 MARGIN = 10
 
-# 视图 → (水平轴, 竖直轴)，基于零件坐标系
+# 视图 → (图面水平轴, 图面竖直轴)，基于零件坐标系；"-y" 表示该视图中 Y 轴向左（镜像）。
+# 由观察方向推出：图面向右 = 视线方向 × 向上方向。
 VIEW_AXES = {
-    "front": ("x", "z"), "back": ("x", "z"),
-    "top": ("x", "y"), "bottom": ("x", "y"),
-    "left": ("y", "z"), "right": ("y", "z"),
+    "front": ("x", "z"),    # 从 -Y 看
+    "back": ("-x", "z"),    # 从 +Y 看
+    "top": ("x", "y"),      # 从 +Z 看
+    "bottom": ("-x", "y"),  # 从 -Z 看
+    "left": ("-y", "z"),    # 从 -X 看（左视图）
+    "right": ("y", "z"),    # 从 +X 看（右视图）
 }
-HOLE_FACE_VIEW = {"top": "top", "bottom": "bottom", "front": "front", "back": "back", "left": "left", "right": "right"}
+
+
+def vc(p3, axis: str) -> float:
+    """三维点在视图轴上的坐标（带镜像符号）。"""
+    v = p3["xyz".index(axis[-1])]
+    return -v if axis[0] == "-" else v
+
+
+def vrange(b: Box, axis: str) -> tuple[float, float]:
+    lo, hi = getattr(b, axis[-1] + "min"), getattr(b, axis[-1] + "max")
+    return (-hi, -lo) if axis[0] == "-" else (lo, hi)
+# 孔所在面 → 优先显示该孔的视图（同向视图优先，其次对面视图：通孔两侧都是实形）
+HOLE_FACE_VIEWS = {"top": ("top", "bottom"), "bottom": ("bottom", "top"), "front": ("front", "back"),
+                   "back": ("back", "front"), "left": ("left", "right"), "right": ("right", "left")}
+HOLE_FACE_VIEW = {k: v[0] for k, v in HOLE_FACE_VIEWS.items()}
+
+
+def hole_view(face: str, vtypes: set[str]) -> str | None:
+    return next((v for v in HOLE_FACE_VIEWS[face] if v in vtypes), None)
 
 
 def scale_label(s: float) -> str:
@@ -36,7 +58,7 @@ def scale_label(s: float) -> str:
 
 
 def _extent(b: Box, axis: str) -> float:
-    return {"x": b.xmax - b.xmin, "y": b.ymax - b.ymin, "z": b.zmax - b.zmin}[axis]
+    return {"x": b.xmax - b.xmin, "y": b.ymax - b.ymin, "z": b.zmax - b.zmin}[axis[-1]]
 
 
 @dataclass
@@ -74,6 +96,7 @@ class DrawingPlan:
     balloons: list[dict[str, Any]] = field(default_factory=list)
     flat_pattern: tuple[float, float] | None = None
     name: str = ""  # 图纸文件名（默认 <model>_DRW）
+    missing_views: list[str] = field(default_factory=list)  # 有孔但缺少能显示其实形的视图
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -96,65 +119,96 @@ def _view_size(b: Box, vtype: str, flat: tuple[float, float] | None) -> tuple[fl
     return (_extent(b, h), _extent(b, v))
 
 
-# 投影布局（GB 第一角）：主视图左上，俯视图在其正下方，侧视图在其右侧，轴测/展开图右下
-PREFERRED_CELL = {"front": (0, 0), "back": (0, 0), "top": (0, 1), "bottom": (0, 1),
-                  "left": (1, 0), "right": (1, 0), "iso": (1, 1), "flat_pattern": (1, 1)}
+# 投影布局。第一角（GB）：俯视图在主视图下方，左视图在主视图右方，右视图在左方，仰视图在上方。
+CELLS = {
+    "first_angle": {"front": (0, 0), "top": (0, 1), "bottom": (0, -1), "left": (1, 0), "right": (-1, 0),
+                    "back": (2, 0), "iso": (1, 1), "flat_pattern": (1, 1)},
+    "third_angle": {"front": (0, 0), "top": (0, -1), "bottom": (0, 1), "left": (-1, 0), "right": (1, 0),
+                    "back": (2, 0), "iso": (1, -1), "flat_pattern": (1, 1)},
+}
 
 
-def _assign_cells(types: list[str]) -> list[tuple[int, int]]:
+def _assign_cells(types: list[str], projection: str = "first_angle") -> list[tuple[int, int]]:
+    pref = CELLS[projection]
     taken: set[tuple[int, int]] = set()
     out = []
     for t in types:
-        cell = PREFERRED_CELL.get(t, (0, 0))
-        if cell in taken:
-            n = 0
-            while (n % 2, n // 2) in taken:
-                n += 1
-            cell = (n % 2, n // 2)
+        cell = pref.get(t, (0, 0))
+        n = 0
+        while cell in taken:
+            cell = (n % 3, n // 3)
+            n += 1
         taken.add(cell)
         out.append(cell)
-    return out
+    c0, r0 = min(c for c, _ in out), min(r for _, r in out)
+    return [(c - c0, r - r0) for c, r in out]
 
 
-def _layout(b: Box, spec: DrawingSpec, flat, sheet: str | None, min_feature: float = 0.0, kind: str = "part"):
-    """选图幅和比例：2 列 × N 行网格，视图间留 30mm 标注空间。
-    策略：图幅从小到大，每个图幅取能放下的最大优先比例；填充率和最小特征可读性都达标才采用，
-    否则取所有候选中比例最大的（同比例取小图幅）。"""
+def _grid(b: Box, spec: DrawingSpec, flat):
     types = [v.type for v in spec.views]
     sizes = [_view_size(b, t, flat) for t in types]
-    cells = _assign_cells(types)
+    cells = _assign_cells(types, spec.projection)
     cols = max(c for c, _ in cells) + 1
     rows = max(r for _, r in cells) + 1
     col_w = [max((sizes[i][0] for i in range(len(types)) if cells[i][0] == c), default=0) for c in range(cols)]
     row_h = [max((sizes[i][1] for i in range(len(types)) if cells[i][1] == r), default=0) for r in range(rows)]
-    gap = 30
+    return types, sizes, cells, col_w, row_h
+
+
+GAP = 36  # 视图间距：容纳尺寸线与坐标尺寸
+
+
+def _fits(sh: str, s: float, col_w, row_h) -> bool:
+    W, H = SHEETS[sh]
+    avail_w = W - 2 * MARGIN - GAP * len(col_w)
+    avail_h = H - 2 * MARGIN - TITLE_BLOCK_H - GAP * len(row_h)
+    return sum(col_w) * s <= avail_w and sum(row_h) * s <= avail_h
+
+
+def _fill(sh: str, s: float, col_w, row_h) -> float:
+    W, H = SHEETS[sh]
+    avail_w = W - 2 * MARGIN - GAP * len(col_w)
+    avail_h = H - 2 * MARGIN - TITLE_BLOCK_H - GAP * len(row_h)
+    return (sum(col_w) * s * sum(row_h) * s) / (avail_w * avail_h)
+
+
+def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str) -> tuple[str, float]:
     sheets = [sheet] if sheet and sheet != "auto" else list(SHEETS)
-    candidates: list[tuple[str, float]] = []
-    chosen: tuple[str, float] | None = None
+    if kind == "part":
+        # 工程师习惯：能 1:1 就 1:1；小件或孔太小才放大；图幅优先 A4/A3
+        tiny = max(b.size) <= 30 or (0 < min_feature < MIN_FEATURE_ON_PAPER)
+        order = ([5.0, 2.0] if tiny else []) + [1.0, 0.5, 0.2, 0.1, 0.05, 0.02]
+        for group in ([s for s in sheets if s in ("A4", "A3")], [s for s in sheets if s not in ("A4", "A3")]):
+            for s in order:
+                if s > 1 and min_feature * s < MIN_FEATURE_ON_PAPER and max(b.size) > 30:
+                    continue
+                for sh in group:
+                    if _fits(sh, s, col_w, row_h) and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER
+                                                        or s <= 1 and min_feature * s >= 1.0):
+                        return sh, s
+    # 装配：最小的图幅，要求比例不小于 1:5 且填充率达标（给明细表留位）
+    candidates = []
     for sh in sheets:
-        W, H = SHEETS[sh]
-        avail_w, avail_h = W - 2 * MARGIN - gap * cols, H - 2 * MARGIN - TITLE_BLOCK_H - gap * rows
-        scales = PRIMARY_SCALES if kind == "part" else SCALES
-        s = next((s for s in scales if sum(col_w) * s <= avail_w and sum(row_h) * s <= avail_h), None)
+        s = next((s for s in SCALES if s <= 1 and _fits(sh, s, col_w, row_h)), None)
         if s is None:
             continue
         candidates.append((sh, s))
-        fill = (sum(col_w) * s * sum(row_h) * s) / (avail_w * avail_h)
-        if fill >= MIN_FILL[kind] and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER):
-            chosen = (sh, s)
-            break
-    if chosen is None:
-        if not candidates:
-            sh, s = sheets[-1], SCALES[-1]
-            return sh, s, [ViewPlan(t, s, (sz[0] * s, sz[1] * s), (0, 0)) for t, sz in zip(types, sizes)]
-        chosen = max(candidates, key=lambda c: (c[1], -list(SHEETS).index(c[0])))
-    sh, s = chosen
+        if s >= 0.2 and _fill(sh, s, col_w, row_h) >= MIN_FILL[kind]:
+            return sh, s
+    if candidates:
+        return max(candidates, key=lambda c: (c[1], -list(SHEETS).index(c[0])))
+    return sheets[-1], SCALES[-1]
+
+
+def _layout(b: Box, spec: DrawingSpec, flat, sheet: str | None, min_feature: float = 0.0, kind: str = "part"):
+    types, sizes, cells, col_w, row_h = _grid(b, spec, flat)
+    sh, s = _choose(b, col_w, row_h, sheet, min_feature, kind)
     W, H = SHEETS[sh]
     views = []
     for i, t in enumerate(types):
         c, r = cells[i]
-        cx = MARGIN + gap / 2 + sum(col_w[:c]) * s + gap * c + col_w[c] * s / 2
-        cy = H - MARGIN - gap / 2 - sum(row_h[:r]) * s - gap * r - row_h[r] * s / 2
+        cx = MARGIN + GAP / 2 + sum(col_w[:c]) * s + GAP * c + col_w[c] * s / 2 + 8
+        cy = H - MARGIN - GAP / 2 - sum(row_h[:r]) * s - GAP * r - row_h[r] * s / 2
         views.append(ViewPlan(t, s, (sizes[i][0] * s, sizes[i][1] * s), (cx, cy)))
     return sh, s, views
 
@@ -192,12 +246,13 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             if v.type not in VIEW_AXES:
                 continue
             for axis in VIEW_AXES[v.type]:
-                if axis in done:
+                if axis[-1] in done:
                     continue
-                if p.base_type == "shaft" and axis in ("x", "y"):
+                if p.base_type == "shaft" and axis[-1] in ("x", "y"):
                     continue
-                dims.append(Dim(v.type, "linear", axis, round(_extent(b, axis), 3), f"{_extent(b, axis):g}", f"overall_{axis}"))
-                done.add(axis)
+                dims.append(Dim(v.type, "linear", axis, round(_extent(b, axis), 3), f"{_extent(b, axis):g}",
+                                f"overall_{axis[-1]}"))
+                done.add(axis[-1])
         if p.base_type == "shaft":
             z = 0.0
             for i, (L, d) in enumerate(p.shaft_steps):
@@ -209,19 +264,21 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             dims.append(Dim("top", "radius", None, p.profile.data["corner_radius"],
                             f"4×R{p.profile.data['corner_radius']:g}", "corner_radius"))
         # 孔：坐标尺寸（以左下角为基准，机加工常用）+ 孔标注
+        missing_views: set[str] = set()
         ordinates: dict[tuple[str, str, float], Dim] = {}
         located: set[str] = set()
         for h in p.holes:
-            view = HOLE_FACE_VIEW[h.face]
-            if view not in vtypes:
+            view = hole_view(h.face, vtypes)
+            if view is None:
+                missing_views.add(HOLE_FACE_VIEW[h.face])
                 view = next((v.type for v in views if v.type in VIEW_AXES), views[0].type)
             ha, va = VIEW_AXES.get(view, ("x", "y"))
-            origin = {"x": b.xmin, "y": b.ymin, "z": b.zmin}
+            origin = {ha: vrange(b, ha)[0], va: vrange(b, va)[0]}  # 视图左下角为坐标基准
             if h.circular:  # 圆周均布：标分布圆中心坐标 + 分布圆直径，不逐孔标坐标
                 c = h.circular
                 from .ir.resolve import face_point
-                cxyz = face_point(h.face, (c["center_u"], c["center_v"]), b)
-                ptc = {"x": cxyz[0], "y": cxyz[1], "z": cxyz[2]}
+                cxyz = face_point(h.face, (c["center_u"], c["center_v"]), b, h.at)
+                ptc = {ha: vc(cxyz, ha), va: vc(cxyz, va)}
                 for ax in (ha, va):
                     val = round(ptc[ax] - origin[ax], 3)
                     ordinates.setdefault((view, ax, val), Dim(view, "ordinate", ax, val, f"{val:g}",
@@ -231,7 +288,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 for inst in h.instances:
                     located.update({f"{h.name}[{inst.index}].{ha}", f"{h.name}[{inst.index}].{va}"})
             for inst in ([] if h.circular else h.instances):
-                pt = {"x": inst.xyz[0], "y": inst.xyz[1], "z": inst.xyz[2]}
+                pt = {ha: vc(inst.xyz, ha), va: vc(inst.xyz, va)}
                 for ax in (ha, va):
                     val = round(pt[ax] - origin[ax], 3)
                     key = (view, ax, val)
@@ -242,24 +299,24 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             if spec.hole_callouts:
                 first = h.instances[0]
                 dims.append(Dim(view, "callout", None, None, h.callout, f"{h.name}",
-                                ({"x": first.xyz[0], "y": first.xyz[1], "z": first.xyz[2]}[ha],
-                                 {"x": first.xyz[0], "y": first.xyz[1], "z": first.xyz[2]}[va])))
+                                (vc(first.xyz, ha), vc(first.xyz, va))))
         if ordinates:
             for view in {k[0] for k in ordinates}:
                 ha, va = VIEW_AXES.get(view, ("x", "y"))
-                lo = {"x": b.xmin, "y": b.ymin, "z": b.zmin}
+                lo = (vrange(b, ha)[0], vrange(b, va)[0])
                 for ax in (ha, va):
-                    ordinates.setdefault((view, ax, 0.0), Dim(view, "ordinate", ax, 0.0, "0", f"ord:{view}.{ax}=0",
-                                                              (lo[ha], lo[va])))
+                    ordinates.setdefault((view, ax, 0.0), Dim(view, "ordinate", ax, 0.0, "0", f"ord:{view}.{ax}=0", lo))
             dims += sorted(ordinates.values(), key=lambda d: (d.view, d.axis, d.value))
         for pk in p.pockets:
             pr = pk["profile"]
             txt = f"{pr.bbox2d[1] - pr.bbox2d[0]:g}×{pr.bbox2d[3] - pr.bbox2d[2]:g}" + ("" if pk["through"] else f" 深{pk['depth']:g}")
-            dims.append(Dim(HOLE_FACE_VIEW[pk["face"]], "callout", None, None, txt, pk["name"]))
+            dims.append(Dim(hole_view(pk["face"], vtypes) or views[0].type, "callout", None, None, txt, pk["name"]))
         for f in p.finishes:
             txt = f"C{f['size']:g}" if f["type"] == "chamfer" else f"R{f['size']:g}"
             dims.append(Dim("front" if "front" in vtypes else views[0].type, "callout", None, None, txt, f["name"]))
 
+    if spec.dimensions == "none":
+        missing_views = set()
     notes = ["技术要求："]
     notes.append(f"1. 未注尺寸公差按 {spec.general_tolerance}。")
     notes.append("2. 锐边倒钝，去毛刺。")
@@ -281,8 +338,10 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         "date": (today or date.today()).isoformat(),
     }
     tb.update(spec.title_block)
-    return DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
+    plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        flat_pattern=p.flat_pattern)
+    plan.missing_views = sorted(missing_views)
+    return plan
 
 
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
@@ -343,6 +402,13 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         if rendered["dim_count"] < want:
             f("D005", "warning", f"图纸上尺寸 {rendered['dim_count']} 个，方案要求 {want} 个，请人工核对",
               "查看 PDF；必要时补标")
+    if plan.missing_views:
+        f("D010", "warning", f"有孔/型腔所在面缺少对应视图：{plan.missing_views}，已标在其他视图上",
+          f"在 views 中加入 {plan.missing_views}")
+    if rendered is not None and rendered.get("collisions"):
+        c = rendered["collisions"]
+        f("D009", "warning", f"{len(c)} 处标注文字重叠，如 {c[0][0]!r} 与 {c[0][1]!r}",
+          "减少视图（views）、指定更大图幅（sheet）或调整孔位标注")
     if plan.model_kind == "part" and not any(d.kind == "linear" for d in plan.dims):
         f("D006", "error", "缺少总体尺寸")
     if plan.model_kind == "assembly" and not plan.bom:

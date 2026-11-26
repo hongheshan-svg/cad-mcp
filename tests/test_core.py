@@ -94,3 +94,54 @@ def test_drawing_notes_dedupe():
     body = "\n".join(plan.notes)
     assert body.count("表面处理") == 1 and "未注倒角C0.5" in body and "调质" in body
     assert sum("去毛刺" in n for n in plan.notes) == 2  # 自动一条 + 含倒角要求的一条
+
+
+L_BRACKET = {
+    "name": "LB", "part_no": "LB-01", "title": "直角座", "material": "AL6061-T6", "surface_treatment": "阳极氧化",
+    "parameters": {"A": 80, "B": 60, "t": 10, "W": 40},
+    # 截面 L：底边沿 X（厚 t），立边沿 Y（厚 t），沿 Z 挤出宽 W
+    "base": {"type": "extrude", "thickness": "W", "profile": {"shape": "polygon", "points": [
+        [0, 0], ["A", 0], ["A", "t"], ["t", "t"], ["t", "B"], [0, "B"]]}},
+    "features": [
+        # 底边：从底面(front, y=0)向上穿 2×M6 腰型孔，可沿 X 调节 10
+        {"feature": "hole", "name": "BaseSlot", "face": "front", "type": "slot", "size": "M6", "slot_length": 10,
+         "positions": [[50, 10], [50, 30]]},
+        # 立边：内侧面(right, x=t)上 2×M5 螺纹通孔
+        {"feature": "hole", "name": "WallTap", "face": "right", "at": "t", "type": "tapped", "size": "M5",
+         "positions": [[40, 12], [40, 28]]},
+    ],
+}
+
+
+def test_l_bracket_slots_and_inner_face():
+    import math as m
+    r = resolve_part(PartSpec.model_validate(L_BRACKET))
+    slot = r.holes[0]
+    assert slot.depth == 10  # 只穿过底边料厚，而不是包围盒 60
+    assert slot.callout == "2×腰型孔 宽6.6 中心距10 通"
+    tap = r.holes[1]
+    assert tap.depth == 10 and tap.instances[0].xyz == (10, 40, 12)
+    area = 80 * 10 + 10 * 50
+    vol = area * 40 - 2 * (10 * 6.6 + m.pi * 6.6 ** 2 / 4) * 10 - 2 * m.pi * 4.2 ** 2 / 4 * 10
+    assert r.volume_mm3 == pytest.approx(vol)
+    assert rules.summarize(rules.check_part(r))["passed"], rules.check_part(r)
+
+
+def test_slot_breakout_detected():
+    bad = dict(L_BRACKET, features=[{"feature": "hole", "name": "S", "face": "front", "type": "slot", "size": "M6",
+                                     "slot_length": 30, "positions": [[65, 20]]}])
+    found = {f["rule"] for f in rules.check_part(resolve_part(PartSpec.model_validate(bad)))}
+    assert "R003" in found  # 腰型孔一端伸出 80 的底边
+
+
+def test_drawing_layout_and_missing_view(tmp_path):
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import DrawingSpec
+    svc = CadService.from_config(None, None, str(tmp_path)); svc.change_begin("LB")
+    svc.build(PartSpec.model_validate(L_BRACKET))
+    r = svc.build(DrawingSpec.model_validate({"model": "LB", "title_block": {"designer": "AI"}}))
+    assert (r["sheet"], r["scale"]) == ("A3", "1:1")  # 80×60×40 小件：A3 1:1，不放大到 A2
+    assert not [f for f in r["rules"]["findings"] if f["severity"] != "info"]
+    # 只给主视图：侧面螺纹孔缺对应视图 → D010
+    r = svc.build(DrawingSpec.model_validate({"model": "LB", "name": "LB2", "views": [{"type": "front"}]}))
+    assert any(f["rule"] == "D010" for f in r["rules"]["findings"])
