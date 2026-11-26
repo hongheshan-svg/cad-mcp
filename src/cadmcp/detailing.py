@@ -356,6 +356,9 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             return view, (u, w), (0, -1)  # 框格附在孔标注下方
         if k == "bore":
             return _bore_anchor(p, int(ref), kind, views[0].scale if views else 1.0)
+        if k == "shoulder":  # 轴肩端面：锚点 = 端面上半段中点；框格位置见 shoulder_gtol_geom
+            g = shoulder_gtol_geom(p, int(ref), views[0].scale if views else 1.0)
+            return "front", (g["z"], (g["r_small"] + g["r_large"]) / 2), (-g["from"], 0), {"shoulder": int(ref)}
         i = int(ref)
         z0, z1 = p.step_z(i)
         d = p.shaft_steps[i][1]
@@ -408,7 +411,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         if a:
             dims.append(Dim(a[0], "gtol", None, g["value"], g["text"], f"gtol:{g['type']}@{g['target']}", a[1],
                             {"normal": a[2], "cells": [g["symbol"], g["zone"], *g["datums"]],
-                             **({"attach": "callout"} if g["kind"] == "hole" else {})}))
+                             **({"attach": "callout"} if g["kind"] == "hole" else {}),
+                             **(a[3] if len(a) > 3 else {})}))
     for r in p.roughness:
         a = anchor(r["target"], "roughness")
         if a:
@@ -1203,6 +1207,10 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                                     (sz0, f["z0"])))
     if spec.dimensions != "none":
         dims += _precision_dims(p, views, {"front"}, True)
+        nrow = max((r for _, r in shaft_gtol_layout(p, scale).values()), default=0)
+        if nrow:  # 框格排到第二/三行：视图整体下移让出上方空间
+            for v in views:
+                v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - GTOL_ROW_GAP * nrow)
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
@@ -1736,11 +1744,21 @@ def precision_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         nx, ny = (d.extra or {}).get("normal", (0, 1))
         if plan.layout == "shaft" and d.kind in ("gtol", "roughness") and (d.kind == "gtol" or (d.extra or {}).get("on_frame")):
             R = max(dd for _, dd in p.shaft_steps) / 2
-            row = cy + R * v.scale + 22  # 框格行（与 render_shaft 一致）
-            if d.kind == "gtol":
+            lay = shaft_gtol_layout(p, v.scale)
+            gk = d.ref[5:] if d.kind == "gtol" else (d.extra or {}).get("on_frame")
+            row = cy + R * v.scale + GTOL_ROW + GTOL_ROW_GAP * lay.get(gk, (0, 0))[1]  # 框格行（与 render_shaft 一致）
+            if d.kind == "gtol" and (d.extra or {}).get("shoulder") is not None:
+                g = shoulder_gtol_geom(p, d.extra["shoulder"], v.scale)
+                xf = shaft_sx(v, L, g["z"])
+                xl = shaft_sx(v, L, g["z_leader"])
+                ym = cy + (g["r_small"] + g["r_large"]) / 2 * v.scale
+                d.extra = {**d.extra, "sheet_at": (round(xf, 2), round(ym, 2)), "sheet_pos": (round(xl, 2), round(row, 2)),
+                           "elbow": {"x_face": round(xf, 2), "y": round(ym, 2), "x_leader": round(xl, 2), "dir": g["from"]}}
+            elif d.kind == "gtol":
                 d.extra = {**(d.extra or {}), "sheet_at": (round(ax, 2), round(ay, 2)), "sheet_pos": (round(ax, 2), round(row, 2))}
             else:  # 标在框格上方：√ 尖端在框格顶边、距左端 2.5
-                at = (round(ax - 3.5 + 2.5, 2), round(row + 6.0, 2))
+                zl = lay.get(gk, (d.at[0], 0))[0]
+                at = (round(shaft_sx(v, L, zl) - 3.5 + 2.5, 2), round(row + 6.0, 2))
                 d.extra = {**(d.extra or {}), "sheet_at": at, "sheet_pos": at}
             continue
         reach = {"datum": (d.extra or {}).get("reach", 7.0) + 3.0, "gtol": 12.0 if plan.layout != "shaft" else 18.0, "roughness": 0.0 if (nx, ny) == (0, 1) else (d.extra or {}).get("reach") or ra_reach(nx, d.text)}[d.kind]
@@ -2023,6 +2041,9 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
         if g["target"].startswith("step:"):
             z0, z1 = p.step_z(int(g["target"][5:]))
             zs.append(z0 + fr.get(f"{g['type']}@{g['target']}", 0.3) * (z1 - z0))
+        elif g["target"].startswith("shoulder:"):
+            sg = shoulder_gtol_geom(p, int(g["target"][9:]), sc)
+            zs += [sg["z_leader"]]
     return zs
 
 
@@ -2032,11 +2053,37 @@ def shaft_gtol_frac(p: ResolvedPart, i: int, sc: float) -> float:
     return next((fr[k] for k in fr if k.endswith(f"@step:{i}")), 0.3)
 
 
-def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
-    """轴类主视图上方几何公差框格的联合排布（从左到右贪心）：框格都在同一行（轮廓上方），
-    引线位置避开已放框格的横向范围、齿面粗糙度符号的文字范围与尺寸界线。返回 {type@target: 段内比例}。"""
+GTOL_ROW = 22.0     # 框格第一行底边：主视图最大轮廓上方（图纸 mm）
+GTOL_ROW_GAP = 9.0  # 第二行比第一行高（框格 6 + 间隙 3）
+
+
+def shoulder_gtol_geom(p: ResolvedPart, i: int, sc: float) -> dict[str, float]:
+    """轴肩 i（第 i、i+1 段之间）端面的几何公差引线：在小端一侧、端面中部高度（零件外的空白处）水平引向端面，
+    箭头沿轴向；竖段（z_leader，由 shaft_gtol_layout 选）上到框格行。from = +1 箭头自左向右（小端在左）。"""
+    z = p.step_z(i)[1]
+    da, db = p.shaft_steps[i][1], p.shaft_steps[i + 1][1]
+    sgn = 1 if da < db else -1
+    lay = shaft_gtol_layout(p, sc)
+    key = next((k for k in lay if k.endswith(f"@shoulder:{i}")), None)
+    zl = lay[key][0] if key else z - sgn * 6 / sc
+    return {"z": z, "r_small": min(da, db) / 2, "r_large": max(da, db) / 2, "from": sgn, "z_leader": zl,
+            "small": i if da < db else i + 1}
+
+
+_LAYOUT_CACHE: dict = {}
+
+
+def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]]:
+    """轴类主视图上方几何公差框格的联合排布：每个框格 → (引线 z, 行号 0–2)。
+    轴段框格引线在段内取位；轴肩端面框格的引线在小端一侧离端面 5–30 mm 内取位（水平引到端面）。
+    代价：同一行框格重叠、竖引线穿过下面行的框格或齿面 Ra 文字（重罚），竖引线相贴、穿过轴肩水平引线、
+    靠近尺寸界线/上方尺寸文字（轻罚），行越高越差；带 Ra 的轴段在框格上方一行预留 Ra 的位置。
+    贪心按两种顺序（轴肩先 / 从左到右）各排一次，取总代价小的。"""
+    key = (id(p), round(sc, 6), len(p.geotols))
+    if key in _LAYOUT_CACHE and _LAYOUT_CACHE[key][0] is p:
+        return _LAYOUT_CACHE[key][1]
     from .render_gdt import _widths
-    flank = [(f["z1"] - 3 / sc, f["z1"] + 25 / sc) for f in p.shaft_features if f["kind"] == "gear"]
+    flank = [(f["z1"] - 3 / sc, f["z1"] + 19 / sc) for f in p.shaft_features if f["kind"] == "gear"]
     lines = []
     texts = []  # 上方尺寸文字（键槽/环槽长度、定位）的中点与半宽（模型 mm）
     Ltot = p.bbox.zmax - p.bbox.zmin
@@ -2045,28 +2092,135 @@ def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
             lines += [f["z0"], f["z1"]]
             texts.append(((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 1.5) / sc))
             sz0 = p.step_z(f["step"])[0]
-            a, b = (f["z1"], Ltot) if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1 else (sz0, f["z0"])
-            if b - a > 1e-6:
-                texts.append(((a + b) / 2, (text_width(f"{b - a:g}", 3.5) / 2 + 1.5) / sc))
-    placed: list[tuple[float, float]] = []
-    out: dict[str, float] = {}
-    gs = sorted((g for g in p.geotols if g["target"].startswith("step:")), key=lambda g: p.step_z(int(g["target"][5:]))[0])
-    for g in gs:
-        z0, z1 = p.step_z(int(g["target"][5:]))
-        w = sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
+            a_, b_ = (f["z1"], Ltot) if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1 else (sz0, f["z0"])
+            if b_ - a_ > 1e-6:
+                texts.append(((a_ + b_) / 2, (text_width(f"{b_ - a_:g}", 3.5) / 2 + 1.5) / sc))
+    shoulder_faces = [p.step_z(int(g["target"][9:]))[1] for g in p.geotols if g["target"].startswith("shoulder:")]
+    ra_steps = {r["target"] for r in p.roughness}  # 这些段的框格上方可能还要标 Ra（占上一行）
 
-        def cost(t):
-            z = z0 + t * (z1 - z0)
-            a, b = z - 3.5 / sc, z + (w - 3.5) / sc
-            c = sum(10 for pa, pb in placed if a < pb + 1 / sc and pa < b + 1 / sc)
-            c += sum(5 for fa, fb in flank if fa <= z <= fb)
-            c += sum(3 for x in lines if abs(x - z) < 1.5 / sc)
-            c += sum(3 for m, hw in texts if abs(m - z) < hw)
-            return c + abs(t - 0.3)
-        t = min((0.3, 0.5, 0.7, 0.15, 0.85), key=cost)
-        z = z0 + t * (z1 - z0)
-        placed.append((z - 3.5 / sc, z + (w - 3.5) / sc))
-        out[f"{g['type']}@{g['target']}"] = t
+    def cands(g):
+        k, _, ref = g["target"].partition(":")
+        i = int(ref)
+        if k == "step":
+            z0, z1 = p.step_z(i)
+            return [(z0 + t * (z1 - z0), abs(t - 0.3)) for t in (0.3, 0.5, 0.7, 0.15, 0.85)]
+        z = p.step_z(i)[1]
+        da, db = p.shaft_steps[i][1], p.shaft_steps[i + 1][1]
+        sgn = 1 if da < db else -1
+        Ls = p.shaft_steps[i if da < db else i + 1][0]
+        out_ = [(z - sgn * k / sc, k / 30) for k in (5, 8, 12, 16, 20, 25, 30) if k / sc <= Ls - 2 / sc]
+        return out_ or [(z - sgn * min(5 / sc, Ls / 2), 0.0)]
+
+    gs_all = [g for g in p.geotols if g["target"].startswith(("step:", "shoulder:"))]
+    info = []
+    for g in gs_all:
+        w = sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
+        sh = g["target"].startswith("shoulder:")
+        info.append({"key": f"{g['type']}@{g['target']}", "w": w / sc, "ra": g["target"] in ra_steps,
+                     "zf": p.step_z(int(g["target"][9:]))[1] if sh else None, "cands": cands(g)})
+
+    def solo(it, z, row, pref):  # 与其它框格无关的代价
+        c = 4 * row + pref
+        c += sum(20 for fa, fb in flank if fa <= z <= fb)
+        c += sum(3 for x in lines + shoulder_faces if abs(x - z) < 2.5 / sc)
+        c += sum(3 for m, hw in texts if abs(m - z) < hw)
+        return c
+
+    def pair(i1, s1, i2, s2):  # 两个框格之间的代价（对称）
+        (z1, r1), (z2, r2) = s1, s2
+        c = 0.0
+        a1, b1 = z1 - 3.5 / sc, z1 + i1["w"] - 3.5 / sc
+        a2, b2 = z2 - 3.5 / sc, z2 + i2["w"] - 3.5 / sc
+        if r1 == r2 and a1 < b2 + 1 / sc and a2 < b1 + 1 / sc:
+            c += 100
+        for (ia, za, ra_, aa, ba), (ib, zb, rb_, ab, bb) in (((i1, z1, r1, a1, b1), (i2, z2, r2, a2, b2)),
+                                                             ((i2, z2, r2, a2, b2), (i1, z1, r1, a1, b1))):
+            if ia["ra"] and rb_ == ra_ + 1 and za - 1.5 / sc < bb and ab < za + 25 / sc:
+                c += 100  # 框格压在别人的 Ra 预留位
+            if rb_ < ra_ and ab - 0.5 / sc <= za <= bb + 0.5 / sc:
+                c += 20   # a 的竖引线穿过下面行 b 的框格
+            if ib["zf"] is not None and min(zb, ib["zf"]) - 1 / sc <= za <= max(zb, ib["zf"]) + 1 / sc:
+                c += 8    # a 的竖引线穿过 b 的轴肩水平引线
+        if abs(z1 - z2) < 4 / sc:
+            c += 8
+        return c
+
+    def total(st):
+        t = sum(solo(info[k], *st[k][:2], st[k][2]) for k in range(len(info)))
+        return t + sum(pair(info[i], st[i][:2], info[j], st[j][:2]) for i in range(len(info)) for j in range(i))
+
+    def improve(st):
+        for _ in range(4):
+            changed = False
+            for k, it in enumerate(info):
+                best = None
+                for z, pref in it["cands"]:
+                    for row in (0, 1, 2):
+                        c = solo(it, z, row, pref) + sum(pair(it, (z, row), info[j], st[j][:2])
+                                                         for j in range(len(info)) if j != k)
+                        if best is None or c < best[0] - 1e-9:
+                            best = (c, (z, row, pref))
+                if best[1] != st[k]:
+                    cur = solo(it, *st[k][:2], st[k][2]) + sum(pair(it, st[k][:2], info[j], st[j][:2])
+                                                               for j in range(len(info)) if j != k)
+                    if best[0] < cur - 1e-9:
+                        st[k] = best[1]
+                        changed = True
+            n = len(info)  # 成对联合移动（两个框格交换行/位置，单个移动跳不出来）
+            for i in range(n):
+                for j in range(i):
+                    base_c = total(st)
+                    best = None
+                    for zi, pi in info[i]["cands"]:
+                        for ri in (0, 1, 2):
+                            for zj, pj in info[j]["cands"]:
+                                for rj in (0, 1, 2):
+                                    t = dict(st)
+                                    t[i], t[j] = (zi, ri, pi), (zj, rj, pj)
+                                    c = total(t)
+                                    if best is None or c < best[0]:
+                                        best = (c, t)
+                    if best[0] < base_c - 1e-9:
+                        st.update(best[1])
+                        changed = True
+            if not changed:
+                break
+        return st
+
+    def run(order):
+        st: dict[int, tuple] = {}
+        for k in order:
+            it = info[k]
+            best = None
+            for z, pref in it["cands"]:
+                for row in (0, 1, 2):
+                    c = solo(it, z, row, pref) + sum(pair(it, (z, row), info[j], st[j][:2]) for j in st)
+                    if best is None or c < best[0]:
+                        best = (c, (z, row, pref))
+            st[k] = best[1]
+        st = improve(st)
+        return total(st), st
+
+    def zkey(k):
+        g = gs_all[k]
+        kind, _, ref = g["target"].partition(":")
+        return p.step_z(int(ref))[0] if kind == "step" else p.step_z(int(ref))[1]
+    idx = list(range(len(info)))
+    orders = [sorted(idx, key=lambda k: (info[k]["zf"] is None, zkey(k))), sorted(idx, key=zkey),
+              sorted(idx, key=lambda k: (info[k]["zf"] is not None, zkey(k)))]
+    _, st = min((run(o) for o in orders), key=lambda t: t[0]) if info else (0, {})
+    res = {info[k]["key"]: (st[k][0], st[k][1]) for k in st}
+    _LAYOUT_CACHE[key] = (p, res)
+    return res
+
+
+def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
+    """轴段框格引线在段内的比例（由 shaft_gtol_layout 换算；轴肩框格不在其中）。"""
+    out = {}
+    for k, (z, _) in shaft_gtol_layout(p, sc).items():
+        if "@step:" in k:
+            z0, z1 = p.step_z(int(k.split("@step:")[1]))
+            out[k] = (z - z0) / (z1 - z0)
     return out
 
 

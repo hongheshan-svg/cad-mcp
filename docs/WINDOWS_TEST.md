@@ -453,6 +453,7 @@ Creo：Toolkit 没有创建断开视图的函数（只有 `ProDrawingViewBrokenV
 | GB/T 145 中心孔 A 型 D、B 型 D2 | `standards.CENTER_HOLES` | 已对照 IS 2473:1975（等同 ISO 866）核实 |
 | GB/T 145 中心孔 l1 | 同上 | 未核实（出图不用） |
 | GB/T 275 轴颈圆柱度（0 级轴承） | `precision._BEARING_CYL` | 未核实 |
+| GB/T 275 轴肩端面圆跳动（0 级轴承） | `precision._BEARING_SHOULDER` | 未核实 |
 | GB/T 1184 圆跳动 6/7 级 | `precision._RUNOUT` | 未核实 |
 | 齿坯跳动公差 | `gear._BLANK_RUNOUT` | 未核实 |
 | 按轴端直径推荐中心孔 d | `standards._CH_BY_DIA` | 经验值，非标准表 |
@@ -504,3 +505,9 @@ Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺�
 ## 轴肩圆角（shoulder_fillet）
 SW：`select_edges_at` 按模型点 (r, 0, z) 选轴肩根部圆边（SelectByID2 EDGE，追加选择）→ FeatureFillet3；核对选中边数 = 轴肩数。
 Creo：`feat.round` edges 同样给点坐标。
+
+## 轴肩端面几何公差（shoulder:<i>，TODO(实机核对)）
+- `auto_precision` 的齿轮轴样例：轴承位两侧的定位轴肩各有一个对 A-B 的端面圆跳动框格。
+- SW：`gtol` 的 `at` 落在主视图轴肩端面竖线中点，`_select_edge_at` 应选中端面轮廓边，框格引线指向它；核对引线是否
+  附着在端面（而不是相邻圆柱面的轮廓线）。Creo：`tk.drw.gtol` 同一点附着。
+- SVG 预览的折线引线（小端一侧水平箭头）在原生图里是直引线，位置差异属预期。

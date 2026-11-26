@@ -317,10 +317,17 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             from . import render_gdt
             z, r = d.at
             px, py = P(z, r)
-            if d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
-                render_gdt.fcf(s, px, py, (0, 1), d.extra["cells"], reach=y_top + 22 - py)
+            row = d.extra.get("sheet_pos", (0, y_top + 22))[1]
+            if d.kind == "gtol" and d.extra.get("elbow"):  # 轴肩端面：小端一侧水平引线 + 轴向箭头，竖段上到框格行
+                e = d.extra["elbow"]
+                s.line(e["x_leader"], e["y"], e["x_face"], e["y"], THIN)
+                _arrow(s, e["x_face"], e["y"], e["dir"], 0)
+                render_gdt.fcf(s, e["x_leader"], e["y"], (0, 1), d.extra["cells"], reach=row - e["y"], arrow=False)
+            elif d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
+                x_ = d.extra["sheet_pos"][0]
+                render_gdt.fcf(s, x_, py, (0, 1), d.extra["cells"], reach=row - py)
             elif d.kind == "roughness" and d.extra.get("on_frame"):  # 标在框格上方（GB/T 131）
-                render_gdt.roughness(s, px - 3.5 + 2.5, y_top + 22 + render_gdt.CELL_H, (0, 1), d.text)
+                render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             else:
                 render_gdt.draw(s, d.kind, px, py, d.extra, d.text)
         elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")) and (d.extra or {}).get("label"):

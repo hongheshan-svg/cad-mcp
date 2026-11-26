@@ -36,14 +36,15 @@ def fcf_box(s, x0, y0, cells):
         x += w
 
 
-def fcf(s, ax, ay, n, cells, reach: float = 10.0):
-    """几何公差框格：引线箭头指向被测要素，框格放在外法向一侧（距离 reach）。"""
+def fcf(s, ax, ay, n, cells, reach: float = 10.0, arrow: bool = True):
+    """几何公差框格：引线箭头指向被测要素，框格放在外法向一侧（距离 reach）。arrow=False：折线引线的竖段（箭头另画）。"""
     nx, ny = n
     ex, ey = ax + nx * reach, ay + ny * reach
     s.line(ax, ay, ex, ey, THIN)
     a = math.atan2(-ny, -nx)
-    _tri(s, [(ax, ay), (ax + 2.2 * math.cos(a + 2.85), ay + 2.2 * math.sin(a + 2.85)),
-             (ax + 2.2 * math.cos(a - 2.85), ay + 2.2 * math.sin(a - 2.85))])
+    if arrow:
+        _tri(s, [(ax, ay), (ax + 2.2 * math.cos(a + 2.85), ay + 2.2 * math.sin(a + 2.85)),
+                 (ax + 2.2 * math.cos(a - 2.85), ay + 2.2 * math.sin(a - 2.85))])
     widths = _widths(cells)
     total = sum(widths)
     if ny != 0:

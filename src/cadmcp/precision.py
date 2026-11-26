@@ -1,14 +1,14 @@
 """精度自动补全（CAD 无关）：按工程惯例给轴类补齐基准、几何公差与配合面粗糙度，替代审图时的手工补注。
 
 - 滚动轴承位（js/k/m/n 公差带、IT5–IT6、无键槽）：最外侧两处为公共基准 A、B；注圆柱度（GB/T 275 轴颈，0 级轴承）。
-  只有一处轴承位时它为基准 A。
+  只有一处轴承位时它为基准 A。轴承定位轴肩（相邻较大段的端面）注对 A(-B) 的端面圆跳动（GB/T 275）。
 - 其余配合段（IT ≤ 7）：注对 A(-B) 的径向圆跳动（GB/T 1184 圆跳动，IT ≤ 6 取 6 级、否则 7 级）；
   齿轮段齿顶圆跳动按齿坯公差（gear.blank_runout）。
 - 配合段未注粗糙度时按公差等级补 Ra（与审图规则 G004 一致）。
 - 套类：精度最高的配合内孔（IT ≤ 7）为基准 A，外圆配合段注对 A 的径向圆跳动，内孔按公差等级补 Ra。
 用户已写基准或几何公差时不改动这两类，只补粗糙度。
 
-数值来源核实状态：GB/T 275 轴颈圆柱度、GB/T 1184 圆跳动两张表按设计手册常用值录入，尚未对照标准原文核实
+数值来源核实状态：GB/T 275 轴颈圆柱度与轴肩端面圆跳动、GB/T 1184 圆跳动两张表按设计手册常用值录入，尚未对照标准原文核实
 （docs/WINDOWS_TEST.md「待核实的标准数值」）；出图前如有疑问以标准原文为准。
 """
 from __future__ import annotations
@@ -30,6 +30,15 @@ _BEARING_FITS = ("js", "k", "m", "n")
 def _grade(tol: str | None) -> tuple[str, int] | None:
     m = re.fullmatch(r"([a-z]{1,2})(\d{1,2})", (tol or "").strip())
     return (m.group(1), int(m.group(2))) if m else None
+
+
+# GB/T 275 轴肩端面圆跳动 t1（µm，0 级轴承），按轴径段（同 _DIA）。TODO(核对原文)
+_BEARING_SHOULDER = (5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 15.0, 20.0, 20.0, 25.0, 25.0, 30.0)
+
+
+def bearing_shoulder_runout(d: float) -> float:
+    i = next((k for k, hi in enumerate(_DIA) if d <= hi), len(_DIA) - 1)
+    return _BEARING_SHOULDER[i] / 1000
 
 
 def bearing_cylindricity(d: float) -> float:
@@ -70,6 +79,12 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
         for i in base:
             if i in bearings:
                 tols.append(GeoTol(type="cylindricity", value=bearing_cylindricity(steps[i][1]), target=f"step:{i}"))
+        for i in bearings:  # 轴承定位轴肩（相邻较大的一段）：端面圆跳动对公共基准（GB/T 275）
+            nb = [j for j in (i - 1, i + 1) if 0 <= j < len(steps) and steps[j][1] > steps[i][1]]
+            if nb:
+                j = max(nb, key=lambda j: steps[j][1])
+                tols.append(GeoTol(type="circular_runout", value=bearing_shoulder_runout(steps[i][1]),
+                                   target=f"shoulder:{min(i, j)}", datums=letters))
         gear_of = {f.step: f for f in spec.features if isinstance(f, ShaftGear)}
         for i in sorted((set(fits) | gears) - set(base)):
             it = fits[i][1] if i in fits else 7

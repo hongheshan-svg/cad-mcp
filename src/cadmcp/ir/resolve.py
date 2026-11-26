@@ -913,10 +913,13 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         ok = (kind == "face" and ref in FACE_NORMAL and not isinstance(base, ShaftBase)) or \
              (kind == "hole" and any(h.name == ref for h in holes)) or \
              (kind == "step" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(steps)) or \
-             (kind == "bore" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(base.bores))
+             (kind == "bore" and isinstance(base, ShaftBase) and ref.isdigit() and int(ref) < len(base.bores)) or \
+             (kind == "shoulder" and what.startswith("tolerance") and isinstance(base, ShaftBase) and ref.isdigit()
+              and int(ref) < len(steps) - 1 and abs(steps[int(ref)][1] - steps[int(ref) + 1][1]) > 1e-9)
         if not ok:
             raise CadError(SPEC_INVALID, f"{what}: invalid target {tgt!r}",
-                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>、bore:<内孔序号>（轴类）")
+                           hint="face:<top|bottom|front|back|left|right>（非轴类）、hole:<孔名>、step:<段号>、bore:<内孔序号>、"
+                                "shoulder:<i>（轴类；仅几何公差，且第 i、i+1 段直径不同）")
         return kind, ref
 
     datums = [{"name": d.name, "target": d.target, "kind": _target(d.target, f"datum {d.name}")[0]}
