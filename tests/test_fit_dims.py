@@ -96,6 +96,7 @@ def test_bearing_fits_one_side():
     assert fit_gaps(a) == []
     plan = plan_assembly_drawing(DrawingSpec(model="BA"), a)
     assert sorted(d.text for d in plan.dims if d.ref.startswith("fit:")) == ["Φ25k6", "Φ52H7"]
+    assert any("润滑脂" in n for n in plan.notes) and any("配合面" in n for n in plan.notes)
     _, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == []  # 两个配合挤在同一段：上下错开，序号让开
     # 全剖：轴承按通用画法（GB/T 4459.7）——不画剖面线，两侧截面各一个正十字；剖面线只分给座板
@@ -174,3 +175,12 @@ def test_asm_section_tapped_hole():
     assert len(regs["cov"]["cells"]) == 2  # 压块被过孔分成两块
     svg, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_asm_notes_follow_content():
+    """技术要求随组件内容：销座（有配合、无轴承/螺钉）只有清洗与配合两条。"""
+    from cadmcp.detailing import asm_notes
+    n = asm_notes(_asm())
+    assert len(n) == 2 and "配合面" in n[1]
+    plan = plan_assembly_drawing(DrawingSpec(model="FA"), _asm())
+    assert plan.notes[1].startswith("1. 装配前") and plan.notes[2].startswith("2. 配合面")

@@ -1452,7 +1452,7 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     bom = a.bom() if (spec.bom_table or spec.balloons) else []
     # 视图组上下居中（先定视图位置，序号气泡与安装尺寸再按新位置排）
     probe = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, [],
-                        ["技术要求："] + ["x"] * (3 + len(spec.notes)), {}, bom=bom if spec.bom_table else [])
+                        ["技术要求："] + ["x"] * (len(asm_notes(a)) + 1 + len(spec.notes)), {}, bom=bom if spec.bom_table else [])
     _balance_views(probe)
     balloons: list[dict[str, Any]] = []
     fdims = fit_dims(a, views, None, SHEETS[sheet]) if spec.dimensions != "none" else []
@@ -1472,12 +1472,13 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
         bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet], avoid)
     if not spec.bom_table:
         bom = []
-    notes = ["技术要求：", "1. 装配前零件清洗去毛刺。", "2. 螺钉按规定扭矩拧紧，重要连接涂螺纹胶。"]
+    base_notes = asm_notes(a)
     inst_dims, inst_note = install_dims(a, views) if spec.dimensions != "none" else ([], None)
     dims += inst_dims
     dims += fdims
     if inst_note:
-        notes.append(f"3. {inst_note}")
+        base_notes.append(inst_note)
+    notes = ["技术要求："] + [f"{i}. {t}" for i, t in enumerate(base_notes, 1)]
     notes += [f"{i}. {t}" for i, t in enumerate(spec.notes, len(notes))]
     tb = {"name": a.title, "part_no": a.part_no, "material": "", "scale": scale_label(scale),
           "mass": f"{a.mass_kg:.2f} kg", "sheet": sheet,
@@ -1489,6 +1490,22 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     plan.asm_section = plan_asm_section(a, views)
     overall_dim_sheet(plan, a)
     return plan
+
+
+def asm_notes(a: ResolvedAssembly) -> list[str]:
+    """装配图技术要求（按组件内容生成，不含序号）：清洗去毛刺；有螺钉 → 拧紧与防松；有滚动轴承 → 润滑与转动灵活；
+    有配合 → 配合面清洗涂油、不得强行敲击。"""
+    from .ir.assembly_resolve import assembly_fits
+    srcs = [i.source for i in a.instances] + [s_ for s_, _, _ in a.extras]
+    out = ["装配前零件清洗去毛刺，不得有磕碰、划伤和锈蚀。"]
+    if any(s_.threads or s_.title.find("螺钉") >= 0 or s_.title.find("螺栓") >= 0 for s_ in srcs):
+        out.append("螺钉按规定扭矩拧紧，重要连接涂螺纹胶防松。")
+    if any(s_.kind in ("standard", "purchased") and s_.revolve and any(sg[3] > 0 for sg in s_.revolve)
+           or "轴承" in s_.title for s_ in srcs):
+        out.append("滚动轴承装配时加注锂基润滑脂（约占内部空间 1/3），装配后用手转动应灵活、无卡滞。")
+    if assembly_fits(a):
+        out.append("配合面装配前清洗并涂润滑油，不得强行敲击装入。")
+    return out
 
 
 BOM_COLS = [("序号", 12), ("代号", 44), ("名称", 54), ("数量", 14), ("材料", 56)]  # GB/T 10609.2 明细栏（简化）
