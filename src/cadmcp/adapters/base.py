@@ -80,7 +80,7 @@ class CadAdapter(ABC):
     def where_used(self, path: Path, search_dir: Path) -> list[Path]:
         """search_dir 中直接引用 path 的装配/工程图。"""
         out = []
-        for q in sorted(search_dir.rglob("*")):
+        for q in sorted(search_dir.rglob("*"), key=lambda q: q.as_posix()):
             if q.is_file() and q != path and q.suffix.lower() in {self.ext["assembly"].lower(), self.ext["drawing"].lower()}:
                 refs = self.references(q) or []
                 if any(Path(r.replace("\\", "/")).name.lower() == path.name.lower() for r in refs):

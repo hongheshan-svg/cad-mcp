@@ -772,7 +772,7 @@ class CadService:
             # 按引用层级刷新：先直接引用者（装配/零件图），再引用它们的（装配图）；已修改文件预先载入
             exts = {t.adapter.ext["assembly"].lower(), t.adapter.ext["drawing"].lower()}
             users_of: dict[str, list[Path]] = {}  # 工作区反向索引（只读一遍文件）
-            for q in sorted(s.work.rglob("*")):
+            for q in sorted(s.work.rglob("*"), key=lambda q: q.relative_to(s.work).as_posix()):  # 跨平台一致的顺序
                 if q.is_file() and q.suffix.lower() in exts:
                     for r in t.adapter.references(q) or []:
                         users_of.setdefault(Path(r.replace("\\", "/")).name.lower(), []).append(q)
@@ -848,7 +848,7 @@ class CadService:
         rel_dir = Path(s.committed)
         plan, new_files = [], []
         model_exts = {e.lower() for e in self._target(s.target_id).adapter.ext.values()}
-        for q in sorted(rel_dir.rglob("*")):
+        for q in sorted(rel_dir.rglob("*"), key=lambda q: q.as_posix()):
             if not q.is_file() or q.name == "change_report.json" or "_writeback_backup" in q.parts:
                 continue
             rel = q.relative_to(rel_dir).as_posix()
