@@ -269,6 +269,8 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
         hmin = min(x for x, _, _ in sec.path)  # 未剖一半的外形：开口在中心线一侧
         out["outline"].append([_p3(view, h, path[0][2], z) for h, z in
                                ((sec.half_from, zlo), (hmin, zlo), (hmin, zhi), (sec.half_from, zhi))])
+    pk_rects: list[tuple[float, float, float, float]] = []  # 被剖型腔在剖切面上的 (h0, h1, z0, z1)
+    hole_edges: list[int] = []  # out["edges"] 中属于通孔孔壁的下标
     for h0, h1, d in path:
         for a, b in _clip(_intervals(outline, scan, d), h0, h1):
             out["solid"].append([_p3(view, a, d, zlo), _p3(view, b, d, zlo), _p3(view, b, d, zhi), _p3(view, a, d, zhi)])
@@ -286,6 +288,7 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
                 out["voids"].append([A0, B0, B1, A1])
                 out["edges"].append([A1, A0, B0, B1])
                 out["openings"].append([A1, B1])
+                pk_rects.append((min(a, b), max(a, b), min(z0, z1), max(z0, z1)))
         for h in p.holes:
             if h.slot:
                 continue
@@ -323,6 +326,7 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
                 out["voids"].append(left + right[::-1])
                 out["openings"].append([left[0], right[0]])
                 if w[-1][1] > 1e-6:  # 通孔：两端开口，两侧孔壁分开画
+                    hole_edges += [len(out["edges"]), len(out["edges"]) + 1]
                     out["edges"] += [left, right]
                     out["openings"].append([left[-1], right[-1]])
                 else:
@@ -335,6 +339,16 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
                     out["thin"] += [[pt(0, -rm), pt(td, -rm)], [pt(0, rm), pt(td, rm)]]
                     if not h.through or td < h.depth - 1e-6:
                         out["thick"].append([pt(td, -rm), pt(td, rm)])
+    if pk_rects and hole_edges:  # 孔壁穿进被剖型腔的一段是空腔，不画
+        keep = [pl for i, pl in enumerate(out["edges"]) if i not in hole_edges]
+        for i in hole_edges:
+            pl = out["edges"][i]
+            for q1, q2 in zip(pl, pl[1:]):
+                segs = [(q1, q2)]
+                for r in pk_rects:
+                    segs = [piece for sg in segs for piece in _outside(sg, r, hi_)]
+                keep += [[a, b] for a, b in segs]
+        out["edges"] = keep
     if sec.kind == "local":
         _local_breaks(out, sec, view, zlo, zhi)
     if sec.kind == "half":  # 只保留剖开一半上的线
@@ -344,6 +358,34 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
             out[k] = [pl for pl in out[k] if keep(pl) or k == "axes"]
         out["edges"] = [[q for q in pl if q[hi_] >= sec.half_from - 1e-6] for pl in out["edges"]]
         out["edges"] = [pl for pl in out["edges"] if len(pl) > 1]
+    return out
+
+
+def _outside(seg, rect, hi_: int) -> list:
+    """线段（三维点，剖切面上）在 (H, Z) 矩形 rect 之外的部分。"""
+    a, b = seg
+    h0, h1, z0, z1 = rect
+    ah, az, bh, bz = a[hi_], a[2], b[hi_], b[2]
+    dh, dz = bh - ah, bz - az
+    t0, t1 = 0.0, 1.0
+    for p_, q_ in ((-dh, ah - h0), (dh, h1 - ah), (-dz, az - z0), (dz, z1 - az)):
+        if abs(p_) < 1e-12:
+            if q_ <= 1e-9:  # 平行且在矩形外（含边界）：整段在外
+                return [seg]
+            continue
+        t = q_ / p_
+        if p_ < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+    if t1 - t0 <= 1e-9:
+        return [seg]
+    lerp = lambda t: tuple(a[i] + (b[i] - a[i]) * t for i in range(3))  # noqa: E731
+    out = []
+    if t0 > 1e-9:
+        out.append((a, lerp(t0)))
+    if t1 < 1 - 1e-9:
+        out.append((lerp(t1), b))
     return out
 
 

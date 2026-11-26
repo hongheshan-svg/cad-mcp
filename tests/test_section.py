@@ -196,3 +196,22 @@ def test_front_face_hole_cut_at_mid_depth_not_on_surface():
     sec = auto_section(p)
     assert all(abs(d - p.bbox.ymin) > 1 for _, _, d in sec.path)
     assert any(abs(d - (p.bbox.ymin + 20)) < 1e-6 for _, _, d in sec.path)
+
+
+def test_through_hole_walls_stop_at_cut_pocket():
+    """通孔穿进被剖的型腔：型腔空腔内不画孔壁线。"""
+    from cadmcp.section import auto_section, geometry
+    p = resolve_part(PartSpec.model_validate({
+        "name": "PK", "part_no": "PK", "title": "座", "material": "45#",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 200, "height": 100}, "thickness": 30},
+        "features": [{"feature": "hole", "name": "B", "type": "simple", "size": 40, "tolerance": "H7", "positions": [[0, 0]]},
+                     {"feature": "pocket", "name": "R", "face": "bottom", "depth": 10,
+                      "profile": {"shape": "rect", "width": 100, "height": 50, "center": [0, 0]}}]}))
+    sec = auto_section(p)
+    g = geometry(p, sec)
+    zlo = p.bbox.zmin
+    for pl in g["edges"]:
+        for a, b in zip(pl, pl[1:]):
+            inside = all(-50 + 1e-6 < q[0] < 50 - 1e-6 and zlo + 1e-6 < q[2] < zlo + 10 - 1e-6 for q in ((
+                (a[0] + b[0]) / 2, 0, (a[2] + b[2]) / 2),))
+            assert not inside, (a, b)
