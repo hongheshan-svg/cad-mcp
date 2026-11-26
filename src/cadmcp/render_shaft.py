@@ -221,7 +221,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         s.line(*P(f["z0"], -r1), *P(f["z1"], -r1), THIN)
         zt = f["z0"] if f["side"] == "end" else f["z1"]  # 终止线在螺纹靠轴内的一端
         if 1e-6 < zt < Ltot - 1e-6:
-            s.line(*P(zt, -f["d"] / 2), *P(zt, f["d"] / 2), THICK)
+            if part.shaft_bores:  # 剖视中终止线只画螺纹牙高部分（大径到小径）
+                for sg in (1, -1):
+                    s.line(*P(zt, sg * r1), *P(zt, sg * f["d"] / 2), THICK)
+            else:
+                s.line(*P(zt, -f["d"] / 2), *P(zt, f["d"] / 2), THICK)
     # 齿轮段（GB/T 4459.2 外形视图）：齿顶线即轮廓；分度线细点画线（伸出端面 2 mm）、齿根线细实线
     for f in (f for f in part.shaft_features if f["kind"] == "gear"):
         for sign in (1, -1):

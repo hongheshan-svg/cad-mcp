@@ -128,3 +128,24 @@ def test_plain_through_bore_tube():
     p = _p({**SL, "base": {"type": "shaft", "steps": [{"length": 50, "diameter": 40}], "bores": [{"diameter": 30}]}})
     plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
     assert not render(plan, p)[1]["crossings"]
+
+
+TS = {"name": "TS1", "part_no": "TS-01", "title": "螺纹套", "material": "45#",
+      "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 20, "diameter": 42}, {"length": 35, "diameter": 36}],
+               "bores": [{"diameter": 28, "tolerance": "H7"}]},
+      "features": [{"feature": "thread", "name": "T1", "step": 1, "size": "M36x1.5", "length": 25},
+                   {"feature": "groove", "name": "U1", "type": "undercut", "step": 1, "position": 7, "width": 3, "depth": 1}]}
+
+
+def test_threaded_sleeve():
+    """套类外螺纹：剖视中小径细实线、终止线只画牙高部分；薄壁报错。"""
+    sp = PartSpec.model_validate(TS)
+    p = resolve_part(sp)
+    plan = plan_part_drawing(DrawingSpec(model="TS1"), p)
+    assert {"M36×1.5-6g", "Φ28H7(+0.021/0)"} <= {d.text for d in plan.dims}
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    assert any(o.op == "cosmetic_thread" for o in compile_part(sp, p))
+    bad = {**TS, "base": {**TS["base"], "bores": [{"diameter": 33}]}}
+    with pytest.raises(CadError, match="壁厚不足"):
+        resolve_part(PartSpec.model_validate(bad))

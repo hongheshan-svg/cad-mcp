@@ -907,9 +907,15 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                         "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
-    if shaft_bores and any(f["kind"] in ("keyway", "thread", "gear") for f in shaft_feats):
-        raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带键槽/外螺纹/齿轮",
-                       hint="套类零件先只用内孔 + 环槽；或拆成实心轴")
+    if shaft_bores and any(f["kind"] in ("keyway", "gear") for f in shaft_feats):
+        raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带键槽/齿轮",
+                       hint="套类零件先只用内孔 + 环槽/外螺纹；或拆成实心轴")
+    for f in shaft_feats:  # 外螺纹段：小径处壁厚 ≥ 1 mm；环槽同理
+        if f["kind"] in ("thread", "groove") and shaft_bores:
+            r_in = max((b["d"] / 2 for b in shaft_bores if b["z0"] < f["z1"] - 1e-9 and b["z1"] > f["z0"] + 1e-9), default=0.0)
+            r_root = (f["d1"] if f["kind"] == "thread" else f["d2"]) / 2
+            if r_in and r_root - r_in < 1.0:
+                raise CadError(SPEC_INVALID, f"{f['name']}: 内孔 Φ{2 * r_in:g} 处壁厚不足 1 mm（{'螺纹小径' if f['kind'] == 'thread' else '槽底'} Φ{2 * r_root:g}）")
     heat = _heat_treatment(spec, steps)
     return ResolvedPart(
         heat=heat, datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
