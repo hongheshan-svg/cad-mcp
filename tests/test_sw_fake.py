@@ -186,3 +186,63 @@ def test_sw_hole_table_and_local_section(sw_svc):
     bo = [c[1] for c in ad.sw.calls if c[0] == "CreateBreakOutSection"]
     assert bo and bo[0][0] == pytest.approx(0.020)
     assert not [f for f in d["rules"]["findings"] if f["rule"] == "D016"]
+
+
+def test_sw_revision_table_and_leader_attach(sw_svc):
+    from test_section import BAR
+    svc, ad = sw_svc
+    svc.change_begin("R")
+    svc.build(PartSpec.model_validate(BAR))
+    revs = [{"rev": "A", "date": "2026-01-01", "description": "初版", "by": "AI"},
+            {"rev": "B", "date": "2026-02-01", "description": "改孔径", "by": "AI"}]
+    svc.build(DrawingSpec.model_validate({"model": BAR["name"], "title_block": {"designer": "AI"}, "revisions": revs}))
+    calls = ad.sw.calls
+    rt = [c[1] for c in calls if c[0] == "InsertRevisionTable2"]
+    assert len(rt) == 1 and len(rt[0]) == 5
+    assert [c[1][0] for c in calls if c[0] == "AddRevision"] == ["B", "A"]           # 最新在上
+    assert not any(c[0] == "InsertNote" and str(c[1][0]).startswith("更改记录") for c in calls)
+    # 有 anchor 的引出标注：先选边线（SelectByID2 九个参数）再插入注释
+    sel = [c[1] for c in calls if c[0] == "SelectByID2" and c[1][1] == "EDGE"]
+    assert sel and all(len(a) == 9 for a in sel)
+
+
+def test_sw_revision_table_falls_back_to_note():
+    from cadmcp.adapters.solidworks.executor import SwExecutor as Executor
+    ex = Executor.__new__(Executor)
+    ex.readback = {}
+
+    class Ann:
+        def SetPosition2(self, *a):
+            pass
+
+    class Note:
+        def GetAnnotation(self):
+            return Ann()
+
+    class M:
+        def InsertRevisionTable2(self, *a):
+            return None
+
+        def InsertNote(self, t):
+            ex.readback["note"] = t
+            return Note()
+    ex.model = M()
+    ex.c = object()
+    r = ex.op_revision_table((10, 5), ["版本"], [14], [["A"]], "更改记录：\nA")
+    assert r == {"fallback": True} and ex.readback["note"].startswith("更改记录")
+    assert "revision_rows" not in ex.readback
+
+
+def test_d020_revision_rows_mismatch(sw_svc):
+    from cadmcp.detailing import check_drawing
+    from test_section import BAR
+    svc, ad = sw_svc
+    svc.change_begin("D")
+    svc.build(PartSpec.model_validate(BAR))
+    revs = [{"rev": "A", "date": "2026-01-01", "description": "初版", "by": "AI"}]
+    svc.build(DrawingSpec.model_validate({"model": BAR["name"], "title_block": {"designer": "AI"}, "revisions": revs}))
+    plan = svc._get(BAR["name"] + "_DRW").resolved
+    assert not [f for f in check_drawing(plan, {"revision_rows": 1}) if f["rule"] == "D020"]
+    bad = [f for f in check_drawing(plan, {"revision_rows": 0}) if f["rule"] == "D020"]
+    assert bad and bad[0]["severity"] == "error"
+    assert not [f for f in check_drawing(plan, {}) if f["rule"] == "D020"]

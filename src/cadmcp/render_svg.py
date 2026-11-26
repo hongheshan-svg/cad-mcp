@@ -9,6 +9,7 @@ import math
 from html import escape
 from typing import Any
 
+from . import detailing
 from .detailing import VIEW_AXES, DrawingPlan, vc, vrange
 from .ir.assembly_resolve import ResolvedAssembly
 from .ir.resolve import ResolvedPart, face_point
@@ -683,10 +684,10 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
         s.text(cx0 + 18, cy0 + 5, val, 4 if k in ("名称", "图号") else 3.5)
     # 更改记录（标题栏左侧，最新在上）
     if plan.revisions:
-        cols = [("版本", 14), ("更改内容", 78), ("日期", 24), ("签名", 18)]
+        cols = list(detailing.REV_COLUMNS)
         rx = x0 - sum(w for _, w in cols)
         ry = y0
-        for row in [*plan.revisions[::-1][:6], None]:
+        for row in [*detailing.revision_rows(plan), None]:
             vals = [n for n, _ in cols] if row is None else [row.get("rev", ""), row.get("description", "")[:26],
                                                              row.get("date", ""), row.get("by", "")]
             xx = rx

@@ -190,3 +190,17 @@ setx CADMCP_NODE_CONFIG D:\cadmcp\node.yaml
 3. 框格：符号是否正确（平面度 ⏥、位置度 ⌖ 等）、位置度前是否有 Φ、基准字母顺序；
    孔的位置度框格应在孔标注文字下方。
 4. 表面结构符号：是否为"去除材料"√，值显示为 Ra 3.2；非顶面的符号是否带引线。
+
+### 原生修订表 + 引出标注引线附着（D020）
+给图纸 spec 加 `revisions`（2~3 条）出图，核对：
+1. 修订表：oplog 中 `revision_table` 应成功（无 `revision_fallback`）；表在标题栏左侧、底边与标题栏对齐，
+   最新修订在上、最多 6 行，列为 版本/更改内容/日期/签名，与预览 SVG 一致。
+   API 假设：`IDrawingDoc.InsertRevisionTable2(UseAnchorPoint, X, Y, AnchorType, TableTemplate)`（5 参，模板传空串用默认）
+   返回 IRevisionTableAnnotation；`AddRevision(Revision)`（1 参）逐行加；单元格通过 ITableAnnotation 的 Text(row, col)
+   PROPERTYPUT 写入（行 0 为表头，数据行从 1 起；SW 可能把新行加在表尾而非表头下，行序反了请记录）。
+   锚点常量复用 swBOMConfigurationAnchor_BottomLeft（默认 3）；表长出图框请记录。
+   失败时退回注释"更改记录"；回读行数不等于方案时报 D020（error）。
+2. 引出标注引线：孔标注/圆角/型腔标注应带指向边线的引线，oplog 中 leader_note 返回 `attached`，
+   `leaders_attached` 为附着成功数。假设：视图激活后 `SelectByID2("", "EDGE", ax, ay, 0, False, 0, None, 0)`
+   用图纸坐标（anchor，m）能选中边线，选中后 InsertNote 自动带引线并附着。若 attached 总是 False，
+   说明 EDGE 选择需要视图内坐标或改用 SelectByRay；若文字位置被 SW 吸附偏移，记录偏差。

@@ -23,6 +23,7 @@ ARITY = {
     "InsertTableAnnotation2": 7, "SetColumnWidth": 3, "CreateBreakOutSection": 1,
     "InsertDatumTag2": 0, "InsertGtol": 0, "SetFrameSymbols2": 9, "SetFrameValues2": 6, "SetLabel": 1,
     "InsertSurfaceFinishSymbol3": 14,
+    "InsertRevisionTable2": 5, "AddRevision": 1,  # sw_revision_leader
 }
 
 
