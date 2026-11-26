@@ -155,6 +155,7 @@ def test_where_used_outside_workspace(svc, tmp_path):
     svc.policy.read_allow.append(designs.resolve())
     svc.change_begin("OLD", sources=[str(old / "Bracket.mprt")])
     info = svc.inspect_existing("Bracket.mprt")
+    assert info["used_by_outside_by_folder"] == {"OLD": 2, "OTHER": 2} and info["used_by_outside_count"] == 4
     outside = sorted(Path(x).name for x in info["used_by_outside"])
     assert outside == ["Bracket.mdrw", "Machine.masm", "Machine.mdrw", "Station.masm"]  # 不含 DECOY/User.masm
     r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
@@ -176,3 +177,29 @@ def test_no_read_allow_warns(svc, tmp_path):
     svc.change_begin("X", sources=[str(src / "Bracket.mprt")])
     r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
     assert any(f["rule"] == "E015" for f in r["findings"])
+
+
+def test_many_dependents_scale(svc, tmp_path):
+    import time
+    from legacy import HDR
+    designs = tmp_path / "designs"
+    old = write_legacy(designs / "OLD")
+    for k in range(20):
+        proj = designs / f"P{k:02d}"
+        proj.mkdir()
+        for j in range(100):  # 2000 个装配引用同一个共用件
+            a = {**HDR, "kind": "assembly", "name": f"A{j}", "native": {
+                "references": [str((old / "Bracket.mprt").resolve())], "components": [], "mates": []}}
+            (proj / f"A{j}.masm").write_text(json.dumps(a), encoding="utf-8")
+    svc.policy.read_allow.append(designs.resolve())
+    svc.change_begin("OLD", sources=[str(old / "Bracket.mprt")])
+    t0 = time.perf_counter()
+    info = svc.inspect_existing("Bracket.mprt")
+    assert info["used_by_outside_count"] == 2002 and info["used_by_outside_by_folder"]["P00"] == 100
+    assert len(info["used_by_outside"]) == 50
+    r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 12}])
+    assert r["applied"] and r["imported_count"] == 2002 and len(r["refreshed"]) == 2002
+    assert time.perf_counter() - t0 < 30
+    svc.policy.max_import_dependents = 1000  # 超过上限：拒绝
+    r = svc.edit_existing("Bracket.mprt", [{"op": "set_dimension", "name": "D1@Boss-Extrude1", "value": 14}])
+    assert not r["applied"] and "上限 1000" in r["error"]

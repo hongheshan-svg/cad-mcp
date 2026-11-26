@@ -94,7 +94,9 @@ uv run python scripts\win\probe_sw.py --version 2024 --node-config D:\cadmcp\nod
 **原文件会先备份到发布目录 `_writeback_backup`**。
 再试一次"只复制单个零件"：另一个文件夹里放一个引用该零件的装配，确认 inspect 的 `used_by_outside` 能找到它、
 修改后它被更新，回写后在 SW 中打开原位置的装配，**检查它引用的是原位置的新零件而不是工作区路径**
-（`ReplaceReferencedDocument` 重定向是否生效）。发回 `*.inspect.oplog.json`、`*.edit.oplog.json`、`*.refresh.oplog.json`。
+（`ReplaceReferencedDocument` 重定向是否生效）。
+共用件被很多文件引用时（上限默认 10000），每个引用文件都要在 SW 中打开、重建、保存一次：
+请记录单个文件的刷新耗时（见 `*.refresh.oplog.json` 中的 ms），用于估算大批量修改的时间。发回 `*.inspect.oplog.json`、`*.edit.oplog.json`、`*.refresh.oplog.json`。
 
 ## 4. Creo 探针（约 5 分钟）
 

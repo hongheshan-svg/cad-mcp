@@ -559,7 +559,6 @@ class CadService:
     def _external_users(self, t: Target, originals: list[Path]) -> tuple[list[Path], list[dict[str, Any]]]:
         """工作区外引用 originals 的装配/工程图（传递：零件 → 装配 → 装配图）。返回 (文件, 提示)。"""
         s = self._session()
-        known = {Path(v).resolve() for v in s.source_paths.values()}
         notes: list[dict[str, Any]] = []
         if not self.policy.read_allow:
             notes.append({"rule": "E015", "severity": "warning", "target": "policy.read_allow",
@@ -570,32 +569,40 @@ class CadService:
         for root in self.policy.read_allow:
             if root.exists():
                 index.update(self._ref_index(t, root))
+        by_name: dict[str, list[tuple[str, str]]] = {}  # 反向索引：被引用文件名 → [(引用者, 存储路径)]
+        for user, refs in index.items():
+            for r in refs:
+                by_name.setdefault(Path(r.replace("\\", "/")).name.lower(), []).append((user, r))
         found: list[Path] = []
         frontier = [o.resolve() for o in originals]
         seen = set(frontier)
         while frontier:
             tgt = frontier.pop(0)
-            for user, refs in index.items():
+            for user, r in by_name.get(tgt.name.lower(), []):
                 up = Path(user)
                 if up in seen:
                     continue
-                for r in refs:
-                    rp = Path(r.replace("\\", "/"))
-                    if rp.name.lower() != tgt.name.lower():
-                        continue
-                    cand = rp if rp.is_absolute() else up.parent / rp
-                    if cand.exists() and cand.resolve() != tgt:
-                        continue  # 引用的是别处的同名文件
-                    if not cand.exists():
-                        notes.append({"rule": "E016", "severity": "warning", "target": str(up),
-                                      "message": f"{up.name} 引用的 {r} 找不到原路径，按同名判定为引用本文件",
-                                      "hint": "确认它确实用的是这个零件"})
-                    seen.add(up)
-                    frontier.append(up)
-                    if up not in known:
-                        found.append(up)
-                    break
-        return found, notes
+                rp = Path(r.replace("\\", "/"))
+                cand = rp if rp.is_absolute() else up.parent / rp
+                if cand.exists() and cand.resolve() != tgt:
+                    continue  # 引用的是别处的同名文件
+                if not cand.exists():
+                    notes.append({"rule": "E016", "severity": "warning", "target": str(up),
+                                  "message": f"{up.name} 引用的 {r} 找不到原路径，按同名判定为引用本文件",
+                                  "hint": "确认它确实用的是这个零件"})
+                seen.add(up)
+                frontier.append(up)
+                found.append(up)
+        return found, notes  # 含已在工作区中的；调用方按 source_paths 过滤
+
+    def _by_folder(self, files: list[Path]) -> dict[str, int]:
+        """按项目文件夹（read_allow 根下第一级目录）汇总数量，便于判断影响了哪些项目。"""
+        out: dict[str, int] = {}
+        for q in files:
+            root = next((r for r in self.policy.read_allow if r in q.resolve().parents), None)
+            key = q.resolve().relative_to(root).parts[0] if root else str(q.parent)
+            out[key] = out.get(key, 0) + 1
+        return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
     def _import_users(self, users: list[Path]) -> list[str]:
         s = self._session()
@@ -624,9 +631,13 @@ class CadService:
             info = t.adapter.inspect(p)
             used = t.adapter.where_used(p, s.work)
             orig = s.source_paths.get(rel)
-            outside, notes = self._external_users(t, [Path(orig)]) if orig else ([], [])
+            users, notes = self._external_users(t, [Path(orig)]) if orig else ([], [])
+            known = {Path(v).resolve() for v in s.source_paths.values()}
+            outside = [u for u in users if u not in known]
         return {"ok": True, "file": rel, **info, "used_by": [q.relative_to(s.work).as_posix() for q in used],
-                "used_by_outside": [str(q) for q in outside],
+                "used_by_outside": [str(q) for q in outside[:50]],
+                "used_by_outside_count": len(outside),
+                "used_by_outside_by_folder": self._by_folder(outside),
                 **({"notes": notes} if notes else {}),
                 **({"hint": "修改时这些文件会自动复制进工作区一起更新和检查"} if outside else {})}
 
@@ -655,11 +666,13 @@ class CadService:
         orig = s.source_paths.get(rel)
         if orig:
             with t.lock:
-                outside, notes = self._external_users(t, [Path(orig)])
+                users, notes = self._external_users(t, [Path(orig)])
             findings += notes
-            if len(outside) > self.policy.max_import_dependents:
+            known = {Path(v).resolve() for v in s.source_paths.values()}
+            outside = [u for u in users if u not in known]
+            if len(users) > self.policy.max_import_dependents:
                 return {"ok": False, "applied": False, "file": rel, "findings": findings,
-                        "error": f"{len(outside)} 个文件引用了它（上限 {self.policy.max_import_dependents}）",
+                        "error": f"{len(users)} 个文件引用了它（上限 {self.policy.max_import_dependents}）",
                         "hint": "这是大范围共用件：建议走 PDM 变更流程；或调高 policy.max_import_dependents"}
             imported = self._import_users(outside)
         n = s.checkpoint(f"before edit {rel}")
@@ -674,11 +687,18 @@ class CadService:
         refreshed = []
         with t.lock:
             # 按引用层级刷新：先直接引用者（装配/零件图），再引用它们的（装配图）；已修改文件预先载入
-            order, frontier, loaded = [], [p], [p]
+            exts = {t.adapter.ext["assembly"].lower(), t.adapter.ext["drawing"].lower()}
+            users_of: dict[str, list[Path]] = {}  # 工作区反向索引（只读一遍文件）
+            for q in sorted(s.work.rglob("*")):
+                if q.is_file() and q.suffix.lower() in exts:
+                    for r in t.adapter.references(q) or []:
+                        users_of.setdefault(Path(r.replace("\\", "/")).name.lower(), []).append(q)
+            order, frontier, loaded, seen = [], [p], [p], {p}
             while frontier:
                 cur = frontier.pop(0)
-                for q in t.adapter.where_used(cur, s.work):
-                    if q not in order and q != p:
+                for q in users_of.get(cur.name.lower(), []):
+                    if q not in seen:
+                        seen.add(q)
                         order.append(q)
                         frontier.append(q)
             for q in order:
@@ -695,7 +715,8 @@ class CadService:
                                      "message": f"{qr} 有 {r['dangling']} 个悬空标注（引用的特征被压缩/删除）",
                                      "hint": "在图上删除或重新标注；或撤销压缩（cad_change_rollback 到修改前检查点）"})
         rec = {"file": rel, "edits": [e.model_dump() for e in parsed], "diff": d, "regen": regen,
-               "refreshed": refreshed, "imported_dependents": imported, "findings": findings, "description": describe(rel, d), "checkpoint": n}
+               "refreshed": refreshed, "imported_dependents": imported[:50], "imported_count": len(imported),
+               "imported_by_folder": self._by_folder([Path(s.source_paths[x]) for x in imported]), "findings": findings, "description": describe(rel, d), "checkpoint": n}
         s.edits.append(rec)
         s.log("edit_existing", {"file": rel, "edits": edits}, {"diff": d, "refreshed": [r["file"] for r in refreshed]})
         return {"ok": True, "applied": True, **{k: v for k, v in rec.items() if k != "checkpoint"},

@@ -20,7 +20,7 @@ class Policy:
     native_call_enabled: bool = False
     mass_tolerance: float = 0.03
     writeback_allow: list[Path] = field(default_factory=list)  # 允许把发布结果回写的原位置（共享盘/PDM 检出目录）
-    max_import_dependents: int = 200  # 修改共用件时自动纳入的引用文件上限
+    max_import_dependents: int = 10000  # 修改共用件时自动纳入的引用文件上限
 
     @classmethod
     def load(cls, path: str | Path | None, workspace_root: str | Path | None = None) -> "Policy":
@@ -35,7 +35,7 @@ class Policy:
             native_call_enabled=bool(data.get("native_call_enabled", False)),
             mass_tolerance=float(data.get("mass_tolerance", 0.03)),
             writeback_allow=[Path(p).resolve() for p in data.get("writeback_allow", [])],
-            max_import_dependents=int(data.get("max_import_dependents", 200)),
+            max_import_dependents=int(data.get("max_import_dependents", 10000)),
         )
 
     @staticmethod

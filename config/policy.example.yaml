@@ -8,4 +8,4 @@ writeback_allow:                 # 允许把发布结果回写的原位置（默
   - "D:/designs"
 native_call_enabled: false
 mass_tolerance: 0.03             # CAD 实测质量与 spec 估算偏差阈值
-max_import_dependents: 200       # 修改共用件时自动纳入的引用文件上限；超过则要求走 PDM 变更流程
+max_import_dependents: 10000       # 修改共用件时自动纳入的引用文件上限；超过则要求走 PDM 变更流程
