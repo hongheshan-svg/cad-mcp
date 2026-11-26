@@ -31,7 +31,7 @@ def test_iso_and_top_draw_flanges():
     bp = resolve_part(PartSpec.model_validate({**SM, "base": {**SM["base"], "flanges": []}}))
     bare = plan_part_drawing(DrawingSpec.model_validate({"model": "SMB", "views": [{"type": "top"}, {"type": "iso"}]}), bp)
     n = lambda svg: svg.count("<line") + svg.count("<poly")  # noqa: E731
-    assert n(render(plan, p)[0]) >= n(render(bare, bp)[0]) + 2 * 9 + 2  # 每个翻边：轴测 9 条棱 + 俯视板厚条
+    assert n(render(plan, p)[0]) >= n(render(bare, bp)[0]) + 2 * 3 + 2  # 每个翻边：轴测 3 个可见面（消隐）+ 俯视板厚条
 
 
 def test_back_face_blind_pocket_is_hidden():
