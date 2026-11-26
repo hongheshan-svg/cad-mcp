@@ -99,6 +99,34 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                 out.append(_f("R007", "error", pk["name"], "型腔深度超过料厚", "改为 through 或减小深度"))
             elif floor < 1.5:
                 out.append(_f("R007", "warning", pk["name"], f"型腔底厚 {floor:.2f} mm < 1.5 mm"))
+    # R009 深孔：孔深/钻径 > 10 普通麻花钻难加工（排屑、偏斜）
+    for h in p.holes:
+        if h.slot:
+            continue
+        L = face_depth(h.face, h.plate_box or p.bbox, h.at) if h.through else h.depth
+        if h.drill > 0 and L / h.drill > 10:
+            out.append(_f("R009", "warning", h.name, f"孔深/孔径 = {L:g}/{h.drill:g} = {L / h.drill:.0f} > 10，属深孔，钻削易偏斜",
+                          "加大孔径、两面对钻，或改为台阶孔减少有效深度"))
+        # R010 盲螺孔：底孔须比螺纹深出 ≥ 0.5d（丝锥头部不完整牙 + 排屑）
+        if h.type == "tapped" and not h.through and h.thread_depth is not None and \
+                h.depth - h.thread_depth < 0.5 * h.nominal - 1e-6:
+            out.append(_f("R010", "warning", h.name,
+                          f"盲螺孔底孔深 {h.depth:g} 只比螺纹深 {h.thread_depth:g} 多 {h.depth - h.thread_depth:g} mm"
+                          f"（建议 ≥ 0.5d = {0.5 * h.nominal:g}）", "加深底孔或减小螺纹深度"))
+    # R011 型腔内角：直角内角铣不出；圆角半径过小时刀具长径比过大
+    for pk in ([] if p.casting else p.pockets):  # 铸件型腔是铸出的（铸造圆角归铸造规则管）
+        pr = pk["profile"]
+        if pr.shape != "rect":
+            continue
+        r = float(pr.data.get("corner_radius") or 0.0)
+        depth = face_depth(pk["face"], p.bbox, pk.get("at")) if pk["through"] else pk["depth"]
+        if r <= 0:
+            out.append(_f("R011", "warning", pk["name"], "矩形型腔内角为直角，立铣刀加工不出（会留刀具半径圆角）",
+                          f"给 profile 加 corner_radius（建议 ≥ 深度/6 = {depth / 6:.1f}，且取常用刀具半径）"))
+        elif depth / (2 * r) > 3 + 1e-9:
+            out.append(_f("R011", "info", pk["name"],
+                          f"型腔内角 R{r:g}、深 {depth:g}：刀具长径比 {depth / (2 * r):.1f} > 3，需加长刀、效率低",
+                          f"内角加大到 R{depth / 6:.1f} 以上"))
     # R008 钣金：孔到折弯边距离 ≥ 2t + r
     if p.base_type == "sheet_metal" and p.thickness:
         for bend in p.bends:
