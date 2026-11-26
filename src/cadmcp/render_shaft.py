@@ -90,15 +90,34 @@ def _hollow_section(s, part, P, segs, c, Ltot):
 
     def r_out(z):
         return radius_at_seg(segs, z)
+    kws = [f for f in part.shaft_features if f["kind"] == "keyway"]  # 空心轴键槽在上方：剖切面过键槽 → 上轮廓降到槽底
+    segs_top = segs
+    for f in kws:
+        out_ = []
+        for a, b, r in segs_top:
+            if b <= f["z0"] + 1e-9 or a >= f["z1"] - 1e-9:
+                out_.append((a, b, r))
+                continue
+            if a < f["z0"]:
+                out_.append((a, f["z0"], r))
+            out_.append((max(a, f["z0"]), min(b, f["z1"]), f["d"] / 2 - f["depth"]))
+            if b > f["z1"]:
+                out_.append((f["z1"], b, r))
+        segs_top = out_
     for sign in (1, -1):
+        segs_s = segs_top if sign > 0 else segs
         # 外轮廓（含倒角）
         pts = [P(0, sign * max(segs[0][2] - c, pieces[0][2]))]
         if c:
             pts.append(P(c, sign * segs[0][2]))
-        for a, b, r in segs:
+        for a, b, r in segs_s:
             pts += [P(a if not (c and a == 0) else c, sign * r), P(b if not (c and b == Ltot) else Ltot - c, sign * r)]
         if c:
             pts.append(P(Ltot, sign * max(segs[-1][2] - c, pieces[-1][2])))
+        if sign > 0:  # 剖切面之后：键槽侧壁与外圆的交线（可见）
+            for f in kws:
+                yw = math.sqrt(max((f["d"] / 2) ** 2 - (f["width"] / 2) ** 2, 0.0))
+                s.line(*P(f["z0"], yw), *P(f["z1"], yw), THICK)
         # 剖面区域 = 外轮廓 + 沿孔壁返回（上半：轮毂键槽处孔壁升到槽底）
         def rin(za, zb, rb):
             if sign > 0:
@@ -233,7 +252,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             s.line(*P(f["z0"], sign * f["df"] / 2), *P(f["z1"], sign * f["df"] / 2), THIN)
     # 键槽（朝前，主视图显示其实形）
     kws = [f for f in part.shaft_features if f["kind"] == "keyway"]
-    for f in kws:
+    for f in (kws if not part.shaft_bores else ()):  # 空心轴：键槽在上方，由全剖轮廓表达
         rad = f["width"] / 2
         za, zb = f["z0"] + rad, f["z1"] - rad
         pts = [P(zb + rad * math.cos(math.radians(a)), rad * math.sin(math.radians(a))) for a in range(-90, 91, 15)]
@@ -385,6 +404,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(hatch)}</g>")
         s.poly(outline, THICK)
         zc_ = (f["z0"] + f["z1"]) / 2
+        from .detailing import bore_radius_at
+        rb_ = bore_radius_at(part, zc_) * sc
+        if rb_ > 0:  # 空心轴：断面中的内孔
+            s.parts.append(f"<circle cx='{vx:.2f}' cy='{s.y(vy):.2f}' r='{rb_ - 0.2:.2f}' fill='white' stroke='none'/>")
+            s.circle(vx, vy, rb_, THICK)
         for h in part.end_holes:  # 断面切到轴端螺孔：孔（小径/底孔）粗实线、大径 3/4 圈细实线（GB/T 4459.1）
             if h["z0"] - 1e-6 <= zc_ <= h["z1"] + 1e-6:
                 rt = h["tap"] / 2 * sc

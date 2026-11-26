@@ -491,3 +491,7 @@ Creo：拉伸切除 + `feat.cosmetic_thread hole_feature=EHn`；核对装饰螺�
 样例：`tests/test_heat_treatment.py`。SW `view_line`：视图草图直线 → `SetLineStyle("CENTER")` + `SetLineWidth(swLW_THICK)`，
 核对线型名与线宽枚举；Creo `tk.drw.line`：`ProDtlentityCreate`，线型 CTRLFONT、线宽 0.5。
 热处理硬度经验值（`materials.HEAT_TREATMENT`）未对照手册。
+
+### 空心轴外键槽
+- 空心轴的键槽固定建在 −Y（angle 270：Top Plane 草图、翻转切除），按 SW 轴类主视图 −Y 朝上推算，主视图原位全剖时
+  剖切面过键槽。实机核对：主视图上方是否出现键槽缺口；移出断面 A-A 中键槽是否朝上、内孔是否显示。

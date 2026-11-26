@@ -36,9 +36,23 @@ def test_bad_bores(bores, msg):
         _p({**SL, "base": {**SL["base"], "bores": bores}})
 
 
-def test_bores_with_keyway_unsupported():
-    with pytest.raises(CadError, match="暂不支持"):
-        _p({**SL, "features": [{"feature": "keyway", "name": "KW", "step": 1, "length": 28}]})
+def test_hollow_shaft_keyway():
+    """空心轴键槽：转到主视图上方（−Y），全剖显示槽深；断面图带内孔；键槽底壁厚校验。"""
+    spec = {**SL, "features": [{"feature": "keyway", "name": "KW", "step": 1, "length": 28}]}
+    sp = PartSpec.model_validate(spec)
+    p = resolve_part(sp)
+    kw = next(f for f in p.shaft_features if f["kind"] == "keyway")
+    assert kw["angle"] == 270
+    plan = plan_part_drawing(DrawingSpec(model="SL1"), p)
+    assert [v.type for v in plan.views] == ["front", "section"]
+    svg, out = render(plan, p)
+    assert not out["crossings"] and not out["collisions"]
+    cut = next(o for o in compile_part(sp, p) if o.op == "keyway_cut" and o.args["feature"] == "KW")
+    assert cut.args["flip"] is True
+    with pytest.raises(CadError, match="键槽底"):
+        _p({**spec, "base": {**SL["base"], "bores": [{"diameter": 33}]}})
+    with pytest.raises(CadError, match="270"):
+        _p({**SL, "features": [{"feature": "keyway", "name": "KW", "step": 1, "length": 28, "angle": 90}]})
 
 
 def test_drawing_full_section_and_dims():

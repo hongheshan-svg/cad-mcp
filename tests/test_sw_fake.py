@@ -470,3 +470,14 @@ def test_sw_heat_treatment_chain_line(sw_svc):
     r = svc.build(DrawingSpec.model_validate({"model": "HT1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
     assert len([c for c in ad.sw.calls if c[0] == "SetLineStyle"]) == 2
+
+
+def test_sw_hollow_shaft_keyway(sw_svc):
+    """空心轴键槽：键槽切除（Top Plane 翻转）+ 原位全剖 + 断面图，规则检查通过。"""
+    from test_shaft_bores import SL
+    svc, ad = sw_svc
+    spec = {**SL, "features": [{"feature": "keyway", "name": "KW", "step": 1, "length": 28}]}
+    svc.change_begin("HK")
+    svc.build(PartSpec.model_validate(spec))
+    r = svc.build(DrawingSpec.model_validate({"model": "SL1", "title_block": {"designer": "AI"}}))
+    assert r["rules"]["passed"], r["rules"]

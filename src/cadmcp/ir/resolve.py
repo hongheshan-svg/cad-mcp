@@ -907,15 +907,23 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                         "text": " | ".join([GEOTOL_SYMBOL[g.type], f"{'Φ' if dia else ''}{val:g}", *g.datums])})
     rough = [{"target": r.target, "kind": _target(r.target, "roughness")[0], "ra": ev(r.ra)} for r in spec.roughness]
 
-    if shaft_bores and any(f["kind"] in ("keyway", "gear") for f in shaft_feats):
-        raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带键槽/齿轮",
-                       hint="套类零件先只用内孔 + 环槽/外螺纹；或拆成实心轴")
-    for f in shaft_feats:  # 外螺纹段：小径处壁厚 ≥ 1 mm；环槽同理
-        if f["kind"] in ("thread", "groove") and shaft_bores:
+    if shaft_bores and any(f["kind"] == "gear" for f in shaft_feats):
+        raise CadError(CAPABILITY_UNSUPPORTED, "空心轴（内孔）暂不支持同时带齿轮",
+                       hint="套类零件先用内孔 + 环槽/外螺纹/键槽；或拆成实心轴")
+    for f in shaft_feats:
+        if f["kind"] == "keyway" and shaft_bores:
+            # 空心轴主视图全剖：键槽转到上方（−Y，SW 轴类主视图朝上，同轮毂键槽），剖切面过键槽、主视图显示槽深
+            if round(f["angle"]) % 360 not in (0, 270):
+                raise CadError(SPEC_INVALID, f"{f['name']}: 空心轴键槽朝向固定为主视图上方（angle 缺省或 270）")
+            f["angle"] = 270.0
+    for f in shaft_feats:  # 外螺纹段：小径处壁厚 ≥ 1 mm；环槽、键槽同理
+        if f["kind"] in ("thread", "groove", "keyway") and shaft_bores:
             r_in = max((b["d"] / 2 for b in shaft_bores if b["z0"] < f["z1"] - 1e-9 and b["z1"] > f["z0"] + 1e-9), default=0.0)
-            r_root = (f["d1"] if f["kind"] == "thread" else f["d2"]) / 2
+            r_root = {"thread": lambda: f["d1"] / 2, "groove": lambda: f["d2"] / 2,
+                      "keyway": lambda: f["d"] / 2 - f["depth"]}[f["kind"]]()
             if r_in and r_root - r_in < 1.0:
-                raise CadError(SPEC_INVALID, f"{f['name']}: 内孔 Φ{2 * r_in:g} 处壁厚不足 1 mm（{'螺纹小径' if f['kind'] == 'thread' else '槽底'} Φ{2 * r_root:g}）")
+                what = {"thread": "螺纹小径", "groove": "槽底", "keyway": "键槽底"}[f["kind"]]
+                raise CadError(SPEC_INVALID, f"{f['name']}: 内孔 Φ{2 * r_in:g} 处壁厚不足 1 mm（{what}距轴线 {r_root:g}）")
     heat = _heat_treatment(spec, steps)
     return ResolvedPart(
         heat=heat, datums=datums, geotols=geotols, roughness=rough, mounts=mounts, flat_box=flat_box,
