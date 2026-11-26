@@ -529,9 +529,14 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                 "选中边线 → IModelDocExtension.InsertSurfaceFinishSymbol3（去除材料，Ra 值）"))
     if plan.title_block.get("surface_finish") and plan.model_kind == "part":
         sf = plan.title_block["surface_finish"]
+        from ...detailing import general_roughness_at
+        gx, gy = general_roughness_at(plan)
         ops.append(NativeOp("note", {"text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)",
-                                     "anchor": "above_notes"}))
-    ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block"}))
+                                     "anchor": "above_notes", "at": [gx, gy + 4.5]}, "位置避开视图（与 SVG 同）"))
+    from ...detailing import notes_origin
+    nx, ny = notes_origin(plan)
+    ops.append(NativeOp("note", {"text": "\n".join(plan.notes), "anchor": "above_title_block",
+                                 "at": [nx, ny + 5 * max(len(plan.notes) - 1, 0) + 3.5]}))
     if plan.revisions:  # 原生修订表；失败时执行器退回注释
         from ...detailing import REV_COLUMNS, revision_rows, revision_table_origin
         rx, ry = revision_table_origin(plan)

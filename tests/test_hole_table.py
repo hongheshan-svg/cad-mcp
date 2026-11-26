@@ -33,7 +33,7 @@ def test_auto_hole_table_replaces_ordinates(svc):
     assert not [x for x in plan.dims if x.view == "top" and x.kind == "ordinate"]
     assert not [x for x in plan.dims if x.view == "top" and x.kind == "callout" and x.ref in ("M6", "Pin", "Fix")]
     assert sum(1 for x in plan.dims if x.kind == "tag") == 21
-    assert not d["rules"]["findings"], d["rules"]["findings"]   # 放得下（让出轴测图），渲染回读一致（D017）
+    assert not [f for f in d["rules"]["findings"] if f["severity"] != "info"], d["rules"]["findings"]   # 放得下（让出轴测图），渲染回读一致（D017）
     assert not any(v.type == "iso" for v in plan.views)
     ops = compile_drawing(plan, "x.SLDPRT")
     ht = next(o for o in ops if o.op == "hole_table")
@@ -71,3 +71,25 @@ def test_few_holes_no_table_and_labels_do_not_collide(svc):
         for b in boxes[i + 1:]:
             assert min(a[2], b[2]) <= max(a[0], b[0]) or min(a[3], b[3]) <= max(a[1], b[1])
 
+
+
+def test_general_roughness_and_view_pruning_by_review():
+    """肉眼审图发现的问题：其余粗糙度压断面图、薄板多余左视图（D021 info）。"""
+    from test_core import SHAFT
+
+    from cadmcp.detailing import _box_hit, general_roughness_at, plan_part_drawing
+    from cadmcp.ir.resolve import resolve_part
+    p = resolve_part(PartSpec.model_validate(SHAFT))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    x, y = general_roughness_at(plan)
+    for v in plan.views:
+        cx, cy = v.origin_on_sheet
+        w, h = v.size_mm
+        assert not _box_hit((x, y - 2, x + 48, y + 10), (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)), v.type
+    g = resolve_part(PartSpec.model_validate(GRID))
+    gp = plan_part_drawing(DrawingSpec(model=g.name), g)
+    assert "left" not in {v.type for v in gp.views}
+    assert any(f["rule"] == "D021" and "左视图" in f["message"] for f in gp.extra_findings)
+    keep = plan_part_drawing(DrawingSpec.model_validate({"model": g.name, "views": [{"type": "front"}, {"type": "top"},
+                                                                                     {"type": "left"}]}), g)
+    assert "left" in {v.type for v in keep.views}   # 用户显式指定时不省略

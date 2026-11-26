@@ -374,6 +374,36 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     return notes, tb
 
 
+def prune_default_views(spec: DrawingSpec, p: ResolvedPart, min_feat: float) -> tuple[DrawingSpec, list[dict[str, Any]]]:
+    """视图数量最少、表达完整（GB/T 17451）：用户没指定 views 时，
+    - 拉伸类棱柱件左右两侧面上没有孔/型腔/凸台、也没有剖视落在左视图 → 左视图只重复主视图已表达的厚度，省略；
+    - 轴测图是辅助视图：带它只能用更小比例（或更大图幅）时省略，保证主要视图清晰。
+    返回（新 spec, info 级说明）。"""
+    if "views" in spec.model_fields_set or p.base_type != "extrude":
+        return spec, []
+    infos: list[dict[str, Any]] = []
+    types = [v.type for v in spec.views]
+    side = {h.face for h in p.holes} | {pk["face"] for pk in p.pockets} | {b_.get("face", "top") for b_ in p.bosses}
+    left_sec = isinstance(spec.sections, list) and any(s.view == "left" for s in spec.sections)
+    if "left" in types and not side & {"left", "right"} and not left_sec:
+        types.remove("left")
+        infos.append({"rule": "D021", "severity": "info", "message": "省略左视图：左右侧面无特征，厚度已在主视图表达",
+                      "fix": "需要时在 views 中显式列出 left"})
+    if "iso" in types:
+        with_iso = spec.model_copy(update={"views": [v for v in spec.views if v.type in types]})
+        no_iso = spec.model_copy(update={"views": [v for v in spec.views if v.type in types and v.type != "iso"]})
+        sh1, s1, _ = _layout(p.bbox, with_iso, p.flat_pattern, spec.sheet, min_feat, "part")
+        sh2, s2, _ = _layout(p.bbox, no_iso, p.flat_pattern, spec.sheet, min_feat, "part")
+        if s2 > s1:  # 只为更大比例让位；同比例换小图幅只会更挤
+            types.remove("iso")
+            infos.append({"rule": "D021", "severity": "info",
+                          "message": f"省略轴测图：带轴测图只能用 {sh1} {scale_label(s1)}，去掉后可用 {sh2} {scale_label(s2)}",
+                          "fix": "需要时在 views 中显式列出 iso（或指定更大 sheet）"})
+    if not infos:
+        return spec, []
+    return spec.model_copy(update={"views": [v for v in spec.views if v.type in types]}), infos
+
+
 def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
     if p.base_type == "shaft":
         return plan_shaft_drawing(spec, p, today)
@@ -383,6 +413,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     min_feat = min((h.drill for h in p.holes), default=0.0)
     # 焊接件尺寸大、孔是焊后加工的少数特征：按装配图方式选图幅（比例 ≥1:5 的最小图幅）
     kind = "weldment" if p.base_type == "weldment_body" else "part"
+    spec, view_infos = prune_default_views(spec, p, min_feat) if kind == "part" else (spec, [])
     sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, 0.0 if kind == "weldment" else min_feat, kind)
     vtypes = {v.type for v in views}
     dims: list[Dim] = []
@@ -498,6 +529,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     if ht_rows:
         plan.hole_table_box = _place_table(plan, HOLE_TABLE_W, 5 * (len(ht_rows) + 1) + 8)
     plan.missing_views = sorted(missing_views)
+    plan.extra_findings += view_infos
     plan.revisions = list(spec.revisions)
     _plan_sections(plan, spec, p)
     if spec.dimensions != "none":
@@ -521,6 +553,40 @@ HOLE_TABLE_W = 180.0
 def right_column_bottom(plan: "DrawingPlan") -> float:
     """右侧栏（标题栏、技术要求、切割清单、"其余"粗糙度）已占到的高度。"""
     return 5 + 56 + 14 + 5 * len(plan.notes) + 6 + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0) + 16
+
+
+GR_W, GR_H = 48.0, 10.0  # "其余 √Ra x (√)" 占位（render_gdt.general_roughness）
+
+
+def notes_origin(plan: "DrawingPlan") -> tuple[float, float]:
+    """技术要求文字块左下角（图纸 mm，同 render_svg：标题栏上方，最后一行基线）。"""
+    W, _ = plan.sheet_size
+    return (W - 5 - 180, 5 + 56 + 11)
+
+
+def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
+    """"其余"表面结构符号的位置（图纸 mm，左端/基线），SVG 与 CAD 共用。
+    默认在技术要求（或右侧栏孔表）上方；与视图（含尺寸带）或孔表重叠时依次改放：同高度靠图框右边 → 默认 x 向上逐格 →
+    图纸右上角。"""
+    W, H = plan.sheet_size
+    x0 = W - 5 - 180
+    hb = plan.hole_table_box
+    y0 = hb[3] + 4 if hb and hb[0] > W / 2 else (5 + 56 + 14 + 5 * len(plan.notes) + 6
+                                                  + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0))
+    obstacles = []
+    for v in plan.views:
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        obstacles.append((cx - vw / 2 - 6, cy - vh / 2 - 6, cx + vw / 2 + 14, cy + vh / 2 + 6))
+    if hb:
+        obstacles.append(tuple(hb))
+
+    def free(x, y):
+        box = (x, y - 2, x + GR_W, y + GR_H)
+        return box[3] <= H - 6 and not any(_box_hit(box, o) > 0 for o in obstacles)
+
+    cands = [(x0, y0), (W - 6 - GR_W, y0)] + [(x0, y0 + 4 * k) for k in range(1, 60)] + [(W - 6 - GR_W, H - 6 - GR_H)]
+    return next(((round(x, 2), round(y, 2)) for x, y in cands if free(x, y)), (x0, y0))
 
 
 def _place_table(plan: "DrawingPlan", w: float, h: float) -> tuple[float, float, float, float]:

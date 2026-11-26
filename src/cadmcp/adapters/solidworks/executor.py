@@ -1452,13 +1452,17 @@ class SwExecutor:
             note.GetAnnotation().SetPosition2(x0, (box[3] + 2) * MM, 0)
         return {"rows": len(rows), "read": len(got)}
 
-    def op_note(self, text: str, anchor: str):
+    def op_note(self, text: str, anchor: str, at: list[float] | None = None):
+        """at：注释左上角（图纸 mm，规划层给出，与 SVG 同位置）；缺省时退回标题栏上方的旧规则。"""
         note = self.model.InsertNote(text)
         if note is None:
             raise OpFailed("InsertNote failed")
-        sh = self.model.GetCurrentSheet()
-        w, h = sh.GetSize()[1:3] if len(sh.GetSize()) > 2 else (0.42, 0.297)
-        note.GetAnnotation().SetPosition2(w - 0.185, 0.07 + 0.005 * text.count("\n"), 0)
+        if at is not None:
+            note.GetAnnotation().SetPosition2(at[0] / 1000, at[1] / 1000, 0)
+        else:
+            sh = self.model.GetCurrentSheet()
+            w, h = sh.GetSize()[1:3] if len(sh.GetSize()) > 2 else (0.42, 0.297)
+            note.GetAnnotation().SetPosition2(w - 0.185, 0.07 + 0.005 * text.count("\n"), 0)
         self.readback.setdefault("notes", []).append("notes")
         return {}
 

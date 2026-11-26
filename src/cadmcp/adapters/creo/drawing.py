@@ -212,7 +212,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     """DrawingPlan → 逐项 `tk.drw.*`。坐标全部是规划层已算好的图纸坐标（mm，左下角原点），与 SVG 预览一致：
     尺寸 sheet_pts/sheet_pos/orient，引线标注 extra["label"]，精度符号 sheet_at/sheet_pos，孔表 hole_table_box，
     修订表 revision_table_origin，球标 anchor/pos。缺坐标的项不发命令，汇总成一条 warn。"""
-    from ...detailing import REV_COLUMNS, local_section_sheet, revision_rows, revision_table_origin
+    from ...detailing import REV_COLUMNS, general_roughness_at, local_section_sheet, revision_rows, revision_table_origin
     ops: list[NativeOp] = []
     D = "$drawing"
     skipped: dict[str, int] = {}
@@ -322,10 +322,8 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     above = y0 + TITLE_H + 12 + 5 * len(texts)  # 标题栏上方表格的底边（同 render_svg）
     sf = plan.title_block.get("surface_finish")
     if sf and plan.model_kind == "part":
-        hb = plan.hole_table_box
-        y = hb[3] + 4 if hb and hb[0] > W / 2 else (y0 + TITLE_H + 14 + 5 * len(texts) + 6
-                                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0))
-        ops.append(NativeOp("tk.drw.note", {"drawing": D, "at": [x0, y + 1],
+        gx, gy = general_roughness_at(plan)
+        ops.append(NativeOp("tk.drw.note", {"drawing": D, "at": [gx, gy + 1],
                                             "text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)"},
                             "其余表面粗糙度"))
     if plan.cut_list:

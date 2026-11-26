@@ -345,7 +345,24 @@ def _draw_cut_line(s, sec, part, V):
         for corner, along, other in ((a, pts[i - 1], b), (b, pts[i + 2], a)):
             s.line(*stroke(corner, along, 4)[1], *corner, W)
             s.line(*corner, *stroke(corner, other, 4)[1], W)
-        s.text(a[0] - 3 * dx - 2.5, a[1] - 3 * dy - 1, sec.label, 3.5, "middle")
+        # 转角外侧注字母：在 4 个斜角候选中取离孔轮廓、剖切线最远的（字母不压孔）
+        circles = [(V(i.xyz), h.max_dia / 2 * n) for h in (part.holes if part is not None else []) for i in h.instances]
+
+        def clearance(c):
+            dh = min((math.dist(c, o) - r for o, r in circles), default=99.0)
+            dl = min(_seg_dist(c, pts[j], pts[j + 1]) for j in range(len(pts) - 1))
+            return min(dh - 2.0, dl - 1.5)
+
+        cands = [(a[0] + sx * 4.5, a[1] + sy * 4.5) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
+        tx, ty = max(cands, key=clearance)
+        s.text(tx, ty - 1.2, sec.label, 3.5, "middle")
+
+
+def _seg_dist(p, a, b) -> float:
+    ax, ay = b[0] - a[0], b[1] - a[1]
+    L = ax * ax + ay * ay
+    t = 0.0 if L == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * ax + (p[1] - a[1]) * ay) / L))
+    return math.dist(p, (a[0] + ax * t, a[1] + ay * t))
 
 
 def _arrow_head(s, tip, d):
@@ -664,9 +681,7 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
             ht_h = by1 + 4
     if part is not None and plan.title_block.get("surface_finish"):
         from . import render_gdt
-        render_gdt.general_roughness(s, W - 5 - 180, ht_h or (5 + 56 + 14 + 5 * len(plan.notes) + 6
-                                     + (7 * (len(plan.cut_list) + 1) + 16 if plan.cut_list else 0)),
-                                     plan.title_block["surface_finish"])
+        render_gdt.general_roughness(s, *detailing.general_roughness_at(plan), plan.title_block["surface_finish"])
         rendered_refs.append("general_roughness")
     # 标题栏（右下）
     tbw, tbh = 180, 56
