@@ -640,7 +640,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ex = d.extra or {}
         if d.kind == "linear" and d.at is None and (d.view not in ordinate_views or ex.get("pitch") or ex.get("install") or ex.get("fit")):  # 图纸坐标一律 mm（executor 内转 m）：pts = 两条被标注边线上的点，pos = 尺寸线/文字位置
             ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value, "ref": d.ref,
-                                                      "pts": ex.get("sheet_pts"), "pos": ex.get("sheet_pos"),
+                                                      "pts": ex.get("sheet_pts"), "pos": dim_text_pos(ex),
                                                       "orient": ex.get("orient"),
                                                       **({"prefix": ex["prefix"], "suffix": ex.get("suffix", "")}
                                                          if ex.get("prefix") else {})},

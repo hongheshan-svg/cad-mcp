@@ -249,3 +249,18 @@ def test_short_dim_text_side_reaches_cad():
     assert sw.args["pos"][0] == tx and sw.args["pos"][1] == d.extra["sheet_pos"][1]
     cr = [o for o in CD.tk_detail_ops(plan) if o.args.get("p1")]  # Creo TOOLKIT 逐项路径
     assert any(o.args["at"] == CD._xy((tx, d.extra["sheet_pos"][1])) for o in cr)
+
+
+def test_thin_plate_thickness_text_outside_reaches_cad():
+    """板厚 3 的竖直总体尺寸写不进两界线之间：规划层记 text_y（下端界线之外，同预览），SW / Creo 放置点用它。"""
+    from cadmcp.adapters.creo import drawing as CD
+    from cadmcp.adapters.solidworks import compile as SW
+    spec = json.loads('{"name": "T1", "part_no": "T-1", "title": "薄板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 80}, "thickness": 3}, "features": [{"feature": "hole", "name": "H", "type": "simple", "size": 8, "positions": [[-40, 0], [40, 0]]}]}')
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    d = next(d for d in plan.dims if d.kind == "linear" and d.view == "front" and d.axis == "z")
+    ys = sorted(q[1] for q in d.extra["sheet_pts"])
+    assert d.extra["text_y"] < ys[0]
+    sw = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.op == "overall_dimension" and o.args["ref"] == d.ref)
+    assert tuple(sw.args["pos"]) == (d.extra["sheet_pos"][0], d.extra["text_y"])
+    assert any(o.args.get("at") == CD._xy((d.extra["sheet_pos"][0], d.extra["text_y"])) for o in CD.tk_detail_ops(plan))

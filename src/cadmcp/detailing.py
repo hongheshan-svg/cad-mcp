@@ -880,11 +880,11 @@ def notes_origin(plan: "DrawingPlan") -> tuple[float, float]:
 
 def dim_text_pos(ex: dict | None):
     """尺寸文字的放置点（图纸 mm）：规划层挪过数字（extra["text_x"]，避让/写到界线外）时 x 用 text_x，
-    y 仍是尺寸线所在行；否则就是 sheet_pos。CAD 端 AddDimension2 / Creo 尺寸放置点用它，与预览一致。"""
+    y 仍是尺寸线所在行（竖直尺寸同理用 text_y）；否则就是 sheet_pos。CAD 端 AddDimension2 / Creo 尺寸放置点用它，与预览一致。"""
     ex = ex or {}
     sp = ex.get("sheet_pos")
-    if isinstance(sp, (tuple, list)) and len(sp) == 2 and ex.get("text_x") is not None:
-        return (ex["text_x"], sp[1])
+    if isinstance(sp, (tuple, list)) and len(sp) == 2 and (ex.get("text_x") is not None or ex.get("text_y") is not None):
+        return (ex.get("text_x", sp[0]), ex.get("text_y", sp[1]))  # 竖直尺寸：text_y 为数字沿尺寸线的位置
     return sp
 
 
@@ -4681,6 +4681,11 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
             else:
                 continue
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": pos, "orient": orient}
+            tw = text_width(d.text, 3.5)  # 太窄（板厚等）写不进两界线之间：数字放到界线外（与 render_svg 同规则）
+            if orient == "h" and tw > abs(x1 - x0) - 1:
+                d.extra["text_x"] = round(max(x0, x1) + 1.5 + tw / 2, 2)
+            elif orient == "v" and tw > abs(y1 - y0) - 1:
+                d.extra["text_y"] = round(min(y0, y1) - 1.5 - tw / 2, 2)
 
 
 def local_section_sheet(plan: "DrawingPlan", s) -> dict[str, Any] | None:
