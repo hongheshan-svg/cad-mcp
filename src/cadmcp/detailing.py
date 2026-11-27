@@ -1759,10 +1759,14 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                                     (sz0, f["z0"])))
     top = [d for d in dims if d.view == "front" and d.kind == "linear" and d.axis == "z"
            and not d.ref.startswith(("step", "overall"))]
-    for d in top:  # 横孔定位尺寸与上方其它尺寸重叠：放到轮廓与尺寸行之间的低一道
-        if d.ref.startswith(("XH", "BORE")) and any(o is not d and min(d.at) < max(o.at) - 1e-6 and min(o.at) < max(d.at) - 1e-6
-                                          and not (o.extra or {}).get("track") for o in top):
-            d.extra = {**(d.extra or {}), "track": 1}
+    def _ovl(a_, b_):
+        return min(a_.at) < max(b_.at) - 1e-6 and min(b_.at) < max(a_.at) - 1e-6
+    for d in top:  # 横孔定位/孔深尺寸与上方其它尺寸重叠：放到轮廓与尺寸行之间的低一道；低一道也重叠时再低一道（不共线）
+        if d.ref.startswith(("XH", "BORE")) and any(o is not d and _ovl(d, o) and not (o.extra or {}).get("track") for o in top):
+            tr_ = 1
+            while tr_ < 2 and any(o is not d and _ovl(d, o) and (o.extra or {}).get("track") == tr_ for o in top):
+                tr_ += 1
+            d.extra = {**(d.extra or {}), "track": tr_}
 
     def _tspan(o):  # 同一行尺寸数字的轴向占位（模型 z）：放得下居中，放不下按整段
         a_, b_ = sorted(o.at)
@@ -3440,7 +3444,10 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
         text_ok = text_ok and all(abs(z - x) * sc >= 3.0 for x in shoulders)  # 线（及内孔基准符号）不与轴肩线重合
         want = 7.0 if (z1 - z0) * sc >= 16 else 4.0  # 短孔（沉孔）只求不压线
         free_ = not any(a_ < z < b_ for a_, b_ in fspans)
-        return (text_ok, free_, min(clear, want), min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
+        # 横孔（孔圆、引线从孔圆右上引出）：线与左侧竖写文字都不压
+        xh_ok = all(not (h["z"] - h["hole"] / 2 - 1.0 / sc < z + 0.3 / sc and z - 4.7 / sc < h["z"] + h["hole"] / 2 + 3.0 / sc)
+                    for h in p.cross_holes)
+        return (text_ok, min(clear, want), xh_ok, free_, min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
     return max(cands, key=key)
 
 
