@@ -24,7 +24,7 @@ METRIC = {
 def _row(size: str):
     key = size.upper()
     if key not in METRIC:
-        raise CadError(SPEC_INVALID, f"unknown metric size {size!r}", hint=f"supported: {sorted(METRIC)}")
+        raise CadError(SPEC_INVALID, f"未知公制规格 {size!r}", hint=f"支持：{sorted(METRIC)}")
     return METRIC[key]
 
 
@@ -100,14 +100,14 @@ def keyway(d: float) -> tuple[float, float, float]:
     for lo, hi, b, h, t1 in KEYWAY:
         if lo < d <= hi:
             return float(b), float(h), t1
-    raise CadError(SPEC_INVALID, f"no GB/T 1095 keyway for shaft Φ{d:g}", hint="轴径范围 6–110；或显式给出 width/depth")
+    raise CadError(SPEC_INVALID, f"GB/T 1095 无轴径 Φ{d:g} 的平键键槽", hint="轴径范围 6–110；或显式给出 width/depth")
 
 
 def circlip_groove(d: float) -> tuple[float, float]:
     key = round(d)
     if abs(d - key) > 1e-6 or key not in CIRCLIP_GROOVE:
         near = sorted(CIRCLIP_GROOVE, key=lambda k: abs(k - d))[:2]
-        raise CadError(SPEC_INVALID, f"no GB/T 894 circlip groove for shaft Φ{d:g}",
+        raise CadError(SPEC_INVALID, f"GB/T 894 无轴径 Φ{d:g} 的挡圈槽",
                        hint=f"表中最近的轴径：{sorted(near)}；或在 groove 里同时给出 width/depth（按所选挡圈的槽宽、槽深）")
     return CIRCLIP_GROOVE[key]
 
@@ -123,13 +123,13 @@ def ext_thread(size: str) -> tuple[float, float, float, bool]:
     import re
     m = re.fullmatch(r"\s*M\s*(\d+(?:\.\d+)?)\s*(?:[x×X*]\s*(\d+(?:\.\d+)?))?\s*", size)
     if not m:
-        raise CadError(SPEC_INVALID, f"thread size {size!r}: expected like M20 or M20x1.5")
+        raise CadError(SPEC_INVALID, f"螺纹规格 {size!r} 格式不对，应如 M20 或 M20x1.5")
     d = float(m.group(1))
     if m.group(2):
         pitch, fine = float(m.group(2)), True
     else:
         if d not in COARSE_PITCH:
-            raise CadError(SPEC_INVALID, f"thread {size}: no coarse pitch for M{d:g}", hint="写明螺距，如 M{d:g}x1.5")
+            raise CadError(SPEC_INVALID, f"螺纹 {size}：M{d:g} 无粗牙螺距数据", hint="写明螺距，如 M{d:g}x1.5")
         pitch, fine = COARSE_PITCH[d], False
     return d, pitch, round(d - 1.0825 * pitch, 3), fine
 
