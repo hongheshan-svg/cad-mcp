@@ -1394,24 +1394,34 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     taken = [(v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2) for v in views[1:]]
     for k, (f, (ds_, rm_)) in enumerate(sorted(zip(dets, dgeo), key=lambda t: t[0]["z0"])):
         zc = (f["z0"] + f["z1"]) / 2
-        w = 2 * rm_ * ds_
         x0_ = shaft_sx(front, Ltot, zc)
 
-        def slide(sg):  # 向右（sg=1）或向左（−1）让开已放的断面/放大图
-            x_ = x0_
-            for _ in range(len(taken) + 1):
-                hit = [(a_, b_) for a_, b_ in taken if x_ - w / 2 - GAP / 2 < b_ and x_ + w / 2 + GAP / 2 > a_]
-                if not hit:
-                    break
-                x_ = (max(b_ for _, b_ in hit) + GAP / 2 + w / 2 + 1) if sg > 0 else (min(a_ for a_, _ in hit) - GAP / 2 - w / 2 - 1)
-            return x_
-        # 右移出图框（含上方标号/比例、右侧 12 mm 尺寸带）则改向左；两边都不行取出界少的
-        opts = [slide(1), slide(-1)]
-        xc_ = min(max(x0_, MARGIN + 12 + w / 2), W - MARGIN - 12 - w / 2)  # 部位贴近图框：夹回框内
-        if not any(xc_ - w / 2 - GAP / 2 < b_ and xc_ + w / 2 + GAP / 2 > a_ for a_, b_ in taken):
-            opts.append(xc_)
-        over = lambda x_: max(0.0, x_ + w / 2 + 12 - (W - MARGIN), (MARGIN + 12) - (x_ - w / 2))  # noqa: E731
-        x = min(opts, key=lambda x_: (over(x_) > 0, over(x_), abs(x_ - x0_)))
+        def place_(w):
+            def slide(sg):  # 向右（sg=1）或向左（−1）让开已放的断面/放大图
+                x_ = x0_
+                for _ in range(len(taken) + 1):
+                    hit = [(a_, b_) for a_, b_ in taken if x_ - w / 2 - GAP / 2 < b_ and x_ + w / 2 + GAP / 2 > a_]
+                    if not hit:
+                        break
+                    x_ = (max(b_ for _, b_ in hit) + GAP / 2 + w / 2 + 1) if sg > 0 \
+                        else (min(a_ for a_, _ in hit) - GAP / 2 - w / 2 - 1)
+                return x_
+            # 右移出图框（含上方标号/比例、右侧 12 mm 尺寸带）则改向左；两边都不行取出界少的
+            opts = [slide(1), slide(-1)]
+            xc_ = min(max(x0_, MARGIN + 12 + w / 2), W - MARGIN - 12 - w / 2)  # 部位贴近图框：夹回框内
+            if not any(xc_ - w / 2 - GAP / 2 < b_ and xc_ + w / 2 + GAP / 2 > a_ for a_, b_ in taken):
+                opts.append(xc_)
+            over = lambda x_: max(0.0, x_ + w / 2 + 12 - (W - MARGIN), (MARGIN + 12) - (x_ - w / 2))  # noqa: E731
+            x_ = min(opts, key=lambda x_: (over(x_) > 0, over(x_), abs(x_ - x0_)))
+            return x_, over(x_)
+        x, ov_ = place_(2 * rm_ * ds_)
+        for ds2 in (5.0, 4.0, 2.5, 2.0):  # 放不下：放大图比例逐档降低（GB/T 14690 优选放大比例）
+            if ov_ <= 0 or ds2 >= ds_:
+                continue
+            x2, ov2 = place_(2 * rm_ * ds2)
+            if ov2 < ov_:
+                ds_, x, ov_ = ds2, x2, ov2
+        w = 2 * rm_ * ds_
         taken.append((x - w / 2, x + w / 2))
         views.append(ViewPlan("detail", ds_, (w, w), (x, cy_sec), label=ROMAN[k], target=f["name"],
                               detail={"zc": zc, "yc": f["d"] / 2, "rm": rm_}))
