@@ -749,10 +749,10 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     if spec.dimensions != "none":
         pitch_dim_sheet(plan, p)
         ordinate_dim_sheet(plan, p)  # 坐标值位置先定，引出标注避开它们
+        flat_dim_sheet(plan, p)  # 展开图尺寸/折弯说明先定，引出标注避开它们
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
-        flat_dim_sheet(plan, p)
     return plan
 
 
@@ -2491,6 +2491,18 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
             hard.append((min(x1_, x2_, px_ - 4), min(y1_, y2_, py_) - 1, max(x1_, x2_, px_ + 4), max(y1_, y2_, py_) + 5)
                         if ex["orient"] == "h" else
                         (min(x1_, x2_, px_) - 5, min(y1_, y2_, py_ - 4), max(x1_, x2_, px_) + 1, max(y1_, y2_, py_ + 4)))
+    for d in plan.dims:  # 展开图尺寸（尺寸线、界线、数字）与折弯说明
+        ex = d.extra or {}
+        if d.view != "flat_pattern":
+            continue
+        if ex.get("sheet_pts") and ex.get("sheet_pos") and ex.get("orient"):
+            (x1_, y1_), (x2_, y2_) = ex["sheet_pts"]
+            px_, py_ = ex["sheet_pos"]
+            hard.append((min(x1_, x2_, px_ - 4), min(y1_, y2_, py_) - 1, max(x1_, x2_, px_ + 4), max(y1_, y2_, py_) + 5)
+                        if ex["orient"] == "h" else
+                        (min(x1_, x2_, px_) - 5, min(y1_, y2_, py_ - 4), max(x1_, x2_, px_) + 1, max(y1_, y2_, py_ + 4)))
+        if ex.get("box"):
+            hard.append(tuple(ex["box"]))
     for d in plan.dims:  # 精度符号大致占位
         if d.kind in ("datum", "gtol", "roughness") and d.at is not None and d.view in vmap \
                 and (d.extra or {}).get("attach") != "callout" \
@@ -2536,6 +2548,13 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     ha_, va_ = VIEW_AXES[v.type]
                     pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
                     feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
+    if part is not None and part.bends and part.thickness:  # 钣金：各视图外轮廓内侧一个板厚处是折边壁线，文字不压
+        for v in vmap.values():
+            cx, cy = v.origin_on_sheet
+            w, h = v.size_mm
+            t_ = part.thickness * v.scale + 0.8
+            x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+            hard += [(x0, y0, x0 + t_, y1), (x1 - t_, y0, x1, y1), (x0, y0, x1, y0 + t_), (x0, y1 - t_, x1, y1)]
     for s in plan.sections:  # 全剖/阶梯剖视图满布剖面线：文字压在上面须断开剖面线，尽量放到视图外
         if s.kind != "local" and s.view in vmap:
             v = vmap[s.view]
