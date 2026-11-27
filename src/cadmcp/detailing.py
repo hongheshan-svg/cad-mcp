@@ -1374,7 +1374,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             if not _shaft_hits_notes(p4):
                 plan = p4
                 break
-    if getattr(plan, "_xh_bad", False) and spec.sheet in (None, "auto") and plan.sheet == "A4":
+    if getattr(plan, "_xh_bad", False) and spec.sheet in (None, "auto") and plan.sheet == "A4":  # 引出标注无处可放
         p6 = _plan_shaft(spec.model_copy(update={"sheet": "A3"}), p, today, max_scale=plan.scale)
         if not getattr(p6, "_xh_bad", False) and not _shaft_hits_notes(p6) and getattr(p6, "_lift_need", 0.0) <= 0:
             plan = p6
@@ -4285,6 +4285,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 o.extra = {**o.extra, "label": nl}
             elif bx[3] >= H - MARGIN - 2:  # 上方没地方抬：记下缺口，由 plan_shaft_drawing 下移视图 / 换 A3 重排
                 plan._lift_need = max(getattr(plan, "_lift_need", 0.0), bx[3] - (H - MARGIN - 2) + 1)
+            else:  # 抬上去也压字/穿线：A4 时由 plan_shaft_drawing 换 A3 重排（横向更宽，标注能往外让）
+                plan._xh_bad = True
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:
