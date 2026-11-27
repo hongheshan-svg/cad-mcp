@@ -908,6 +908,12 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
             xs_, ys_ = [q[0] for q in pts], [q[1] for q in pts]
             obstacles.append((min(xs_) - 1, min(ys_) - 1, max(xs_) + 1, max(ys_) + 1))
         sp = ex.get("sheet_pos")
+        if ex.get("orient") == "v" and ex.get("over_at") is not None and len(pts) >= 2 and d.text:
+            # 伸出轮廓的竖写直径文字（轴类）：文字从 over_at 起竖向占 tw，直径线延长到文字处
+            tw_ = text_width(d.text, 3.5)
+            xl_, oa_ = pts[0][0], ex["over_at"]
+            ys_ = [q[1] for q in pts] + [oa_, oa_ + tw_]
+            obstacles.append((xl_ - 5.5, min(ys_) - 1, xl_ + 5.5, max(ys_) + 1))
         if isinstance(sp, (tuple, list)) and len(sp) == 2 and d.text:
             tw_ = text_width(d.text, 3.5)
             obstacles.append((sp[0] - tw_ / 2 - 1, sp[1] - 1.5, sp[0] + tw_ / 2 + 1, sp[1] + 4.5))
@@ -4178,8 +4184,10 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if eo.get("orient") == "h" and "sheet_pts" in eo and "sheet_pos" in eo:
             xa, xb = sorted(q[0] for q in eo["sheet_pts"])
             px, py = eo["sheet_pos"]
-            tx = eo.get("text_x", px)
             tw_ = text_width(o.text, 3.5)
+            tx = eo.get("text_x", px)
+            if "text_x" not in eo and tw_ > xb - xa - 1:  # 放不下又没定位置：预览默认写在右侧界线外（render_shaft._hdim）
+                tx = xb + 1.5 + tw_ / 2
             obst.append((min(xa, tx - tw_ / 2), py - 0.6, max(xb, tx + tw_ / 2), py + 0.6))  # 尺寸线
             obst.append((tx - tw_ / 2, py, tx + tw_ / 2, py + 4.2))  # 数字
         lb = eo.get("label")
