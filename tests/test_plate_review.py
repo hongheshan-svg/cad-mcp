@@ -261,3 +261,15 @@ def test_sw_boss_sketch_on_own_base():
     sk = {o.args["sketch"]: o.args for o in ops if o.op == "sketch_on_face"}
     assert sk["SK_B1"]["plane_coord"] == 15 and sk["SK_B2"]["plane_coord"] == 15
     assert sk["SK_B2"]["ray_from"][:2] == (50, 20)
+
+
+def test_boss_overhang_and_pocket_straddle():
+    b = lambda c: {"feature": "boss", "name": "B", "height": 10,  # noqa: E731
+                   "profile": {"shape": "circle", "diameter": 30, "center": c}}
+    pk = lambda c: {"feature": "pocket", "name": "PK", "depth": 4,  # noqa: E731
+                    "profile": {"shape": "rect", "width": 20, "height": 20, "center": c, "corner_radius": 4}}
+    assert ("R015", "B", "error") in _rules([b([40, 0])], t=15)  # 伸出 100×80 板的右边
+    assert not any(r[0] == "R015" for r in _rules([b([0, 0])], t=15))
+    assert ("R014", "PK", "error") in _rules([b([0, 0]), pk([15, 0])], t=15)  # 型腔跨凸台边
+    assert not any(r[0] == "R014" for r in _rules([b([0, 0]), pk([0, 0])], t=15))  # 整个在凸台顶内
+    assert not any(r[0] == "R014" for r in _rules([b([-25, 0]), pk([30, 0])], t=15))  # 整个在板面

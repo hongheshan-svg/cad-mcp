@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .ir.resolve import ResolvedPart, dist_to_outline, face_depth, face_outline
+from .ir.resolve import ResolvedPart, dist_to_outline, face_depth, face_outline, point_in_polygon
 
 
 def _pt_seg(p, a, b) -> float:
@@ -167,6 +167,24 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                     out.append(_f("R014", "error", tgt,
                                   f"孔所在处表面在 {surf:g}，孔深 {h.depth:g} 却从零件最外表面 {start:g} 起算，{what}",
                                   f"孔改从所在表面起算：加 at: {surf:g}（同一组孔须在同一表面上，否则拆成两组）"))
+    # R014（型腔）：有凸台时型腔跨凸台边（一部分在凸台顶、一部分在板面）——起算面不唯一
+    tops_ = [b for b in p.bosses if b["face"] == "top" and b.get("at") is None]
+    for pk in p.pockets:
+        if pk["face"] == "top" and pk.get("at") is None and tops_ and abs(p.bbox.zmax - max(
+                b["z0"] + b["height"] for b in tops_)) < 1e-9:
+            poly = list(pk["profile"].outline)
+            ins = [any(dist_to_outline(q, list(b["profile"].outline)) > 0 for b in tops_) for q in poly]
+            if any(ins) != all(ins) or any(point_in_polygon(c, poly) for b in tops_ for c in b["profile"].outline) \
+                    and not all(ins):
+                out.append(_f("R014", "error", pk["name"], "型腔跨凸台边（一部分在凸台顶、一部分在板面），起算面不唯一",
+                              "型腔整个放在凸台顶面内或凸台外，或写 at 指定起算面"))
+    # R015 凸台须立在板上：凸台轮廓伸出板外（悬空）
+    if p.base_type == "extrude" and p.profile is not None:
+        outer = list(p.profile.outline)
+        for b in p.bosses:
+            if b["face"] == "top" and any(dist_to_outline(q, outer) < -1e-6 for q in b["profile"].outline):
+                out.append(_f("R015", "error", b["name"], "凸台轮廓伸出板外（悬空部分无法加工/铸出）",
+                              "移动凸台或减小凸台尺寸，使其整个落在板面内"))
     # R009 深孔：孔深/钻径 > 10 普通麻花钻难加工（排屑、偏斜）
     for h in p.holes:
         if h.slot:
