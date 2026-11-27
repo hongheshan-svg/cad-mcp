@@ -878,6 +878,52 @@ def notes_origin(plan: "DrawingPlan") -> tuple[float, float]:
     return (notes_x(plan), 5 + 56 + 11)
 
 
+def gtol_frame_pos(ex: dict | None):
+    """几何公差框格的放置点（图纸 mm）：sheet_pos 是引线竖段所在 x 与框格行；框格右端出图框时规划层记 frame_dx，
+    框格整体左移（引线不动，仍从框格底边引出）。CAD 端框格位置用它，与预览一致。"""
+    ex = ex or {}
+    sp = ex.get("sheet_pos")
+    if isinstance(sp, (tuple, list)) and len(sp) == 2 and ex.get("frame_dx"):
+        return (round(sp[0] - ex["frame_dx"], 2), sp[1])
+    return sp
+
+
+def _shaft_gtol_frame_dx(plan: "DrawingPlan") -> None:
+    """轴类主视图上方框格（shaft_gtol_layout 在模型坐标里排，不知道图幅）：右端超出图框时整体左移，
+    框格上方的 Ra 符号随之左移。左移量记 extra["frame_dx"]。"""
+    from .render_gdt import _widths
+    lim = plan.sheet_size[0] - 7
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "front" or d.kind != "gtol" or "sheet_pos" not in ex or "cells" not in ex or ex.get("attach"):
+            continue
+        lx = ex["elbow"]["x_leader"] if ex.get("elbow") else ex["sheet_pos"][0]
+        right = lx - 3.5 + sum(_widths(ex["cells"]))
+        if right <= lim:
+            continue
+        dx = round(min(right - lim, sum(_widths(ex["cells"])) - 7.0), 2)  # 引线至少留在框格内 3.5 mm
+        y_ = ex["sheet_pos"][1]
+        nb = (lx - 3.5 - dx, right - dx)
+        clash = False
+        for o in plan.dims:  # 左移后压到同一行别的框格：不移（留给 plan_shaft_drawing 换大图幅）
+            eo = o.extra or {}
+            if o is d or o.view != "front" or o.kind != "gtol" or "sheet_pos" not in eo or "cells" not in eo:
+                continue
+            if abs(eo["sheet_pos"][1] - y_) < 1:
+                ox = (eo["elbow"]["x_leader"] if eo.get("elbow") else eo["sheet_pos"][0]) - 3.5 - eo.get("frame_dx", 0)
+                if ox < nb[1] + 1 and nb[0] < ox + sum(_widths(eo["cells"])) + 1:
+                    clash = True
+        if clash:
+            plan._xh_bad = True  # A4 时由 plan_shaft_drawing 换 A3 重排
+            continue
+        d.extra = {**ex, "frame_dx": dx}
+        for r in plan.dims:  # 框格上方的 Ra（on_frame = 该框格的 key）
+            er = r.extra or {}
+            if r.kind == "roughness" and er.get("on_frame") == d.ref[5:] and "sheet_at" in er:
+                at = (round(er["sheet_at"][0] - dx, 2), er["sheet_at"][1])
+                r.extra = {**er, "sheet_at": at, "sheet_pos": at}
+
+
 def dim_text_pos(ex: dict | None):
     """尺寸文字的放置点（图纸 mm）：规划层挪过数字（extra["text_x"]，避让/写到界线外）时 x 用 text_x，
     y 仍是尺寸线所在行（竖直尺寸同理用 text_y）；否则就是 sheet_pos。CAD 端 AddDimension2 / Creo 尺寸放置点用它，与预览一致。"""
@@ -1738,6 +1784,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                        layout="shaft", revisions=list(spec.revisions))
     plan._sec_z = [(f["z0"] + f["z1"]) / 2 for f in kws]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
     precision_sheet(plan, p)
+    _shaft_gtol_frame_dx(plan)
     if spec.dimensions != "none":
         shaft_dim_sheet(plan, p)
     if p.gear:  # 齿轮轴：参数表（右上角）
@@ -3596,6 +3643,8 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
     zones = [((z0 + z1) / 2, (text_width(f"{z1 - z0:g}", 3.5) / 2 + 2.0) / sc)]
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
               for f in p.shaft_features if f["step"] == i and f["kind"] == "keyway"]
+    if p.geotols:  # 几何公差框格的竖引线（从框格行下到轮廓 / 轴肩水平引线）：伸出轮廓的竖写文字别压上去
+        zones += [(zl, 1.0 / sc) for zl, _ in shaft_gtol_layout(p, sc).values() if z0 - 5 / sc <= zl <= z1 + 5 / sc]
 
     # 环槽定位尺寸（轴肩 → 槽）：伸出的直径线会竖穿其数字；线落在两界线之间时，一侧要留得下数字
     gpos = []

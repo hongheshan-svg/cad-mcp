@@ -36,8 +36,9 @@ def fcf_box(s, x0, y0, cells):
         x += w
 
 
-def fcf(s, ax, ay, n, cells, reach: float = 10.0, arrow: bool = True):
-    """几何公差框格：引线箭头指向被测要素，框格放在外法向一侧（距离 reach）。arrow=False：折线引线的竖段（箭头另画）。"""
+def fcf(s, ax, ay, n, cells, reach: float = 10.0, arrow: bool = True, dx: float = 0.0):
+    """几何公差框格：引线箭头指向被测要素，框格放在外法向一侧（距离 reach）。arrow=False：折线引线的竖段（箭头另画）。
+    dx：框格整体左移量（规划层 frame_dx，右端出图框时）。"""
     nx, ny = n
     ex, ey = ax + nx * reach, ay + ny * reach
     s.line(ax, ay, ex, ey, THIN)
@@ -48,7 +49,7 @@ def fcf(s, ax, ay, n, cells, reach: float = 10.0, arrow: bool = True):
     widths = _widths(cells)
     total = sum(widths)
     if ny != 0:
-        x0, y0 = ex - 3.5, ey + (0 if ny > 0 else -CELL_H)
+        x0, y0 = ex - 3.5 - dx, ey + (0 if ny > 0 else -CELL_H)
     else:
         x0, y0 = (ex if nx > 0 else ex - total), ey - CELL_H / 2
     x = x0

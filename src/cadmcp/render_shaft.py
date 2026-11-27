@@ -460,10 +460,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 e = d.extra["elbow"]
                 s.line(e["x_leader"], e["y"], e["x_face"], e["y"], THIN)
                 _arrow(s, e["x_face"], e["y"], e["dir"], 0)
-                render_gdt.fcf(s, e["x_leader"], e["y"], (0, 1), d.extra["cells"], reach=row - e["y"], arrow=False)
+                render_gdt.fcf(s, e["x_leader"], e["y"], (0, 1), d.extra["cells"], reach=row - e["y"], arrow=False,
+                               dx=d.extra.get("frame_dx", 0.0))
             elif d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
                 x_ = d.extra["sheet_pos"][0]
-                render_gdt.fcf(s, x_, py, (0, 1), d.extra["cells"], reach=row - py)
+                render_gdt.fcf(s, x_, py, (0, 1), d.extra["cells"], reach=row - py, dx=d.extra.get("frame_dx", 0.0))
             elif d.kind == "roughness" and d.extra.get("on_frame"):  # 标在框格上方（GB/T 131）
                 render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             else:

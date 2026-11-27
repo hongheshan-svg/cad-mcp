@@ -5,7 +5,7 @@
 ## 开发
 - `uv run pytest -q` —— 全部测试在 mock 目标上运行，不需要 CAD。
 - `uv run cadmcp doctor` —— 查看可用目标。
-- 出图排布随机回归：`uv run python scripts/fuzz_{plate,shaft,sheet,weld,asm}.py <种子> <个数>`，
+- 出图排布随机回归：`uv run python scripts/fuzz_{plate,shaft,sheet,weld,asm}.py <种子> <个数>`（轴类加 `EXTRA=1` 覆盖轴端螺孔/内孔/自动精度），
   统计线压字/字压字；修好的样例加进 `tests/test_fuzz_layout.py`。
 - 真实 CAD 适配器只能在 Windows 上运行；实机测试步骤见 `docs/WINDOWS_TEST.md`。
 - 分层：`ir/`（spec 与解析，CAD 无关）→ `rules.py` / `detailing.py`（规则与出图规划，CAD 无关）→

@@ -37,6 +37,24 @@ for n in range(N):
         i = rng.randrange(k)
         base["cross_holes"] = [{"step": i, "diameter": rng.choice([4, 5, 6, 8])}]
     spec = {"name": f"S{n}", "part_no": f"S-{n}", "title": "测试轴", "material": "45#", "base": base, "features": feats}
+    import os
+    if os.environ.get("EXTRA"):  # 扩展覆盖（独立随机流，不影响默认种子）：轴端螺孔、内孔（空心轴/套）、自动精度
+        r2 = random.Random(int(sys.argv[1]) * 7919 + n)
+        if r2.random() < .4:
+            dend = ds[-1] if r2.random() < .5 else ds[0]
+            side = "end" if dend == ds[-1] else "start"
+            m = max((x for x in (5, 6, 8, 10, 12, 16) if x <= dend * 0.4), default=None)
+            if m and not any(f["feature"] == "thread" and f["step"] in (0, k - 1) for f in feats):
+                base["end_holes"] = [{"side": side, "size": f"M{m}", "depth": round(1.5 * m)}]
+        elif r2.random() < .35:
+            dmin = min(ds)
+            bd = round(dmin * r2.choice([.3, .4, .5]))
+            if bd >= 6:
+                base["bores"] = [{"diameter": bd, **({} if r2.random() < .5 else {"length": round(sum(st["length"] for st in steps) * .4)}),
+                                  **({"tolerance": "H7"} if r2.random() < .4 else {})}]
+                base.pop("center_holes", None)
+        if r2.random() < .3:
+            spec["auto_precision"] = True
     try:
         p = resolve_part(PartSpec.model_validate(spec))
         from cadmcp import rules

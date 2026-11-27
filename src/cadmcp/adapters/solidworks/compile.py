@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from ...detailing import dim_text_pos
+from ...detailing import dim_text_pos, gtol_frame_pos
 from ...errors import CAPABILITY_UNSUPPORTED, CadError
 
 from ...ir.assembly_resolve import euler_xyz, identity, matmul, ref_frame, same_frame
@@ -723,7 +723,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ex = d.extra or {}
         text = {"datum": f"基准 {d.text}", "gtol": d.text.replace(" | ", " "), "roughness": f"√{d.text}"}[d.kind]
         common = {"view": f"section:{ex['section']}" if ex.get("section") else d.view, "ref": d.ref,
-                  "at": ex.get("sheet_at"), "pos": ex.get("sheet_pos"), "fallback_text": text, "at_model": d.at}
+                  "at": ex.get("sheet_at"), "pos": gtol_frame_pos(ex) if d.kind == "gtol" else ex.get("sheet_pos"),
+                  "fallback_text": text, "at_model": d.at}
         if d.kind == "datum":
             ops.append(NativeOp("datum_tag", {**common, "label": d.text},
                                 "选中边线 → InsertDatumTag2 → SetLabel → 放到外法向位置"))

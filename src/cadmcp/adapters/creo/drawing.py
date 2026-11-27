@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from ...detailing import BOM_COLS, bom_display, dim_text_pos
+from ...detailing import BOM_COLS, bom_display, dim_text_pos, gtol_frame_pos
 from ..native import NativeOp
 
 # 规划视图类型 → Creo 模型命名视图（可由配置 view_map 覆盖）
@@ -366,7 +366,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
             if "sheet_at" not in ex or "sheet_pos" not in ex:
                 skip(f"{d.kind} 符号（无图纸坐标）")
                 continue
-            at, pos = _xy(ex["sheet_at"]), _xy(ex["sheet_pos"])
+            at, pos = _xy(ex["sheet_at"]), _xy(gtol_frame_pos(ex) if d.kind == "gtol" else ex["sheet_pos"])
             if d.kind == "datum":
                 ops.append(NativeOp("tk.drw.datum", {"drawing": D, "view": vw, "at": at, "pos": pos, "label": d.text}))
             elif d.kind == "gtol":
