@@ -579,3 +579,7 @@ Creo：`feat.round` edges 同样给点坐标。
   现在都在规划层定好。SW `AddDimension2` 与 Creo TOOLKIT 的放置点 x 取 `text_x`、y 取 `sheet_pos` 的尺寸线行
   （`detailing.dim_text_pos`）。核对：短尺寸（如键槽到轴肩 3.5）数字是否与预览同侧、尺寸线是否延长到数字下；
   SW 若把文字拉回两箭头之间，记下版本与现象。Creo 扩展路径（`ext.cadmcp_show_dims`）收到的 `extra` 含 `text_x`，扩展须同样使用。
+- 轴/套主视图直径尺寸放置点：`sheet_pos` 的 x 现在就是规划层选定的直径线位置（`shaft_dia_z` / `bore_dia_place`，
+  已避开键槽、横孔、轴肩），原先是 x + 6，会让原生直径线右移 6 mm、可能压到键槽。核对：SW/Creo 直径尺寸线与预览同一位置；
+  文字在线左侧（GB 竖直尺寸文字在线左、字头朝左）。预览文字写在线右侧的段（`shaft_dia_place` 返回 right，左侧有键槽/轴肩线）
+  原生图暂未翻转，记下哪些段文字压线。

@@ -3724,13 +3724,13 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             x = X(bore_dia_place(p, k, sc))
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
-                       "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
+                       "sheet_pos": (round(x, 2), round(cy, 2)), "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定），同预览
         elif d.kind == "diameter" and d.ref.startswith("step"):
             i = int(d.ref[4:].split("_")[0])
             x = X(shaft_dia_z(p, i, sc))
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
-                       "sheet_pos": (round(x + 6, 2), round(cy, 2)), "orient": "v"}
+                       "sheet_pos": (round(x, 2), round(cy, 2)), "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定），同预览
         elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")):
             # 中心孔：从端面轴线处向外下方引出，文字沿水平线向外（左端向左、右端向右）；保留/不允许保留符号在文字前
             z, _ = d.at
