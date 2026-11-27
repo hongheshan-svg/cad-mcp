@@ -3187,7 +3187,18 @@ def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):
         best = min(cands, key=lambda z: (sum(z - 3.5 / sc <= x <= z + 22 / sc for x in vlines), abs(z - (z0 + z1) / 2)))
         if not any(best - 3.5 / sc <= x <= best + 22 / sc for x in vlines):  # √ 左笔画伸出约 2.4 mm
             return "front", (best, -rb), (0, 1)
-    zr = z0 + 0.5 * (z1 - z0)
+    # 向下引出（零件下方、链式尺寸行之前）：避开孔径尺寸线上的基准符号、外圆直径线、轴肩线（链式尺寸界线）
+    shoulders = [p.step_z(j)[1] for j in range(len(p.shaft_steps) - 1)] + [0.0, p.bbox.zmax - p.bbox.zmin]  # 含两端面
+    obs = vlines + shoulders + [zd - 4 / sc, zd + 4 / sc]
+    nums = []  # 下方链式长度数字（各段中点）
+    for j in range(len(p.shaft_steps)):
+        a_, b_ = p.step_z(j)
+        hw = (text_width(f"({b_ - a_:g})", 3.5) / 2 + 1) / sc
+        nums.append(((a_ + b_) / 2 - hw, (a_ + b_) / 2 + hw))
+    cands = [z0 + (z1 - z0) * t / 20 for t in range(1, 20)]
+    zr = min(cands, key=lambda z: (sum(z - 3.5 / sc <= x <= z + 22 / sc for x in obs)
+                                   + sum(a_ < z + 22 / sc and z - 3.5 / sc < b_ for a_, b_ in nums),
+                                   abs(z - (z0 + z1) / 2)))
     return "front", (zr, -rb), (0, -1), {"reach": (r_out(zr) - rb) * sc + 6}
 
 
@@ -3229,9 +3240,12 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float) -> float:
 
     steps_ = bore_steps(p)
 
+    shoulders = [p.step_z(j)[1] for j in range(len(p.shaft_steps) - 1)]  # 外圆轴肩线（链式尺寸界线从这里引出）
+
     def key(z):
         clear = min([abs(z - c) * sc for c in outer + others] or [1e9])
         text_ok = all(not (z - 4.7 / sc <= x <= z + 0.3 / sc) for x in steps_ + outer + others)  # 文字竖写在线左侧
+        text_ok = text_ok and all(abs(z - x) * sc >= 3.0 for x in shoulders)  # 线（及内孔基准符号）不与轴肩线重合
         want = 7.0 if (z1 - z0) * sc >= 16 else 4.0  # 短孔（沉孔）只求不压线
         return (text_ok, min(clear, want), min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
     return max(cands, key=key)
