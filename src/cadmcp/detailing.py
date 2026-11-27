@@ -1338,7 +1338,8 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     for j_, (L_, d_) in enumerate(p.shaft_steps):
         z_ = p.step_z(j_)
         room_ = shaft_text_room(p, (z_[0] + z_[1]) / 2, d_) * scale - 2
-        if text_width(_shaft_dia_label(p, j_), 3.5) > room_ >= text_width(_shaft_dia_label(p, j_, False), 3.5):
+        # 带偏差放不进：只注代号（代号放得下就不伸出轮廓；放不下也比带偏差伸出得短）
+        if text_width(_shaft_dia_label(p, j_), 3.5) > room_:
             p._dia_code_only.add(j_)
     for j_ in range(len(p.shaft_steps)):  # 轮廓内找不到位置（键槽占满）、文字须伸出轮廓：伸出越短越好 → 只注代号
         if shaft_dia_blocked(p, j_, scale):
