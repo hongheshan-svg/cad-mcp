@@ -1522,8 +1522,12 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 if (d.extra or {}).get("pushed"):
                     xx = d.extra["sheet_pos"][0]
                 s.line(xx, vy0, xx, vy1)
-                s.line(vx0 - 2, vy0, xx - 1.5, vy0)
-                s.line(vx0 - 2, vy1, xx - 1.5, vy1)
+                if xx > max(vx0, vx1):  # 规划层改注到视图右侧
+                    s.line(max(vx0, vx1) + 2, vy0, xx + 1.5, vy0)
+                    s.line(max(vx0, vx1) + 2, vy1, xx + 1.5, vy1)
+                else:
+                    s.line(vx0 - 2, vy0, xx - 1.5, vy0)
+                    s.line(vx0 - 2, vy1, xx - 1.5, vy1)
                 tw_ = _text_w(d.text, 3.5)
                 if tw_ > abs(vy1 - vy0) - 1:  # 太窄（板厚等）：数字移到上界线之外，尺寸线延长到数字旁
                     yt_ = min(vy0, vy1)

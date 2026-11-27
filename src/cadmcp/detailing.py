@@ -1717,6 +1717,16 @@ def _push_overall_past_fits(plan: "DrawingPlan") -> None:
                 nx = min((b[0] for b in hits), default=px_) - 2
                 if hits and nx - 5 > MARGIN + 2:
                     d.extra = {**ex, "sheet_pos": (round(nx, 2), py_), "pushed": True}
+                elif hits:  # 左侧推不开（贴图框）：改注到视图右侧，在右侧配合文字之外
+                    cx_, cy_ = v.origin_on_sheet
+                    vw_, vh_ = v.size_mm
+                    ylo, yhi = min(ay_, by_), max(ay_, by_)
+                    rx = max([cx_ + vw_ / 2] + [b[2] for b in fits if b[1] < yhi and b[3] > ylo and b[0] > cx_]) + 8
+                    others_ = [(o.origin_on_sheet[0] - o.size_mm[0] / 2, o.origin_on_sheet[1] - o.size_mm[1] / 2,
+                                o.origin_on_sheet[0] + o.size_mm[0] / 2, o.origin_on_sheet[1] + o.size_mm[1] / 2)
+                               for o in plan.views if o is not v]
+                    if rx + 2 < W - MARGIN - 2 and not any(_box_hit((rx - 5, ylo, rx + 2, yhi), o) > 0 for o in others_):
+                        d.extra = {**ex, "sheet_pos": (round(rx, 2), py_), "pushed": True}
             else:
                 band = (min(ax_, bx_), py_ - 1.5, max(ax_, bx_), py_ + 5)
                 hits = [b for b in fits if _box_hit(b, band) > 0]
