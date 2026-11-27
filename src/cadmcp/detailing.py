@@ -3580,13 +3580,23 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
               for f in p.shaft_features if f["step"] == i and f["kind"] == "keyway"]
 
+    # 环槽定位尺寸（轴肩 → 槽）：伸出的直径线会竖穿其数字；线落在两界线之间时，一侧要留得下数字
+    gpos = []
+    for f in p.shaft_features:
+        if f["step"] == i and f["kind"] == "groove" and f.get("offset", 0) > 0:
+            lo_g = f["z0"] - f["offset"] if abs(f["z0"] - f["offset"] - z0) < 1e-6 else f["z1"]
+            gpos.append((lo_g, lo_g + f["offset"], (text_width(f"{f['offset']:g}", 3.5) + 2.0) / sc))
+
+    def num_blocked(z, lo_=None, hi_=None):  # 伸出的文字在尺寸行之上：穿过定位尺寸行的只有直径线本身
+        return any(a < z < b and b - z < need and z - a < need for a, b, need in gpos)
+
     def key(zs):
         z, side = zs
         span = (z - tw, z - 0.2 / sc) if side == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
         if long_txt:
             lo_, hi_ = span
             edge_ = min(max(a - hi_, lo_ - b) for a, b in [(z0, z0), (z1, z1)] + busy) * sc
-            return (any(not (hi_ < zc - zr or lo_ > zc + zr) for zc, zr in zones),
+            return (num_blocked(z, lo_, hi_) or any(not (hi_ < zc - zr or lo_ > zc + zr) for zc, zr in zones),
                     edge_ < 2.5, abs(z - (z0 + z1) / 2), side == "right")
         line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
@@ -3611,6 +3621,17 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
         if not key((z, sd))[0] and not key((z, sd))[1]:
             span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
             return z, sd, gap(*span) * sc
+        if gpos:  # 避不开中点数字区（短段）：至少给环槽定位数字留出一侧，再离中点最近
+            ok_ = []
+            for z_ in cands:
+                for sd_ in ("left", "right"):
+                    lo_, hi_ = (z_ - tw, z_ - 0.2 / sc) if sd_ == "left" else (z_ + 0.2 / sc, z_ + tw + 0.5 / sc)
+                    edge_ = min(max(a - z_, z_ - b) for a, b in [(z0, z0), (z1, z1)] + busy) * sc  # 线离轴肩/槽
+                    if not num_blocked(z_) and edge_ >= 1.0:
+                        ok_.append((abs(z_ - (z0 + z1) / 2), sd_ == "right", z_, sd_, gap(lo_, hi_) * sc))
+            if ok_:
+                _, _, z_, sd_, g_ = min(ok_)
+                return z_, sd_, g_
         long_txt = False
     z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
     span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
