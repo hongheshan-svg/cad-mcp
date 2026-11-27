@@ -3740,6 +3740,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_num_dodge_leaders(plan)
     _shaft_leader_dodge_nums(plan)
     _shaft_dia_lift(plan, p)
+    _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -4105,6 +4106,11 @@ def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float
             oc = eo.get("text_x", eo["sheet_pos"][0])
             row.append((oc - ot / 2, oc + ot / 2))
         row += _label_row_spans(plan, py)
+        for o in plan.dims:  # 同行及更外一道（更高）尺寸的界线竖穿本行
+            eo = o.extra or {}
+            if o is not d and o.view == "front" and o.kind == "linear" and "sheet_pts" in eo and "sheet_pos" in eo \
+                    and o.ref != "overall_z" and not o.ref.startswith("step") and eo["sheet_pos"][1] >= py - 1:
+                row += [(q[0] - 0.3, q[0] + 0.3) for q in eo["sheet_pts"]]
         xs_all = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi]
         inside = [c for c in (min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6) if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3]
         outside = [c for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2)  # 界线之间放不下：移到界线外（不出图框）
