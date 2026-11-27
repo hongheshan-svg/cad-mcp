@@ -3569,23 +3569,79 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
-    """环槽/退刀槽/倒角引线标注同在主视图上方一行：相邻两个文字相压时，左边那个上移一行（5.5 mm）。"""
+    """环槽/退刀槽/倒角引线标注同在主视图上方一行：相邻两个文字相压时，其中一个上移一行（5.5 mm）。
+    先试“左边那个上移”（其引线一般在右边文字左侧），引线穿过别的标注文字时改试“右边那个上移”，取穿得少的。"""
     names = {"chamfer"} | {f["name"] for f in p.shaft_features}
-    ds = sorted((d for d in plan.dims if d.kind == "callout" and d.ref in names and "elbow" in (d.extra or {}).get("label", {})),
-                key=lambda d: -d.extra["label"]["anchor"][0])  # 从右往左：上移的是左边那个，其引线在右边文字的左侧
-    placed: list = []
+    ds = [d for d in plan.dims if d.kind == "callout" and d.ref in names and "elbow" in (d.extra or {}).get("label", {})]
+    if len(ds) < 2:
+        return
+
+    def run(order):
+        out, placed = {}, []
+        for d in order:
+            lb = d.extra["label"]
+            x0, x1 = sorted((lb["elbow"][0], lb["end"][0]))
+            dy = 0.0
+            while any(x0 < b_[2] + 1 and b_[0] - 1 < x1 and lb["elbow"][1] + dy < b_[3] and b_[1] < lb["elbow"][1] + dy + 4.5
+                      for b_ in placed) and dy < 30:
+                dy += 5.5
+            if dy:
+                lb = {**lb, "elbow": (lb["elbow"][0], round(lb["elbow"][1] + dy, 2)),
+                      "end": (lb["end"][0], round(lb["end"][1] + dy, 2)),
+                      "text_at": (lb["text_at"][0], round(lb["text_at"][1] + dy, 2))}
+            out[id(d)] = lb
+            placed.append((x0, lb["elbow"][1], x1, lb["elbow"][1] + 4.5))
+        return out
+
+    def crossings(res):
+        boxes = {k: (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 0.3, max(lb["elbow"][0], lb["end"][0]),
+                     lb["elbow"][1] + 4.2) for k, lb in res.items()}
+        return sum(1 for k, lb in res.items() for k2, bx in boxes.items()
+                   if k2 != k and _seg_box(lb["anchor"], lb["elbow"], bx))
+    W = plan.sheet_size[0]
+    orig = {id(d): d.extra["label"] for d in ds}
+
+    def flipped(lb):  # 反向书写：引线斜向另一侧，文字写在另一边
+        ax, _ = lb["anchor"]
+        w = abs(lb["end"][0] - lb["elbow"][0])
+        y = lb["elbow"][1]
+        if lb["end"][0] >= lb["elbow"][0]:  # 原向右 → 向左
+            ex = ax - 6
+            out = {**lb, "elbow": (ex, y), "end": (ex - w, y), "text_at": (ex - w + 0.5, lb["text_at"][1]), "dir": -1}
+        else:
+            ex = ax + 6
+            out = {**lb, "elbow": (ex, y), "end": (ex + w, y), "text_at": (ex + 0.5, lb["text_at"][1]), "dir": 1}
+        lo, hi = sorted((out["elbow"][0], out["end"][0]))
+        return out if lo > MARGIN + 2 and hi < W - MARGIN - 2 else None
+
+    def total(res):
+        return (crossings(res), sum(res[k]["elbow"][1] - orig[k]["elbow"][1] for k in res))
+    best, best_key = None, None
+    n_ = len(ds)
+    for mask in (range(1 << n_) if n_ <= 6 else (0,)):
+        alt = {}
+        ok = True
+        for k, d in enumerate(ds):
+            lb = orig[id(d)]
+            if mask >> k & 1:
+                lb = flipped(lb)
+                if lb is None:
+                    ok = False
+                    break
+            alt[id(d)] = lb
+        if not ok:
+            continue
+        for d in ds:
+            d.extra = {**d.extra, "label": alt[id(d)]}
+        for sg in (-1, 1):
+            res = run(sorted(ds, key=lambda d: sg * d.extra["label"]["anchor"][0]))
+            key = (*total(res), bin(mask).count("1"))
+            if best_key is None or key < best_key:
+                best, best_key = res, key
+        if best_key[0] == 0 and best_key[1] == 0:
+            break
     for d in ds:
-        lb = d.extra["label"]
-        x0, x1 = sorted((lb["elbow"][0], lb["end"][0]))
-        dy = 0.0
-        while any(x0 < b[2] + 1 and b[0] - 1 < x1 and lb["elbow"][1] + dy < b[3] and b[1] < lb["elbow"][1] + dy + 4.5
-                  for b in placed) and dy < 30:
-            dy += 5.5
-        if dy:
-            lb = {**lb, "elbow": (lb["elbow"][0], round(lb["elbow"][1] + dy, 2)), "end": (lb["end"][0], round(lb["end"][1] + dy, 2)),
-                  "text_at": (lb["text_at"][0], round(lb["text_at"][1] + dy, 2))}
-            d.extra = {**d.extra, "label": lb}
-        placed.append((x0, lb["elbow"][1], x1, lb["elbow"][1] + 4.5))
+        d.extra = {**d.extra, "label": best[id(d)]}
 
 
 def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bot: float, sc: float) -> None:
