@@ -1606,6 +1606,27 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         plan.gear_table = param_table(plan, p)
     return plan
 
+def _fit_iso_beside_column(plan: "DrawingPlan") -> None:
+    """装配图轴测图伸进右侧栏（标题栏 + 技术要求 + 明细表）：轴测图是辅助视图，保持左上角单独缩小比例
+    （不为它把整张图缩小），最小到原来的 0.4。"""
+    W, _ = plan.sheet_size
+    top = 5 + 56 + 12 + 5 * len(plan.notes) + (7 * (len(plan.bom) + 1) if plan.bom else 0) + 3
+    col = (W - 5 - 180 - 3, 0.0, float(W), top)
+    for v in plan.views:
+        if v.type != "iso":
+            continue
+        cx, cy = v.origin_on_sheet
+        w, h = v.size_mm
+        x0, y1 = cx - w / 2, cy + h / 2
+        for f in (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4):
+            if _box_hit((x0, y1 - h * f, x0 + w * f, y1), col) <= 0:
+                if f < 1.0:
+                    v.scale = round(v.scale * f, 4)
+                    v.size_mm = (round(w * f, 2), round(h * f, 2))
+                    v.origin_on_sheet = (round(x0 + w * f / 2, 2), round(y1 - h * f / 2, 2))
+                break
+
+
 def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | None = None) -> DrawingPlan:
     sheet, scale, views = _layout(a.bbox, spec, None, spec.sheet, kind="assembly")
     dims: list[Dim] = []
@@ -1622,6 +1643,7 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     probe = DrawingPlan(a.name, "assembly", sheet, SHEETS[sheet], scale, spec.projection, views, [],
                         ["技术要求："] + ["x"] * (len(asm_notes(a)) + 1 + len(spec.notes)), {}, bom=bom if spec.bom_table else [])
     _balance_views(probe)
+    _fit_iso_beside_column(probe)
     balloons: list[dict[str, Any]] = []
     fdims = fit_dims(a, views, None, SHEETS[sheet]) if spec.dimensions != "none" else []
     avoid = []

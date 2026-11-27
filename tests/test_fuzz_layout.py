@@ -57,6 +57,7 @@ def test_fuzz_layout_clean(js):
 ASM_SPECS = [
     '{"parts": [{"name": "PL0", "part_no": "PL-0", "title": "座板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 80, "height": 80}, "thickness": 15}, "features": [{"feature": "hole", "name": "Pin0", "type": "simple", "size": 20, "tolerance": "H7", "positions": [[-13, 0]]}, {"feature": "hole", "name": "Pin1", "type": "simple", "size": 10, "tolerance": "H7", "positions": [[13, 0]]}]}, {"name": "PN0_0", "part_no": "PN-0-0", "title": "销", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 35, "diameter": 20, "tolerance": "h6"}, {"length": 8, "diameter": 26}]}}, {"name": "PN0_1", "part_no": "PN-0-1", "title": "销", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 35, "diameter": 10, "tolerance": "k6"}, {"length": 8, "diameter": 16}]}}], "asm": {"name": "A0", "part_no": "A-0", "title": "测试组件", "components": [{"id": "plate", "source": "part:PL0"}, {"id": "pin0", "source": "part:PN0_0", "place": {"offset": [-13, 0, -5]}}, {"id": "pin1", "source": "part:PN0_1", "place": {"offset": [13, 0, -10]}}]}}',
     '{"parts": [{"name": "BS1", "part_no": "BS-1", "title": "轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 20, "tolerance": "k6"}, {"length": 10, "diameter": 27}]}}, {"name": "BH1", "part_no": "BH-1", "title": "轴承座板", "material": "HT200", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 150, "height": 120}, "thickness": 14}, "features": [{"feature": "hole", "name": "Seat", "type": "simple", "size": 47, "tolerance": "H7", "positions": [[0, 0]]}]}], "asm": {"name": "A1", "part_no": "A-1", "title": "测试组件", "components": [{"id": "shaft", "source": "part:BS1"}, {"id": "brg", "source": "lib:BRG-6204", "place": {"offset": [0, 0, 5]}}, {"id": "seat", "source": "part:BH1", "place": {"offset": [0, 0, 5]}}]}}',
+    '{"parts": [{"name": "BS69", "part_no": "BS-69", "title": "轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 20, "tolerance": "k6"}, {"length": 10, "diameter": 27}]}}, {"name": "BH69", "part_no": "BH-69", "title": "轴承座板", "material": "HT200", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 120, "height": 100}, "thickness": 19}, "features": [{"feature": "hole", "name": "Seat", "type": "simple", "size": 47, "tolerance": "H7", "positions": [[0, 0]]}, {"feature": "hole", "name": "M6", "type": "tapped", "size": "M6", "depth": 12, "positions": [[-40.0, -30.0], [-40.0, 30.0], [40.0, -30.0], [40.0, 30.0]]}]}], "asm": {"name": "A69", "part_no": "A-69", "title": "测试组件", "components": [{"id": "shaft", "source": "part:BS69"}, {"id": "brg", "source": "lib:BRG-6204", "place": {"offset": [0, 0, 5]}}, {"id": "seat", "source": "part:BH69", "place": {"offset": [0, 0, 5]}}, {"id": "s0", "source": "lib:SHCS-M6x20", "place": {"offset": [-40.0, -30.0, 24]}}, {"id": "s1", "source": "lib:SHCS-M6x20", "place": {"offset": [-40.0, 30.0, 24]}}, {"id": "s2", "source": "lib:SHCS-M6x20", "place": {"offset": [40.0, -30.0, 24]}}, {"id": "s3", "source": "lib:SHCS-M6x20", "place": {"offset": [40.0, 30.0, 24]}}]}}',
 ]
 
 
@@ -78,6 +79,13 @@ def test_fuzz_asm_layout_clean(js):
     plan = plan_assembly_drawing(DrawingSpec(model=d["asm"]["name"]), a)
     _, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == []
+    from cadmcp.detailing import view_overlaps
+    assert view_overlaps(plan) == []
+    W = plan.sheet_size[0]  # 轴测图不进右侧明细表一栏
+    top = 5 + 56 + 12 + 5 * len(plan.notes) + (7 * (len(plan.bom) + 1) if plan.bom else 0)
+    for v in plan.views:
+        if v.type == "iso":
+            assert v.origin_on_sheet[0] + v.size_mm[0] / 2 <= W - 185 or v.origin_on_sheet[1] - v.size_mm[1] / 2 >= top
 
 
 def test_scale_label_keeps_decimal():
