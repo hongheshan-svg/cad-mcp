@@ -2641,6 +2641,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 x, y = _uv_sheet(pv, bbox, (vc(q, ha_), vc(q, va_)))
                 tx_, ty_ = x + ddx * 9, y + ddy * 9 - 1.5
                 hard.append((min(x, tx_ - 3) - 0.5, min(y, ty_ - 1.0) - 0.5, max(x, tx_ + 3) + 0.5, max(y, ty_ + 4.0) + 0.5))
+    ord_texts: list = []  # 坐标尺寸数字（引线穿过算硬伤）
     for d in plan.dims:  # 坐标值数字（ordinate_dim_sheet 已定位；靠近剖切符号时外移 8 mm，按外移后的位置占位）
         ex = d.extra or {}
         if d.kind != "ordinate" or "sheet_pos" not in ex or d.view not in vmap:
@@ -2661,6 +2662,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
             hard.append((px_ - 2.2, py_ - o_ - tw_ / 2 - 0.3, px_ + 0.5, py_ - o_ + tw_ / 2 + 0.3))  # 竖排文字以该点居中
         else:
             hard.append((px_ + o_ - 0.5, py_ - 1.5, px_ + o_ + tw_, py_ + 1.5))
+        ord_texts.append(hard[-1])
     leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
     labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
               and not (plan.layout == "shaft" and d.kind == "diameter")]
@@ -2705,7 +2707,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 ax, ay = _uv_sheet(v, bbox, at_)
             else:
                 ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
-            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr)
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr, ord_texts)
         _, ex, ey, dirn, box, at_, ax, ay = best
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
@@ -2718,7 +2720,8 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
     _flip_hole_roughness(plan, vmap, bbox, part, hard, feat)
 
 
-def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0):
+def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0,
+                texts: list | None = None):
     """引出标注一个锚点的 8 方向 × 7 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。
     rr ≥ 5：锚点为孔心，引线起点取在孔轮廓上（沿引线方向偏 rr）；返回的 ax, ay 为该轮廓点。"""
     for L in (10, 16, 24, 34, 46, 60, 80):
@@ -2739,9 +2742,10 @@ def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below:
                     cost += 120 + (600 if a_ < (box[2] - box[0]) * (box[3] - box[1]) - 1e-6 else 0)
             cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
             cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
-            cost += sum(300 for l1, l2 in leaders if _seg_box(l1, l2, box))  # 文字不压先放的引线
+            cost += sum(1000 for l1, l2 in leaders if _seg_box(l1, l2, box))  # 文字不压先放的引线（同文字相压）
             sx_, sy_ = ax + 1.5 * math.cos(math.radians(ang)), ay + 1.5 * math.sin(math.radians(ang))  # 锚点本身可能落在别的框内
             cost += sum(300 for hb in hard if _seg_box((sx_, sy_), (ex, ey), hb))
+            cost += sum(1000 for tb in texts or [] if _seg_box((sx_, sy_), (ex, ey), tb))  # 引线不穿坐标尺寸数字
             cost += sum(150 for fb in feat if _seg_box((sx_, sy_), (ex, ey), fb)  # 引线穿过别的孔/型腔
                         and not (fb[0] <= ax0 <= fb[2] and fb[1] <= ay0 <= fb[3]))
             if best is None or cost < best[0]:
