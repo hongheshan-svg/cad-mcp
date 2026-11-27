@@ -449,12 +449,26 @@ def test_vertical_cross_hole_pos_measured_to_axis():
 
 
 def test_keyway_cut_moves_off_gear_flank_ra():
-    """齿面 Ra 两侧都被更粗的轴段挡住、只能放右侧时：键槽剖切位置在平直段内让开 Ra 符号（cut_z，预览/SW/Creo 共用）。"""
+    """齿面 Ra 与键槽剖切符号不相压：剖切位置（cut_z，预览/SW/Creo 共用）可在平直段内让开 Ra 符号。"""
     p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S239", "part_no": "S-239", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 60, "diameter": 34.5}, {"length": 50, "diameter": 30, "tolerance": "m6"}, {"length": 10, "diameter": 22, "tolerance": "h7"}, {"length": 20, "diameter": 12, "tolerance": "h7"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 36, "offset": 2}, {"feature": "groove", "name": "G3", "type": "circlip", "step": 3}, {"feature": "gear", "name": "Z0", "step": 0, "module": 1.5, "teeth": 21}]}')))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     kw = next(f for f in p.shaft_features if f["kind"] == "keyway")
     sec = next(v for v in plan.views if v.type == "section")
-    assert abs(sec.cut_z - (kw["z0"] + kw["z1"]) / 2) > 1
+    from cadmcp.detailing import gear_flank_ra_zone
+    a, b = gear_flank_ra_zone(p, next(f for f in p.shaft_features if f["kind"] == "gear"), plan.scale)
+    assert not a < sec.cut_z < b
     assert kw["z0"] + kw["width"] / 2 <= sec.cut_z <= kw["z1"] - kw["width"] / 2
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_gear_flank_ra_on_pitch_line_inside_when_ext_blocked():
+    """齿面 Ra 两侧分度线延长线都被更粗的轴段挡住：符号尖端直接落在齿段内的分度线上（GB/T 4459.2 注在分度线上），无延长线。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S194", "part_no": "S-194", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 20, "diameter": 47}, {"length": 80, "diameter": 52.5}, {"length": 50, "diameter": 60}, {"length": 80, "diameter": 55}, {"length": 30, "diameter": 50, "tolerance": "f7"}, {"length": 10, "diameter": 45, "tolerance": "js6"}], "center_holes": {"type": "B"}, "shoulder_fillet": 1}, "features": [{"feature": "gear", "name": "Z1", "step": 1, "module": 2.5, "teeth": 19}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    f = next(f for f in p.shaft_features if f["kind"] == "gear")
+    d = next(d for d in plan.dims if d.ref.startswith("ra:flank:"))
+    assert "ext_z" not in d.extra and "ext_pts" not in d.extra
+    assert f["z0"] < d.at[0] < f["z1"] and abs(d.at[1] - f["pd"] / 2) < 1e-9
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []

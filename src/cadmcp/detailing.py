@@ -1704,7 +1704,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                 ra = p.gear["flank_ra"]
                 zt, zend = gear_flank_ra_z(p, f, f"Ra {ra:g}", scale)
                 dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:flank:{f['name']}",
-                                (zt, f["pd"] / 2), {"normal": (0, 1), "ext_z": zend}))
+                                (zt, f["pd"] / 2), {"normal": (0, 1), **({"ext_z": zend} if abs(zend - zt) > 1e-9 else {})}))
                 continue
             if f["kind"] == "thread":  # 未满整段：注螺纹长度（自轴段端面起）
                 if not f["full"]:
@@ -3466,16 +3466,32 @@ def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[flo
             cands.append((zr_, f["z1"], 0, k))
         if clear(zl_ - 2.6 / sc, f["z0"] - 1e-6) and zl_ - 2.6 / sc >= -30 / sc and not (zl_ - 2.6 / sc < 0 and start_busy):
             cands.append((zl_, f["z0"], 1, k))
-    fallback = not cands
-    if fallback:  # 两侧都被更粗的轴段挡住：仍放右侧（含沿延长线外移），按下面的代价挑压得少的
-        cands = [(zr + 2 * k / sc, f["z1"], 0, k) for k in range(16) if zr + (2 * k + w) / sc <= Ltot + 30 / sc] or [(zr, f["z1"], 0, 0)]
+    cands = [(*c, 0.0) for c in cands]
+    if not cands:  # 两侧都被更粗的轴段挡住：右侧（含沿延长线外移）延长线贴着轮廓，分不清，加罚分
+        cands = [(zr + 2 * k / sc, f["z1"], 0, k, 1.5) for k in range(16) if zr + (2 * k + w) / sc <= Ltot + 30 / sc] \
+            or [(zr, f["z1"], 0, 0, 1.5)]
+    # 齿段内：符号尖端直接落在分度线上（不画延长线），两腿穿过齿顶线。符号覆盖到的相邻轴段不能高出分度线（轴肩线会穿过文字）；
+    # 不压本段直径尺寸线（及其竖写文字）。延长线位置压到东西或两侧都不通时才用（罚 0.5）
+    i = f["step"]
+    zdia = shaft_dia_z(p, i, sc)
+    for t in (0.15, 0.3, 0.45, 0.6, 0.7, 0.8):
+        zt = f["z0"] + t * (f["z1"] - f["z0"])
+        if zt - 3 / sc < f["z0"] or not all(
+                dj / 2 * sc <= f["pd"] / 2 * sc + 0.5 for j, (_, dj) in enumerate(p.shaft_steps)
+                if j != i and p.step_z(j)[0] < zt + w / sc and zt - 3 / sc < p.step_z(j)[1]):
+            continue
+        if zt - 6 / sc <= zdia <= zt + w / sc:
+            continue
+        cands.append((zt, zt, 2, int(t * 10), 0.5))
     obs = shaft_top_obstacles(p, sc)
     kws = [g for g in p.shaft_features if g["kind"] == "keyway"]  # 剖切符号（短粗线 + 右侧字母）：可在键槽平直段内让开
 
     def cost(c):
         zone = _flank_zone(c[0], c[1], w, sc)
-        return (sum(c[0] - 3 / sc <= o <= c[0] + w / sc for o in obs)
-                + 3 * sum(_cut_z_clear(g, None, sc, [zone]) is None for g in kws))  # 粗短线 + 字母
+        n_ = sum(c[0] - 3 / sc <= o <= c[0] + (w + (1.5 if c[2] == 2 else 0.0)) / sc for o in obs)
+        if c[2] == 2 and n_:  # 齿段内的符号紧贴轮廓，竖线必穿文字：只在完全不压时用
+            n_ += 5
+        return n_ + 3 * sum(_cut_z_clear(g, None, sc, [zone]) is None for g in kws) + c[4]  # 粗短线 + 字母
     best = min(cands, key=lambda c: (cost(c), c[3], c[2]))
     return best[0], best[1]
 
