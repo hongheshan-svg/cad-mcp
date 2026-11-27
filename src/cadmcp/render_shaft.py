@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from .detailing import DrawingPlan
+from .detailing import DrawingPlan, TRACK_DY
 from .ir.resolve import ResolvedPart
 
 THIN, THICK = 0.25, 0.5
@@ -415,7 +415,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                       text_x=(d.extra or {}).get("text_x"), x_max=plan.sheet_size[0] - 5)
             else:  # 键槽、环槽定位：画在主视图上方
                 tr_ = (d.extra or {}).get("track", 0)
-                y = y_top + 14 - 7 * tr_
+                y = (d.extra or {}).get("sheet_pos", (0, y_top + 14 - TRACK_DY * tr_))[1]  # 规划层的行高
                 row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
                                        and (d2.extra or {}).get("track", 0) == tr_) + up_lines
                 for d2 in plan.dims:  # 更外层（track 小）尺寸的界线穿过本行

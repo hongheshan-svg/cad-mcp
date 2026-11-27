@@ -1737,7 +1737,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     top = [d for d in dims if d.view == "front" and d.kind == "linear" and d.axis == "z"
            and not d.ref.startswith(("step", "overall"))]
     for d in top:  # 横孔定位尺寸与上方其它尺寸重叠：放到轮廓与尺寸行之间的低一道
-        if d.ref.startswith("XH") and any(o is not d and min(d.at) < max(o.at) - 1e-6 and min(o.at) < max(d.at) - 1e-6
+        if d.ref.startswith(("XH", "BORE")) and any(o is not d and min(d.at) < max(o.at) - 1e-6 and min(o.at) < max(d.at) - 1e-6
                                           and not (o.extra or {}).get("track") for o in top):
             d.extra = {**(d.extra or {}), "track": 1}
 
@@ -3461,6 +3461,7 @@ def shaft_gtol_frac(p: ResolvedPart, i: int, sc: float) -> float:
     return next((fr[k] for k in fr if k.endswith(f"@step:{i}")), 0.3)
 
 
+TRACK_DY = 4.0      # 上方低一道尺寸行比主行低（图纸 mm）：+10 mm 高过剖切字母（3–8.5）与 Ra 符号（≤ 8.4）
 GTOL_ROW = 22.0     # 框格第一行底边：主视图最大轮廓上方（图纸 mm）
 GTOL_ROW_GAP = 9.0  # 第二行比第一行高（框格 6 + 间隙 3）
 
@@ -3977,7 +3978,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             elif d.ref.startswith("step"):
                 y = y_bot - 15
             else:
-                y = y_top + 14 - 7 * (d.extra or {}).get("track", 0)
+                y = y_top + 14 - TRACK_DY * (d.extra or {}).get("track", 0)
             kw = not d.ref.startswith(("step", "overall"))
             xh = {round(h["z"], 6): h for h in p.cross_holes} if d.ref.startswith("XH") else {}
             def xh_pt(h):  # 横孔：view 向取孔圆顶点；竖直孔取左孔壁线上一点（TODO(实机核对) 原生需量到孔轴线）
@@ -4063,7 +4064,63 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
     _shaft_short_text_side(plan, p)  # 余下放不下的短尺寸数字：在规划层定侧（预览与 CAD 共用 text_x）
     _shaft_num_dodge_datum(plan)  # 基准方框落进下方链式尺寸行（短轴段放不开）：数字偏到方框一侧或界线外
+    _shaft_top_num_clear(plan)  # 上方尺寸数字被竖线（外层界线、框格引线、伸出的直径线）穿过：界线之间挪到空处
     _shaft_ra_on_dim(plan)  # 标在孔径尺寸线上的 Ra：接在（已定位的）尺寸文字之后
+
+
+def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
+    """主视图上方（键槽/环槽/孔深定位行）写在两界线之间的数字，被竖直线穿过时在两界线之间平移到最近的空处，
+    写入 text_x（预览与 CAD 共用）。竖线：其它水平尺寸的尺寸界线、几何公差框格竖引线、伸出轮廓的直径线（连同竖写文字）。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is None:
+        return
+    vlines = []  # (x0, x1, y0, y1)
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view != "front":
+            continue
+        if o.kind == "linear" and eo.get("orient") == "h" and "sheet_pts" in eo and "sheet_pos" in eo:
+            y_ = eo["sheet_pos"][1]
+            vlines += [(q[0] - 0.3, q[0] + 0.3, min(q[1], y_), max(q[1], y_) + 2) for q in eo["sheet_pts"]]
+        elif o.kind == "gtol" and "sheet_at" in eo and "sheet_pos" in eo:
+            xl = (eo.get("elbow") or {}).get("x_leader", eo["sheet_at"][0])
+            vlines.append((xl - 0.3, xl + 0.3, min(eo["sheet_at"][1], eo["sheet_pos"][1]), max(eo["sheet_at"][1], eo["sheet_pos"][1])))
+        elif o.kind == "diameter" and eo.get("orient") == "v" and "sheet_pts" in eo:
+            x_ = eo["sheet_pts"][0][0]
+            ys = [q[1] for q in eo["sheet_pts"]]
+            if eo.get("over_at") is not None:  # 文字整段在轮廓外：线延到文字末端，文字在线左侧约 4.5 mm
+                oa = eo["over_at"]
+                ys += [oa, oa + text_width(o.text, 3.5)]
+                vlines.append((x_ - 4.8, x_ - 0.6, min(oa, oa + text_width(o.text, 3.5)), max(oa, oa + text_width(o.text, 3.5))))
+            vlines.append((x_ - 0.3, x_ + 0.3, min(ys), max(ys)))
+    rows = [d for d in plan.dims if d.view == "front" and d.kind == "linear" and d.axis == "z"
+            and d.ref != "overall_z" and not d.ref.startswith("step") and "sheet_pts" in (d.extra or {})
+            and "sheet_pos" in (d.extra or {})]
+    for d in rows:
+        ex = d.extra
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        tw = text_width(d.text, 3.5)
+        if tw > xb - xa - 1.6:
+            continue
+        y = ex["sheet_pos"][1]
+        own = {round(q[0], 2) for q in ex["sheet_pts"]}
+        obs = [(a, b) for a, b, y0, y1 in vlines if y0 < y + 3.8 and y + 0.5 < y1
+               and not (b - a < 1 and round((a + b) / 2, 2) in own)]
+        for o in rows:  # 同一行别的数字
+            eo = o.extra
+            if o is not d and abs(eo["sheet_pos"][1] - y) < 3.5:
+                oc, ot = eo.get("text_x", eo["sheet_pos"][0]), text_width(o.text, 3.5)
+                obs.append((oc - ot / 2, oc + ot / 2))
+        free = lambda c_: not any(a - 0.4 < c_ + tw / 2 and c_ - tw / 2 < b + 0.4 for a, b in obs)  # noqa: E731
+        c0 = ex.get("text_x", ex["sheet_pos"][0])
+        if free(c0):
+            continue
+        lo, hi = xa + tw / 2 + 0.8, xb - tw / 2 - 0.8
+        cands = [lo + k * 0.25 for k in range(int((hi - lo) / 0.25) + 1)]
+        ok = [c for c in cands if free(c)]
+        if ok:
+            c = min(ok, key=lambda c_: abs(c_ - c0))
+            d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), y)}
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -4334,7 +4391,12 @@ def _shaft_short_num_frame(plan: "DrawingPlan") -> None:
             row.append((oc - ot / 2, oc + ot / 2))
         row += _label_row_spans(plan, py)
         if any(lo < c + tw / 2 + 1.5 and c - tw / 2 - 1.5 < hi for lo, hi in row):
-            d.extra = {**ex, "track": 1, "text_x": round(c, 2), "sheet_pos": (round(c, 2), round(py - 7, 2))}
+            ly = py - TRACK_DY  # 低一道；引出标注的斜引线穿过数字时退到 7 mm（斜线在更低处离数字更远）
+            leaders = [((o.extra or {})["label"]["anchor"], (o.extra or {})["label"]["elbow"]) for o in plan.dims
+                       if o.view == "front" and "anchor" in ((o.extra or {}).get("label") or {})]
+            if any(_seg_box(a_, e_, (c - tw / 2 - 0.5, ly + 0.3, c + tw / 2 + 0.5, ly + 4.0)) for a_, e_ in leaders):
+                ly = py - 7
+            d.extra = {**ex, "track": 1, "text_x": round(c, 2), "sheet_pos": (round(c, 2), round(ly, 2))}
         else:
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
 

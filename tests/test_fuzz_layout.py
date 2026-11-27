@@ -141,6 +141,8 @@ SPECS = [
     '{"name": "S107", "part_no": "S-107", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 40, "diameter": 30, "tolerance": "f7"}, {"length": 80, "diameter": 25}, {"length": 20, "diameter": 17, "tolerance": "h7"}, {"length": 60, "diameter": 14}], "cross_holes": [{"step": 1, "diameter": 6}], "end_holes": [{"side": "end", "size": "M5", "depth": 8}]}, "features": [], "auto_precision": true}',
     '{"name": "S265", "part_no": "S-265", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 40, "diameter": 40}, {"length": 10, "diameter": 45}, {"length": 80, "diameter": 50, "tolerance": "f7"}, {"length": 60, "diameter": 42, "tolerance": "js6"}], "cross_holes": [{"step": 3, "diameter": 4}], "end_holes": [{"side": "end", "size": "M16", "depth": 24}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 28}], "auto_precision": true}',
     '{"name": "S123", "part_no": "S-123", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 80, "diameter": 27}, {"length": 15, "diameter": 30, "tolerance": "f7"}, {"length": 60, "diameter": 35}, {"length": 30, "diameter": 45}, {"length": 15, "diameter": 42}, {"length": 60, "diameter": 34}], "cross_holes": [{"step": 3, "diameter": 6}], "bores": [{"diameter": 14, "length": 104}]}, "features": [{"feature": "groove", "name": "G3", "type": "undercut", "step": 3}], "auto_precision": true}',
+    '{"name": "S135", "part_no": "S-135", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 10, "diameter": 42, "tolerance": "m6"}, {"length": 50, "diameter": 45}], "bores": [{"diameter": 21, "length": 24, "tolerance": "H7"}]}, "features": [{"feature": "groove", "name": "G0", "type": "undercut", "step": 0}], "auto_precision": true}',
+    '{"name": "S64", "part_no": "S-64", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 10, "diameter": 27}, {"length": 80, "diameter": 37}, {"length": 50, "diameter": 47}, {"length": 50, "diameter": 55, "tolerance": "js6"}, {"length": 15, "diameter": 50}, {"length": 20, "diameter": 45, "tolerance": "k6"}], "bores": [{"diameter": 8, "length": 90}]}, "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 56}, {"feature": "keyway", "name": "K2", "step": 2, "length": 36}], "auto_precision": true}',
 ]
 
 
@@ -337,3 +339,16 @@ def test_bore_ra_on_dim_line():
     assert sw.args["angle"] == 90 and sw.args["at"] is None and sw.args["leader"] is False
     cr = [o for o in CD.tk_detail_ops(plan) if o.op == "tk.drw.surface_finish" and o.args.get("angle") == 90]
     assert len(cr) == 1 and cr[0].args["at"] is None
+
+
+def test_blind_bore_depth_not_collinear_with_top_row():
+    """盲孔深度尺寸与上方键槽/环槽定位尺寸区间重叠时放到低一道（不共线重叠，高过剖切字母）。"""
+    spec = '{"name": "S198", "part_no": "S-198", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 40, "diameter": 35, "tolerance": "m6"}, {"length": 60, "diameter": 40}, {"length": 80, "diameter": 35, "tolerance": "js6"}, {"length": 20, "diameter": 27}, {"length": 25, "diameter": 24}, {"length": 40, "diameter": 21}], "bores": [{"diameter": 8, "length": 106, "tolerance": "H7"}]}, "features": [{"feature": "groove", "name": "G0", "type": "undercut", "step": 0}, {"feature": "keyway", "name": "K1", "step": 1, "length": 45}, {"feature": "keyway", "name": "K2", "step": 2, "length": 56}, {"feature": "groove", "name": "G3", "type": "grinding", "step": 3}, {"feature": "groove", "name": "G4", "type": "undercut", "step": 4}, {"feature": "keyway", "name": "K5", "step": 5, "length": 28}]}'
+    p = resolve_part(PartSpec.model_validate(json.loads(spec)))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    hs = [(round(d.extra["sheet_pos"][1], 1), *sorted(q[0] for q in d.extra["sheet_pts"]), d.ref) for d in plan.dims
+          if d.view == "front" and d.kind == "linear" and (d.extra or {}).get("orient") == "h" and "sheet_pts" in d.extra]
+    assert not [(a[3], b[3]) for k, a in enumerate(hs) for b in hs[k + 1:]
+                if a[0] == b[0] and a[1] < b[2] - 0.5 and b[1] < a[2] - 0.5]
+    bd = next(d for d in plan.dims if d.ref.endswith("_depth"))
+    assert bd.extra.get("track") == 1
