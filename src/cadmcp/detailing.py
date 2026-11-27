@@ -1637,6 +1637,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         xa_, xb_ = shaft_sx(front, Ltot, lh["z0"]) + 0.5, shaft_sx(front, Ltot, lh["z1"]) - 0.5
         dims.append(Dim("front", "chain", None, None, "", f"heat:{lh['step']}", None,
                         {"sheet_pts": [(round(xa_, 2), round(y_, 2)), (round(xb_, 2), round(y_, 2))]}))
+    front._detail_peers = [v for v in views if v.type == "detail"]
     for v in views:  # 局部放大图：视图位置已定后算主视图圆圈/编号与放大图内尺寸的图纸坐标
         if v.type == "detail":
             dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none", dims)
@@ -2916,11 +2917,21 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
             if shaft_dia_overflow(p, j, sc, d.text) == "up":
                 vlines.append(shaft_sx(front, Ltot, shaft_dia_z(p, j, sc)))
     tw_l = text_width(v.label, 3.5)
+    prev = []  # 已放好的别的局部放大图标号：(引线, 字框)
+    for v2 in getattr(front, "_detail_peers", []):
+        dt2 = getattr(v2, "detail", None) or {}
+        if v2 is not v and "label_at" in dt2:
+            lx2, ly2 = dt2["label_at"]
+            prev.append((tuple(map(tuple, dt2["leader"])), (lx2 - 0.5, ly2 - 1, lx2 + text_width(v2.label, 3.5) + 0.5, ly2 + 4.5)))
     best = None
-    for n_, (sg, L_) in enumerate([(sx, 5), (sx, 9), (sx, 13), (-sx, 5), (-sx, 9)]):
+    for n_, (sg, L_) in enumerate([(sx, 5), (sx, 9), (sx, 13), (-sx, 5), (-sx, 9), (sx, 17), (-sx, 13)]):
         b_ = (cx + sg * (r + L_) * k, cy + (r + L_) * k)
         lx = b_[0] + sg * 1.2 + (0 if sg > 0 else -tw_l)
         hit = sum(1 for x in vlines if lx - 0.6 <= x <= lx + tw_l + 0.6)
+        a0_ = (cx + sg * r * k, cy + r * k)
+        mybox = (lx - 0.5, b_[1] - 2.2, lx + tw_l + 0.5, b_[1] + 3.3)
+        for (la, lb_), bx2 in prev:  # 与别的标号：引线穿字、字压字、引线相交
+            hit += 3 * (_seg_box(a0_, b_, bx2) + _seg_box(la, lb_, mybox) + (_box_hit(mybox, bx2) > 0) + _seg_cross(a0_, b_, la, lb_))
         if best is None or (hit, n_) < best[0]:
             best = ((hit, n_), sg, b_, lx)
     _, sg, b, lx = best
