@@ -131,6 +131,7 @@ SPECS = [
     '{"name": "S85", "part_no": "S-85", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 30, "diameter": 55, "tolerance": "h7"}, {"length": 10, "diameter": 52, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 22}, {"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}',
     '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 15, "diameter": 42}, {"length": 10, "diameter": 45}, {"length": 10, "diameter": 50}, {"length": 60, "diameter": 60}, {"length": 50, "diameter": 57}, {"length": 20, "diameter": 49}], "center_holes": {"type": "B"}, "cross_holes": [{"step": 4, "diameter": 6}]}, "features": [{"feature": "groove", "name": "G1", "type": "undercut", "step": 1}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}, {"feature": "keyway", "name": "K3", "step": 3, "length": 45}]}',
     '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 50, "tolerance": "h7"}, {"length": 10, "diameter": 55}, {"length": 60, "diameter": 47}, {"length": 40, "diameter": 44, "tolerance": "js6"}, {"length": 30, "diameter": 41}, {"length": 50, "diameter": 38, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G0", "type": "circlip", "step": 0}, {"feature": "keyway", "name": "K2", "step": 2, "length": 45}]}',
+    '{"name": "S44", "part_no": "S-44", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 10, "diameter": 30, "tolerance": "h7"}, {"length": 60, "diameter": 25}, {"length": 15, "diameter": 20, "tolerance": "h7"}, {"length": 10, "diameter": 15, "tolerance": "m6"}, {"length": 10, "diameter": 12}]}, "features": [{"feature": "groove", "name": "G1", "type": "grinding", "step": 1}, {"feature": "groove", "name": "G3", "type": "grinding", "step": 3}], "auto_precision": true}',
 ]
 
 
@@ -298,3 +299,13 @@ def test_crowded_circlip_goes_to_detail_view():
     vw = CD.detail_view_name(det[0].label)
     cr = CD.tk_detail_ops(plan)
     assert sum(1 for o in cr if o.op == "tk.drw.dim" and o.args.get("view") == vw) == 3
+
+
+def test_crowded_gtol_short_shaft_enlarges():
+    """10 mm 轴承位上要放圆柱度 + 轴肩跳动等多个框格，1:1 排不开（会重叠）：放大到 2:1，框格不重叠。"""
+    spec = json.loads(SPECS[-1])
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert plan.scale == 2.0
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

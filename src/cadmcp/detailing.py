@@ -186,10 +186,18 @@ RIGHT_COL_W = 185.0
 NOTES_H = 30.0  # 带展开图时：视图伸进右侧栏时，标题栏之上还要让出技术要求（约 4 条 + "其余"粗糙度）  # 右侧栏（标题栏 180 + 间隙）：技术要求、明细表、孔表都在这一栏
 
 
+class PaperMM(float):
+    """行高按图纸 mm 计（不随视图比例缩放），如局部放大图行（放大图有自己的比例）。"""
+
+
+def _rows_mm(row_h, s: float) -> float:
+    return sum(float(r) if isinstance(r, PaperMM) else r * s for r in row_h)
+
+
 def _fits(sh: str, s: float, col_w, row_h, notes_h: float = 0.0) -> bool:
     """视图区放得下：① 全宽、标题栏以上；或 ② 右侧栏以左、全高（标题栏/明细表只占右侧栏）。"""
     W, H = SHEETS[sh]
-    vw, vh = sum(col_w) * s + GAP * len(col_w), sum(row_h) * s + GAP * len(row_h)
+    vw, vh = sum(col_w) * s + GAP * len(col_w), _rows_mm(row_h, s) + GAP * len(row_h)
     return (vw <= W - 2 * MARGIN and vh <= H - 2 * MARGIN - TITLE_BLOCK_H - notes_h) or \
         (vw <= W - 2 * MARGIN - RIGHT_COL_W and vh <= H - 2 * MARGIN)
 
@@ -198,7 +206,7 @@ def _fill(sh: str, s: float, col_w, row_h) -> float:
     W, H = SHEETS[sh]
     avail_w = W - 2 * MARGIN - GAP * len(col_w)
     avail_h = H - 2 * MARGIN - TITLE_BLOCK_H - GAP * len(row_h)
-    return (sum(col_w) * s * sum(row_h) * s) / (avail_w * avail_h)
+    return (sum(col_w) * s * _rows_mm(row_h, s)) / (avail_w * avail_h)
 
 
 def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str,
@@ -212,8 +220,8 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
         order = [s for s in order if max_scale is None or s <= max_scale + 1e-9]
         for group in ([s for s in sheets if s in ("A4", "A3")], [s for s in sheets if s not in ("A4", "A3")]):
             for s in order:
-                if s > 1 and min_feature * s < MIN_FEATURE_ON_PAPER and max(b.size) > 30:
-                    continue
+                if s > 1 and min_feature * s < MIN_FEATURE_ON_PAPER and max(b.size) > 30 and not enlarge:
+                    continue  # 放大也看不清小结构（另画局部放大图）；为排开标注而放大时不受此限
                 for sh in group:
                     if _fits(sh, s, col_w, row_h, notes_h) and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER
                                                         or s <= 1 and min_feature * s >= 1.0):
@@ -1502,14 +1510,15 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     extra_top = 3.0 if g_steps else 0.0
     dets = [f for f in p.shaft_features if f["kind"] == "groove" and f["type"] == "grinding"]  # 小结构 → 局部放大图
     row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + \
-        ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
+        ([max(sec_d, 30.0 if dets else 0.0)] if kws else [PaperMM(30.0)] if dets else [])  # 放大图行：图纸约 30 mm
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     tight = any(f.get("offset", 0) > 0 and f["offset"] < text_width(f"{f['offset']:g}", 3.5) + 1.5
                 for f in p.shaft_features if f["kind"] == "groove")
+    tight = tight or shaft_gtol_crowded(p, 1.0)  # 框格在 1:1 下排不开（短轴段上多个框格）：同样先试 2:1
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
                            enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
     if len(row_h) == 1 and any(circlip_crowded(f, scale) for f in p.shaft_features):
-        row_h = row_h + [30.0]  # 要加挡圈槽局部放大图：主视图下方加一行再选图幅/比例
+        row_h = row_h + [PaperMM(30.0)]  # 要加挡圈槽局部放大图：主视图下方加一行再选图幅/比例
         sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
                                enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
     if len(row_h) > 1 or kws:  # 主视图挤不下的挡圈槽 → 局部放大图（槽宽、槽深、定位尺寸注在放大图内）
@@ -3034,6 +3043,8 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
             j = int(d.ref[4:].split("_")[0])
             if shaft_dia_overflow(p, j, sc, d.text) == "up":
                 vlines.append(shaft_sx(front, Ltot, shaft_dia_z(p, j, sc)))
+    if p.geotols:  # 几何公差框格的竖引线（框格行 → 轮廓）
+        vlines += [shaft_sx(front, Ltot, z) for z, _ in shaft_gtol_layout(p, sc).values()]
     tw_l = text_width(v.label, 3.5)
     prev = []  # 已放好的别的局部放大图标号：(引线, 字框)
     for v2 in getattr(front, "_detail_peers", []):
@@ -3459,7 +3470,7 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
         a1, b1 = z1 - 3.5 / sc, z1 + i1["w"] - 3.5 / sc
         a2, b2 = z2 - 3.5 / sc, z2 + i2["w"] - 3.5 / sc
         if r1 == r2 and a1 < b2 + 1 / sc and a2 < b1 + 1 / sc:
-            c += 100
+            c += 300  # 框格互相重叠：比占 Ra 预留位（Ra 不一定标到框格上方）更不可接受
         for (ia, za, ra_, aa, ba), (ib, zb, rb_, ab, bb) in (((i1, z1, r1, a1, b1), (i2, z2, r2, a2, b2)),
                                                              ((i2, z2, r2, a2, b2), (i1, z1, r1, a1, b1))):
             if ia["ra"] and rb_ == ra_ + 1 and za - 1.5 / sc < bb and ab < za + 25 / sc:
@@ -3535,10 +3546,19 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
     idx = list(range(len(info)))
     orders = [sorted(idx, key=lambda k: (info[k]["zf"] is None, zkey(k))), sorted(idx, key=zkey),
               sorted(idx, key=lambda k: (info[k]["zf"] is not None, zkey(k)))]
-    _, st = min((run(o) for o in orders), key=lambda t: t[0]) if info else (0, {})
+    cost, st = min((run(o) for o in orders), key=lambda t: t[0]) if info else (0, {})
     res = {info[k]["key"]: (st[k][0], st[k][1]) for k in st}
-    _LAYOUT_CACHE[key] = (p, res)
+    _LAYOUT_CACHE[key] = (p, res, cost)
     return res
+
+
+def shaft_gtol_crowded(p: ResolvedPart, sc: float) -> bool:
+    """框格排不开（最优排布仍有重叠、竖引线穿框格或占 Ra 预留位）：短轴上应放大画。"""
+    if not p.geotols:
+        return False
+    shaft_gtol_layout(p, sc)
+    key = (id(p), round(sc, 6), len(p.geotols))
+    return _LAYOUT_CACHE.get(key, (None, None, 0.0))[2] >= 20
 
 
 def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
