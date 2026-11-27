@@ -631,11 +631,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             else:
                 xs = (d.extra or {}).get("sheet_pos", (vx + r + 6, 0))[0]
                 if xs > vx:
-                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=False)
+                    # 放不下时向下伸出（上方是槽宽尺寸与公差带标注）
+                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=False, overflow="down")
                     s.line(vx + hb, vy + r - t1, xs + 1.5, vy + r - t1, THIN)
                     s.line(vx, vy - r, xs + 1.5, vy - r, THIN)
                 else:  # 左侧（规划层：右侧出图框）
-                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=True)
+                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=True, overflow="down")
                     s.line(vx - hb, vy + r - t1, xs - 1.5, vy + r - t1, THIN)
                     s.line(vx, vy - r, xs - 1.5, vy - r, THIN)
             refs.append(d.ref)
