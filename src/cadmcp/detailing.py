@@ -3888,6 +3888,7 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         cands = [lo + (hi - lo) * k / 20 for k in range(2, 19)]
         return max(cands, key=lambda c: (min([abs(c - b) for b in busy] or [1e9]), -abs(c - (lo + hi) / 2)))
 
+    bend_taken: list = []  # 已放折弯说明的文字框
     for d in plan.dims:
         if d.view != "flat_pattern":
             continue
@@ -3916,13 +3917,15 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 d.extra = {**d.extra, "sheet_pts": [(round(x0, 2), round(y1, 2)), (round(xb, 2), round(y, 2))],
                            "sheet_pos": (round((x0 + xb) / 2, 2), round(yy, 2)), "orient": "h"}
         elif d.kind == "callout" and d.at is not None and d.ref.startswith("bend"):
-            d.extra = {**(d.extra or {}), **_bend_note(p, int(d.ref[4:]), d.text, F(*d.at), (x0, y0, x1, y1))}
+            bn_ = _bend_note(p, int(d.ref[4:]), d.text, F(*d.at), (x0, y0, x1, y1), bend_taken)
+            d.extra = {**(d.extra or {}), **bn_}
+            bend_taken.append(bn_["box"])
         elif d.kind == "callout" and d.at is not None:
             px, py = F(*d.at)
             d.extra = {**(d.extra or {}), "sheet_pos": (round(px - _tw(d.text) / 2, 2), round(py + 1, 2))}
 
 
-def _bend_note(p: ResolvedPart, i: int, text: str, at, box) -> dict:
+def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None = None) -> dict:
     """展开图折弯说明（上折/下折 角度 R）的图纸位置：写在折弯线中部旁；离外轮廓太近换到线的另一侧；
     展开图内放不下时移到轮廓外——水平折弯线移到右侧（越过展开高度尺寸），竖直折弯线沿线引到上方
     （越过折弯定位尺寸行 y1+10+8k），左半边文字向左写、右半边向右写，配细线引出。
@@ -3933,18 +3936,19 @@ def _bend_note(p: ResolvedPart, i: int, text: str, at, box) -> dict:
     tw = text_width(text, 3)
     px, py = at
     lead: list = []
+    hit = lambda b_: any(_box_hit(b_, t_) > 0 for t_ in taken or [])  # noqa: E731
     if bd["flat_axis"] == "v":  # 水平折弯线 y = py
-        if tw <= (x1 - x0) - 4:
-            tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
-            ty = py + 1 if y1 - py > 4.6 else py - 3.2
+        tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
+        ty = py + 1 if y1 - py > 4.6 else py - 3.2
+        if tw <= (x1 - x0) - 4 and not hit((tx - tw / 2, ty, tx + tw / 2, ty + 3)):
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 0, "sheet_pos": (tx - tw / 2, ty)}
         else:
             lead = [[(x1 + 1, py), (x1 + 18, py)]]
             out = {"text_at": (x1 + 18.5, py - 1), "anchor": "start", "rot": 0, "sheet_pos": (x1 + 18.5, py - 1)}
     else:  # 竖直折弯线 x = px
-        if tw <= (y1 - y0) - 4:
-            ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
-            tx = px - 1 if px - x0 > 4.6 else px + 3.2
+        ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
+        tx = px - 1 if px - x0 > 4.6 else px + 3.2
+        if tw <= (y1 - y0) - 4 and not hit((tx - 3, ty - tw / 2, tx, ty + tw / 2)):
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 90, "sheet_pos": (tx, ty - tw / 2)}
         else:
             n_u = sum(1 for b in p.bends if b["flat_axis"] != "v")
@@ -3955,8 +3959,10 @@ def _bend_note(p: ResolvedPart, i: int, text: str, at, box) -> dict:
             out = {"text_at": (tx, yn + 1.2), "anchor": "end" if left else "start", "rot": 0,
                    "sheet_pos": (tx - tw if left else tx, yn + 1.2)}
     r2 = lambda q: (round(q[0], 2), round(q[1], 2))  # noqa: E731
+    sx, sy = out["sheet_pos"]
+    bx = (sx - 3, sy, sx, sy + tw) if out["rot"] == 90 else (sx, sy, sx + tw, sy + 3)
     return {**out, "text_at": r2(out["text_at"]), "sheet_pos": r2(out["sheet_pos"]),
-            "leader": [[r2(q) for q in seg] for seg in lead]}
+            "leader": [[r2(q) for q in seg] for seg in lead], "box": tuple(round(v, 2) for v in bx)}
 
 
 def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
