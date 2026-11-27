@@ -396,23 +396,8 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
         if kind == "gtol":
             frac = shaft_gtol_fracs(p, views[0].scale if views else 1.0).get(gkey, 0.3)
-        if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号（剖切线在键槽中点）
-            cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
-            sc_ = views[0].scale if views else 1.0
-            R_ = max(dd for _, dd in p.shaft_steps) / 2
-            # 轮廓下沿到链式长度尺寸线 (R − d/2)·sc + 15；三角形 2.6 + 引线 7 + 方框 6 + 数字 4.5 放不下时方框会落进该行：
-            # 避开段中点的链式长度数字与两端尺寸界线
-            low = (R_ - d / 2) * sc_ + 15 < 2.6 + 7 + 6 + 4.5
-            hw_ = (text_width(f"({z1 - z0:g})", 3.5) / 2 + 3.5) / sc_
-
-            def dcost(t):
-                z = z0 + t * (z1 - z0)
-                c = -min([abs(z - c_) for c_ in cuts] or [1e9]) if cuts else 0.0
-                if low:
-                    c += 100 * (abs(z - (z0 + z1) / 2) < hw_) + 100 * (min(z - z0, z1 - z) * sc_ < 4.0)
-                return c + 0.01 * abs(t - 0.5)
-            if cuts or low:
-                frac = min((0.5, 0.2, 0.8, 0.3, 0.7, 0.15, 0.85, 0.1, 0.9), key=dcost)
+        if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号与链式长度数字（见 shaft_datum_frac）
+            frac = shaft_datum_frac(p, i, views[0].scale if views else 1.0)
         elif kind == "roughness":  # 环槽等的引线从槽口斜向右上：符号（文字在右）避开，离槽越远越好
             grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "groove"
                        and z0 - 1 <= (f["z0"] + f["z1"]) / 2 <= z1 + 1]
@@ -909,33 +894,67 @@ def gtol_frame_pos(ex: dict | None):
     return sp
 
 
-def _shaft_gtol_frame_dx(plan: "DrawingPlan") -> None:
-    """轴类主视图上方框格（shaft_gtol_layout 在模型坐标里排，不知道图幅）：右端超出图框时整体左移，
-    框格上方的 Ra 符号随之左移。左移量记 extra["frame_dx"]。"""
+def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None:
+    """轴类主视图上方框格（shaft_gtol_layout 在模型坐标里排，不知道图幅）：右端超出图框、或压在向上伸出的直径线
+    （及其左侧竖写文字）上时，框格沿行平移（引线仍落在框格内），框格上方的 Ra 随之平移。平移量记 extra["frame_dx"]（左移为正）。"""
     from .render_gdt import _widths
     lim = plan.sheet_size[0] - 7
-    for d in plan.dims:
-        ex = d.extra or {}
-        if d.view != "front" or d.kind != "gtol" or "sheet_pos" not in ex or "cells" not in ex or ex.get("attach"):
-            continue
+    up_x = []  # 向上伸出轮廓的直径线 x（文字在线左 4.5 mm 内）
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if p is not None and fv is not None and p.shaft_steps:
+        sc = fv.scale
+        for j in range(len(p.shaft_steps)):
+            if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up":
+                up_x.append(shaft_sx(fv, None, shaft_dia_z(p, j, sc)))
+        for k, b in enumerate(p.shaft_bores):
+            if not b.get("kw") and bore_dia_overflow(p, k, sc, _dia_text(b["d"], b["tol"], True)) == "up":
+                up_x.append(shaft_sx(fv, None, bore_dia_place(p, k, sc)))
+    frames = [d for d in plan.dims if d.view == "front" and d.kind == "gtol" and "sheet_pos" in (d.extra or {})
+              and "cells" in (d.extra or {}) and not d.extra.get("attach")]
+
+    def span(d, dx):
+        ex = d.extra
         lx = ex["elbow"]["x_leader"] if ex.get("elbow") else ex["sheet_pos"][0]
-        right = lx - 3.5 + sum(_widths(ex["cells"]))
-        if right <= lim:
+        return lx - 3.5 - dx, lx - 3.5 - dx + sum(_widths(ex["cells"]))
+
+    def clash_other(d, dx):  # 平移后压到同一行别的框格
+        a_, b_ = span(d, dx)
+        y_ = d.extra["sheet_pos"][1]
+        for o in frames:
+            if o is not d and abs(o.extra["sheet_pos"][1] - y_) < 1:
+                oa, ob = span(o, o.extra.get("frame_dx", 0.0))
+                if oa < b_ + 1 and a_ < ob + 1:
+                    return True
+        return False
+
+    def hits_dia(d, dx):
+        a_, b_ = span(d, dx)
+        return any(a_ - 0.5 < x < b_ + 5.0 for x in up_x)
+
+    for d in frames:
+        ex = d.extra
+        tot = sum(_widths(ex["cells"]))
+        a0, b0 = span(d, 0.0)
+        need_r = b0 > lim
+        if not need_r and not hits_dia(d, 0.0):
             continue
-        dx = round(min(right - lim, sum(_widths(ex["cells"])) - 7.0), 2)  # 引线至少留在框格内 3.5 mm
-        y_ = ex["sheet_pos"][1]
-        nb = (lx - 3.5 - dx, right - dx)
-        clash = False
-        for o in plan.dims:  # 左移后压到同一行别的框格：不移（留给 plan_shaft_drawing 换大图幅）
-            eo = o.extra or {}
-            if o is d or o.view != "front" or o.kind != "gtol" or "sheet_pos" not in eo or "cells" not in eo:
+        cands = [round(min(b0 - lim, tot - 7.0), 2)] if need_r else [0.0]  # 引线至少留在框格内 3.5 mm
+        for x in up_x:
+            if a0 - 0.5 < x < b0 + 5.0:
+                cands += [round(b0 - (x - 5.0), 2), round(a0 - (x + 0.5), 2)]  # 框格移到直径文字左侧 / 直径线右侧
+        ok = [c for c in cands if -2.5 <= c <= tot - 4.5 and span(d, c)[1] <= lim and span(d, c)[0] >= 12
+              and not clash_other(d, c) and not hits_dia(d, c)]
+        if not ok:
+            if need_r:
+                c = cands[0]
+                if clash_other(d, c):
+                    plan._xh_bad = True  # A4 时由 plan_shaft_drawing 换 A3 重排
+                    continue
+                ok = [c]
+            else:
                 continue
-            if abs(eo["sheet_pos"][1] - y_) < 1:
-                ox = (eo["elbow"]["x_leader"] if eo.get("elbow") else eo["sheet_pos"][0]) - 3.5 - eo.get("frame_dx", 0)
-                if ox < nb[1] + 1 and nb[0] < ox + sum(_widths(eo["cells"])) + 1:
-                    clash = True
-        if clash:
-            plan._xh_bad = True  # A4 时由 plan_shaft_drawing 换 A3 重排
+        dx = min(ok, key=abs)
+        if abs(dx) < 1e-6:
             continue
         d.extra = {**ex, "frame_dx": dx}
         for r in plan.dims:  # 框格上方的 Ra（on_frame = 该框格的 key）
@@ -1816,7 +1835,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                        layout="shaft", revisions=list(spec.revisions))
     plan._sec_z = [(f["z0"] + f["z1"]) / 2 for f in kws]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
     precision_sheet(plan, p)
-    _shaft_gtol_frame_dx(plan)
+    _shaft_gtol_frame_dx(plan, p)
     if spec.dimensions != "none":
         shaft_dim_sheet(plan, p)
     if p.gear:  # 齿轮轴：参数表（右上角）
@@ -3336,6 +3355,28 @@ def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | No
     return "down" if tw + 3 <= (R - d_out / 2) * sc + 15 - 1.5 else "up"
 
 
+def shaft_datum_frac(p: ResolvedPart, i: int, sc: float) -> float:
+    """轴段 i 下方基准符号在段内的位置比例：避开键槽剖切符号（剖切线在键槽中点）；
+    方框会落进链式长度尺寸行时，避开段中点的长度数字与两端尺寸界线。"""
+    z0, z1 = p.step_z(i)
+    d = p.shaft_steps[i][1]
+    cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
+    R_ = max(dd for _, dd in p.shaft_steps) / 2
+    # 轮廓下沿到链式长度尺寸线 (R − d/2)·sc + 15；三角形 2.6 + 引线 7 + 方框 6 + 数字 4.5 放不下时方框会落进该行
+    low = (R_ - d / 2) * sc + 15 < 2.6 + 7 + 6 + 4.5
+    hw_ = (text_width(f"({z1 - z0:g})", 3.5) / 2 + 3.5) / sc
+
+    def dcost(t):
+        z = z0 + t * (z1 - z0)
+        c = -min([abs(z - c_) for c_ in cuts] or [1e9]) if cuts else 0.0
+        if low:
+            c += 100 * (abs(z - (z0 + z1) / 2) < hw_) + 100 * (min(z - z0, z1 - z) * sc < 4.0)
+        return c + 0.01 * abs(t - 0.5)
+    if cuts or low:
+        return min((0.5, 0.2, 0.8, 0.3, 0.7, 0.15, 0.85, 0.1, 0.9), key=dcost)
+    return 0.5
+
+
 def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | None:
     """轴段直径文字长于尺寸线时伸出轮廓的方向：下方（到链式长度尺寸行之间）放得下、且该段下方没有基准符号 → down，
     否则 up（上方是粗糙度、几何公差的位置，尽量留给它们）。不溢出返回 None。与 render_shaft._vdim 一致。"""
@@ -3345,12 +3386,18 @@ def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | N
         return None
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
-    has_datum = any(x["target"] == f"step:{j}" for x in p.datums)
+    has_datum = False
+    if any(x["target"] == f"step:{j}" for x in p.datums):  # 该段下方有基准符号：离直径线近（方框 6 mm + 文字）才挡住
+        z0_, z1_ = p.step_z(j)
+        zd_ = z0_ + shaft_datum_frac(p, j, sc) * (z1_ - z0_)
+        has_datum = abs(zd_ - shaft_dia_z(p, j, sc)) * sc < 10
     if tw + 3 <= room and not has_datum:
         return "down"
-    if p.geotols and not has_datum:  # 上方是几何公差框格行（轮廓上约 22 mm）：长文字放不进，往下伸（_shaft_dia_lift 移到尺寸行之下）
+    z = shaft_dia_z(p, j, sc)
+    under_sec = any(f["kind"] == "keyway" and abs(z - (f["z0"] + f["z1"]) / 2) < f["d"] / 2 + 8 / sc
+                    for f in p.shaft_features)  # 下方是键槽移出断面图：移到尺寸行之下会压断面
+    if p.geotols and not has_datum and not under_sec:  # 上方是几何公差框格行（轮廓上约 22 mm）：长文字放不进，往下伸（_shaft_dia_lift 移到尺寸行之下）
         from .render_gdt import _widths
-        z = shaft_dia_z(p, j, sc)
         for g in p.geotols:
             key = f"{g['type']}@{g['target']}"
             zl = shaft_gtol_layout(p, sc).get(key)
@@ -4542,6 +4589,11 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             py_ = eo["sheet_pos"][1]
             for qx, qy in eo["sheet_pts"]:
                 prof.append((qx - 0.2, min(qy, py_) - 1.5, qx + 0.2, max(qy, py_) + 1.5))
+    for o in plan.dims:  # 标在框格上方的 Ra（√ 长边斜向右上、横线向右约 21 mm）：伸出的直径文字不压它
+        eo = o.extra or {}
+        if o.view == "front" and o.kind == "roughness" and eo.get("on_frame") and "sheet_at" in eo:
+            rx, ry = eo["sheet_at"]
+            prof.append((rx - 2.6, ry - 0.3, rx + 7 + len(o.text) * 2.0, ry + 9))
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
     tboxes = []  # 向上伸出的直径文字框
