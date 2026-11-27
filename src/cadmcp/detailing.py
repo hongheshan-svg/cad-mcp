@@ -4064,6 +4064,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         obst_o = [ob for ob in obst if not (abs(ob[0] - own[0]) < 0.01 and abs(ob[1] - own[1]) < 0.01)]  # 不含自身原位置
         cands_ = [(ax - dx_ if right else ax + dx_, -1 if right else 1) for dx_ in (6, 10, 16)]  # 反向书写
         cands_ += [(b + 2.5, 1) for a, b, top in lines if a - 0.3 < lbox(lb)[2] and lbox(lb)[0] < b + 0.3]  # 平移到直径线右侧
+        cands_ += [(a - 1.5, -1) for a, b, top in lines if a - 0.3 < lbox(lb)[2] and lbox(lb)[0] < b + 0.3]  # 整段移到直径线左侧
         ay_ = lb["anchor"][1]
         cands_ = [(e_, d_) for e_, d_ in cands_ if abs(e_ - ax) <= 1.2 * (y - ay_)]  # 引线不能太平（穿过一串尺寸/剖切符号）
         for ex_, dir_ in cands_:
@@ -4073,9 +4074,9 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             others = [lbox(q.extra["label"]) for q in labels if q is not o]
             if bx[0] > MARGIN + 2 and bx[2] < W - MARGIN - 2 and not hit_lines(bx) \
                     and not any(_box_hit(bx, ob) > 0 for ob in others) \
-                    and not any(_box_hit(bx, ob) > 0 for ob in obst_o if ob[1] > y - 5) \
+                    and not any(_box_hit((bx[0], bx[1] + 0.6, bx[2], bx[3]), ob) > 0 for ob in obst_o if ob[1] > y - 5) \
                     and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst_o + others + tboxes if ob[3] - ob[1] > 2):
-                o.extra = {**o.extra, "label": nl}
+                o.extra = {**o.extra, "label": nl}  # ↑ 数字占位按 4.2 高估，紧贴其上的标注行实际不压（实际字高约 3.5）
                 break
         else:  # 反向也不行：整条标注抬到这些直径线顶端之上（引线变长）
             top_ = max(t for a, b, t in lines if lbox(lb)[0] < b + 0.3 and a - 0.3 < lbox(lb)[2]) + 1.0
