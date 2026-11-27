@@ -3514,7 +3514,9 @@ def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[flo
         n_ = sum(c[0] - 3 / sc <= o <= c[0] + (w + (1.5 if c[2] == 2 else 0.0)) / sc for o in obs)
         if c[2] == 2 and n_:  # 齿段内的符号紧贴轮廓，竖线必穿文字：只在完全不压时用
             n_ += 5
-        return n_ + 3 * sum(_cut_z_clear(g, None, sc, [zone]) is None for g in kws) + c[4]  # 粗短线 + 字母
+        szone = _flank_zone(c[0], c[0], w, sc)
+        return (n_ + sum(_cut_z_clear(g, None, sc, [zone]) is None for g in kws)  # 粗短线碰延长线
+                + 3 * sum(_cut_z_clear(g, None, sc, [szone]) is None for g in kws) + c[4])  # 字母压符号
     best = min(cands, key=lambda c: (cost(c), c[3], c[2]))
     return best[0], best[1]
 
@@ -3528,10 +3530,11 @@ def _flank_zone(zt: float, zend: float, w: float, sc: float) -> tuple[float, flo
     return min(zend, zt - 3 / sc) - 4 / sc, max(zend, zt + w / sc) + 1 / sc
 
 
-def gear_flank_ra_zone(p: ResolvedPart, f: dict, sc: float) -> tuple[float, float]:
+def gear_flank_ra_zone(p: ResolvedPart, f: dict, sc: float, symbol_only: bool = False) -> tuple[float, float]:
+    """齿面 Ra 占的轴向范围（剖切符号要让开）；symbol_only：只算符号本身（不含延长线）。"""
     text = f"Ra {p.gear['flank_ra']:g}"
     zt, zend = gear_flank_ra_z(p, f, text, sc)
-    return _flank_zone(zt, zend, _flank_ra_w(text), sc)
+    return _flank_zone(zt, zt if symbol_only else zend, _flank_ra_w(text), sc)
 
 
 def _gear_flank_ext_sheet(plan: "DrawingPlan") -> None:
@@ -3556,6 +3559,8 @@ def shaft_cut_z(p: ResolvedPart, f: dict, sc: float) -> float:
     if zd is None and not zones:
         return zc
     z = _cut_z_clear(f, zd, sc, zones)
+    if z is None and zones:  # 整段（符号 + 延长线）让不开：至少让开符号本身
+        z = _cut_z_clear(f, zd, sc, [gear_flank_ra_zone(p, g, sc, True) for g in p.shaft_features if g["kind"] == "gear"])
     if z is None and zd is not None:  # 两样都让不开：先让基准
         z = _cut_z_clear(f, zd, sc)
     return zc if z is None else z
