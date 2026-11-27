@@ -99,6 +99,22 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                 out.append(_f("R007", "error", pk["name"], "型腔深度超过料厚", "改为 through 或减小深度"))
             elif floor < 1.5:
                 out.append(_f("R007", "warning", pk["name"], f"型腔底厚 {floor:.2f} mm < 1.5 mm"))
+    # R012 孔骑在型腔侧壁上：同面的孔一部分落在型腔底、一部分落在原表面，钻头单边切削会偏斜，孔口也残缺
+    for pk in p.pockets:
+        if pk["face"] not in ("top", "bottom") or pk.get("at") is not None:
+            continue
+        poly = list(pk["profile"].outline)
+        for h in p.holes:
+            if h.face != pk["face"] or h.at is not None:
+                continue
+            r = h.max_dia / 2
+            for inst in h.instances:
+                d = dist_to_outline(inst.uv, poly)  # 型腔内为正
+                if -r - 1.0 < d < r:
+                    out.append(_f("R012", "error" if abs(d) < r else "warning", f"{h.name}[{inst.index}]",
+                                  f"孔骑在型腔 {pk['name']} 的侧壁上（孔心距型腔边 {d:+.2f} mm，孔半径 {r:g}）"
+                                  if abs(d) < r else f"孔离型腔 {pk['name']} 侧壁仅 {-d - r:.2f} mm < 1 mm",
+                                  "孔整个放进型腔底面内，或离型腔边 ≥ 1 mm"))
     # R009 深孔：孔深/钻径 > 10 普通麻花钻难加工（排屑、偏斜）
     for h in p.holes:
         if h.slot:

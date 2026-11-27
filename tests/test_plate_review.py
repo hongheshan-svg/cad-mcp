@@ -1,4 +1,4 @@
-"""板块类加工审查规则 R009–R011。"""
+"""板块类加工审查规则 R009–R012。"""
 from cadmcp import rules
 from cadmcp.ir import PartSpec
 from cadmcp.ir.resolve import resolve_part
@@ -137,3 +137,13 @@ def test_painter_order():
     far = Box(9, 10, 9, 10, 0, 10)     # 远角的腿（+X+Y 远）
     order = _painter_order([top, leg, far])
     assert order.index(leg) < order.index(top) and order.index(far) < order.index(leg)
+
+
+def test_hole_on_pocket_wall():
+    pk = {"feature": "pocket", "name": "PK", "profile": {"shape": "rect", "width": 40, "height": 30, "corner_radius": 4},
+          "depth": 10}
+    h = lambda x: {"feature": "hole", "name": "H", "type": "clearance", "size": "M6", "positions": [[x, 0]]}  # noqa: E731
+    assert ("R012", "H[0]", "error") in _rules([pk, h(20)], t=20)  # 孔心正在型腔边上
+    assert ("R012", "H[0]", "warning") in _rules([pk, h(23.5)], t=20)  # 孔边离型腔边 0.2 mm
+    assert not any(r[0] == "R012" for r in _rules([pk, h(0)], t=20))  # 整孔在型腔底
+    assert not any(r[0] == "R012" for r in _rules([pk, h(30)], t=20))
