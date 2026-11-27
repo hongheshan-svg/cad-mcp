@@ -3363,6 +3363,7 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
         return out_ or [(z - sgn * min(5 / sc, Ls / 2), 0.0)]
 
     gs_all = [g for g in p.geotols if g["target"].startswith(("step:", "shoulder:"))]
+    ROWS_ = (0, 1, 2, 3) if len(gs_all) > 6 else (0, 1, 2)  # 框格多（两处轴承位 + 多个配合段）时放开第四行
     info = []
     for g in gs_all:
         w = sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
@@ -3406,7 +3407,7 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
             for k, it in enumerate(info):
                 best = None
                 for z, pref in it["cands"]:
-                    for row in (0, 1, 2):
+                    for row in ROWS_:
                         c = solo(it, z, row, pref) + sum(pair(it, (z, row), info[j], st[j][:2])
                                                          for j in range(len(info)) if j != k)
                         if best is None or c < best[0] - 1e-9:
@@ -3423,9 +3424,9 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
                     base_c = total(st)
                     best = None
                     for zi, pi in info[i]["cands"]:
-                        for ri in (0, 1, 2):
+                        for ri in ROWS_:
                             for zj, pj in info[j]["cands"]:
-                                for rj in (0, 1, 2):
+                                for rj in ROWS_:
                                     t = dict(st)
                                     t[i], t[j] = (zi, ri, pi), (zj, rj, pj)
                                     c = total(t)
@@ -3444,7 +3445,7 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
             it = info[k]
             best = None
             for z, pref in it["cands"]:
-                for row in (0, 1, 2):
+                for row in ROWS_:
                     c = solo(it, z, row, pref) + sum(pair(it, (z, row), info[j], st[j][:2]) for j in st)
                     if best is None or c < best[0]:
                         best = (c, (z, row, pref))
@@ -4399,6 +4400,15 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         vlines.append((xline_, y0 - 1, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
         tboxes.append((x0, start, x1, start + tw))
+    for d in plan.dims:  # 几何公差框格的竖引线（框格行 → 轮廓 / 轴肩水平引线）：数字与引出标注同样要让开
+        ex = d.extra or {}
+        if d.view != "front" or d.kind != "gtol" or "sheet_pos" not in ex or "sheet_at" not in ex:
+            continue
+        gx = ex["elbow"]["x_leader"] if ex.get("elbow") else ex["sheet_pos"][0]
+        gy0 = ex["elbow"]["y"] if ex.get("elbow") else ex["sheet_at"][1]
+        gy1 = ex["sheet_pos"][1]
+        vlines.append((gx, gy0, gy1))
+        lines.append((gx - 0.4, gx + 0.4, gy1))
     _shaft_num_dodge_vlines(plan, vlines)
     # 延长的直径线（及文字）穿过上方引出标注（环槽/退刀槽/倒角）文字：该标注反向书写（引线斜向另一侧）
     xl = {}

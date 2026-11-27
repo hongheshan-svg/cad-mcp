@@ -112,6 +112,8 @@ def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
     fits = {i: g for i, (t, _) in enumerate(steps) if (g := _grade(t)) and g[1] <= 7}
     keyed = {f.step for f in spec.features if getattr(f, "feature", "") == "keyway"}  # 有键槽 = 装轮毂/联轴器，不是轴承位
     bearings = [i for i, (fd, it) in fits.items() if fd in _BEARING_FITS and it <= 6 and i not in keyed]
+    if len(bearings) > 2:  # 一根轴一般两处轴承（两端支承）：取最外两处；中间的 k6/m6 段多为过盈装齿轮/套，按一般配合段注跳动
+        bearings = [min(bearings), max(bearings)]
     datums, tols, rough = list(spec.datums), list(spec.tolerances), list(spec.roughness)
     bores = [(k, g, float(ev(b.diameter))) for k, b in enumerate(spec.base.bores) if (g := _grade(b.tolerance.lower() if b.tolerance else None)) and g[1] <= 7]
     flange = {fh.step for fh in spec.base.flange_holes}
