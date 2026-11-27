@@ -2843,7 +2843,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         if any(d.view == v.type and d.kind == "ordinate" for d in plan.dims):  # 坐标尺寸带（下方、右侧）
             hard.append((cx - w / 2 - 2, cy - h / 2 - 14, cx + w / 2 + 2, cy - h / 2))
             hard.append((cx + w / 2, cy - h / 2 - 2, cx + w / 2 + 12, cy + h / 2 + 2))
-        hard.append((cx - w / 2 - 2, cy - h / 2 - 26, cx + w / 2 + 2, cy - h / 2 - 8))  # 总体尺寸（下）
+        hard.append((cx - w / 2 - 2, cy - h / 2 - 26, cx + w / 2 + 2, cy - h / 2 - 4))  # 总体尺寸（下；数字顶端约在底边下 6 mm）
         hard.append((cx - w / 2 - 26, cy - h / 2 - 2, cx - w / 2 - 6, cy + h / 2 + 2))  # 总体尺寸（左）
         if v.label:
             hard.append((cx - 10, cy + h / 2 + 2, cx + 10, cy + h / 2 + 9))
