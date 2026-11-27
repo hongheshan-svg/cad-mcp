@@ -383,3 +383,15 @@ def test_short_bearing_seat_enlarges():
     assert plan.scale > 1.0
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_shaft_ra_on_dia_line_when_no_room():
+    """短轴段上方、下方都放不下 Ra、直径文字向上伸出：Ra 标在直径尺寸线延长线上（转 90° 接在文字后，同内孔）。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S174", "part_no": "S-174", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 50, "diameter": 25, "tolerance": "h7"}, {"length": 15, "diameter": 30}, {"length": 20, "diameter": 22, "tolerance": "h7"}], "cross_holes": [{"step": 2, "diameter": 8}]}, "features": [], "auto_precision": true}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    ra = [d for d in plan.dims if d.kind == "roughness" and (d.extra or {}).get("on_dim", "").startswith("step")]
+    assert ra and ra[0].extra["rot"] == 90
+    dia = next(d for d in plan.dims if d.ref == ra[0].extra["on_dim"])
+    assert abs(ra[0].extra["sheet_at"][0] - dia.extra["sheet_pts"][0][0]) < 0.01
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

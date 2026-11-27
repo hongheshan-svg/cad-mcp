@@ -426,6 +426,9 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
                 g = g_here[0]
                 fr = shaft_gtol_fracs(p, sc).get(f"{g['type']}@{g['target']}", 0.3)
                 return "front", (z0 + fr * (z1 - z0), d / 2), (0, 1), {"on_frame": f"{g['type']}@{g['target']}"}
+            if best[0] > 0 and shaft_dia_overflow(p, i, sc, _shaft_dia_label(p, i)) == "up":
+                # 上下都无干净位置、直径文字伸出轮廓上方：Ra 标在直径尺寸线的延长线上（GB/T 131，同内孔，转 90° 接在文字后）
+                return "front", (shaft_dia_z(p, i, sc), d / 2), (0, 1), {"on_dim": f"step{i}_dia"}
             if side < 0:
                 return "front", (unbreak_z(p, z0 + frac * (z1 - z0)), -(d / 2)), (0, -1)
         return "front", (unbreak_z(p, z0 + frac * (z1 - z0)), (d / 2) if kind != "datum" else -(d / 2)), (0, 1 if kind != "datum" else -1)
@@ -4782,8 +4785,12 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
     def dia_item(d):  # (伸出方向, 文字框, 直径线 x)；轴段直径与内孔直径（孔里写不下时文字在外轮廓之外）
         if d.ref.startswith("step"):
             i = int(d.ref[4:].split("_")[0])
-            return shaft_dia_overflow(p, i, sc, d.text), shaft_dia_text_box(p, i, fv, d.text), \
+            ov, box, x = shaft_dia_overflow(p, i, sc, d.text), shaft_dia_text_box(p, i, fv, d.text), \
                 shaft_sx(fv, None, shaft_dia_z(p, i, sc))
+            ra = next((r for r in plan.dims if r.kind == "roughness" and (r.extra or {}).get("on_dim") == d.ref), None)
+            if ra is not None and ov == "up" and box is not None:  # 尺寸线上接着的 Ra（转 90°，在线左侧约 8.4 mm）
+                box = (min(box[0], x - 8.9), box[1], box[2], box[3] + ra_on_dim_len(ra.text))
+            return ov, box, x
         k = int(d.ref[4:].split("_")[0])
         ex = d.extra or {}
         ov = bore_dia_overflow(p, k, sc, d.text)
@@ -4832,9 +4839,11 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if start + tw >= H - MARGIN - 2:  # 抬到上方尺寸行之上会出图框：记下缺口，由 plan_shaft_drawing 下移视图重排
             plan._lift_need = max(getattr(plan, "_lift_need", 0.0), start + tw - (H - MARGIN - 2) + 1)
             continue
-        if start > y0 + 1e-6:
+        has_ra = any(r.kind == "roughness" and (r.extra or {}).get("on_dim") == d.ref for r in plan.dims)
+        if start > y0 + 1e-6 or (has_ra and (d.extra or {}).get("over_at") is None):  # 接 Ra 的：文字起点总要写定
             ex = d.extra or {}
-            d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
+            tw_t = text_width(d.text, 3.5)
+            d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw_t / 2, 2))}
         vlines.append((xline_, y0 - 1, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
         tboxes.append((x0, start, x1, start + tw))
