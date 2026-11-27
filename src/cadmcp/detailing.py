@@ -4295,7 +4295,8 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
         ex = d.extra
         xa, xb = sorted(q[0] for q in ex["sheet_pts"])
         tw = text_width(d.text, 3.5)
-        if tw > xb - xa - 1.6:
+        outside = tw > xb - xa - 1.6  # 写在界线外的短数字：只在左右两侧之间换
+        if outside and "text_x" not in ex:
             continue
         y = ex["sheet_pos"][1]
         own = {round(q[0], 2) for q in ex["sheet_pts"]}
@@ -4309,6 +4310,18 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
         free = lambda c_: not any(a - 0.4 < c_ + tw / 2 and c_ - tw / 2 < b + 0.4 for a, b in obs)  # noqa: E731
         c0 = ex.get("text_x", ex["sheet_pos"][0])
         if free(c0):
+            continue
+        if outside:
+            W_ = plan.sheet_size[0]
+            sides = [(xa - 1.5 - tw / 2, -1), (xb + 1.5 + tw / 2, 1)]
+            if c0 > xb:
+                sides.reverse()
+            sides.sort(key=lambda t: abs(t[0] - c0) > 1)  # 本侧先：再往外挪（尺寸线随之延长）
+            alt = [c + sg * k * 0.5 for c, sg in sides for k in range(9)]
+            alt = [c for c in alt if 7 < c - tw / 2 and c + tw / 2 < W_ - 7]
+            ok = [c for c in alt if free(c)]
+            if ok:
+                d.extra = {**ex, "text_x": round(ok[0], 2), "sheet_pos": (round(ok[0], 2), y)}
             continue
         lo, hi = xa + tw / 2 + 0.8, xb - tw / 2 - 0.8
         cands = [lo + k * 0.25 for k in range(int((hi - lo) / 0.25) + 1)]
