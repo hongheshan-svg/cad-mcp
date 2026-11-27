@@ -62,8 +62,8 @@ for n in range(N):
             stats["invalid"] += 1; continue
         plan = plan_part_drawing(DrawingSpec(model=p.name), p)
         svg, out = render(plan, p)
-        from cadmcp.detailing import view_overlaps
-        vo = view_overlaps(plan)
+        from cadmcp.detailing import view_overlaps, dim_line_overlaps
+        vo = view_overlaps(plan) + [("collinear", a, b) for a, b in dim_line_overlaps(plan)]
         if vo:
             stats["viewclash"] += 1
             bad.append((n, "viewclash", vo[:3], None, locals().get("spec") or locals().get("asm")))

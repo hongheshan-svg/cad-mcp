@@ -5165,6 +5165,22 @@ def _view_box(v: "ViewPlan") -> tuple[float, float, float, float] | None:
     return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
 
 
+def dim_line_overlaps(plan: "DrawingPlan", tol: float = 0.5) -> list[tuple[str, str]]:
+    """同一视图里两条线性尺寸的尺寸线共线且区间重叠（首尾相接的链式尺寸不算）：看起来连成一条，读不出各自范围。
+    文字冲突检测查不出（线压线不算穿字）。用规划层 sheet_pts / sheet_pos（orient h/v）。"""
+    rows = []
+    for d in plan.dims:
+        e = d.extra or {}
+        o = e.get("orient")
+        if d.kind != "linear" or o not in ("h", "v") or "sheet_pts" not in e or "sheet_pos" not in e:
+            continue
+        k = 0 if o == "h" else 1  # 沿线方向的坐标分量
+        a, b = sorted(q[k] for q in e["sheet_pts"])
+        rows.append((d.view, o, round(e["sheet_pos"][1 - k], 1), a, b, d.ref))
+    return [(x[5], y[5]) for i, x in enumerate(rows) for y in rows[i + 1:]
+            if x[:3] == y[:3] and x[3] < y[4] - tol and y[3] < x[4] - tol]
+
+
 def view_overlaps(plan: "DrawingPlan", pad: float = 1.0) -> list[tuple[str, str]]:
     """视图本体（包围框）两两重叠的列表：排布回归用（文字冲突检测查不到视图叠在一起）。"""
     bx = []
@@ -5348,6 +5364,9 @@ def check_drawing(plan: DrawingPlan, rendered: dict[str, Any] | None = None) -> 
         c = rendered["crossings"]
         f("D022", "warning", f"{len(c)} 处引线/尺寸线穿过标注文字，如 {c[0]!r}",
           "调整孔位标注或指定更大图幅（sheet）；人工核对")
+    dl = dim_line_overlaps(plan)
+    if dl:
+        f("D023", "warning", f"{len(dl)} 处尺寸线共线重叠，如 {dl[0][0]!r} 与 {dl[0][1]!r}", "人工核对尺寸排行")
     if plan.model_kind == "part" and not any(d.kind == "linear" for d in plan.dims):
         f("D006", "error", "缺少总体尺寸")
     if plan.model_kind == "assembly" and not plan.bom:

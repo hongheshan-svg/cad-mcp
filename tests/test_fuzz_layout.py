@@ -151,8 +151,8 @@ def test_fuzz_layout_clean(js):
     p = resolve_part(PartSpec.model_validate(json.loads(js)))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     _, out = render(plan, p)
-    from cadmcp.detailing import view_overlaps
-    assert view_overlaps(plan) == []
+    from cadmcp.detailing import view_overlaps, dim_line_overlaps
+    assert view_overlaps(plan) == [] and dim_line_overlaps(plan) == []
     assert out["crossings"] == [] and out["collisions"] == []
 
 
@@ -185,8 +185,8 @@ def test_fuzz_asm_layout_clean(js):
     plan = plan_assembly_drawing(DrawingSpec(model=d["asm"]["name"]), a)
     _, out = render(plan, a)
     assert out["crossings"] == [] and out["collisions"] == []
-    from cadmcp.detailing import view_overlaps
-    assert view_overlaps(plan) == []
+    from cadmcp.detailing import view_overlaps, dim_line_overlaps
+    assert view_overlaps(plan) == [] and dim_line_overlaps(plan) == []
     W = plan.sheet_size[0]  # 轴测图不进右侧明细表一栏
     top = 5 + 56 + 12 + 5 * len(plan.notes) + (7 * (len(plan.bom) + 1) if plan.bom else 0)
     for v in plan.views:
