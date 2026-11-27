@@ -378,9 +378,10 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 for sg in ex["leader_segs"]:
                     ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in sg],
                                                         "font": "SOLIDFONT", "width": 0.0}, "齿面粗糙度：引线指向分度线"))
-            if d.kind == "roughness" and ex.get("ext_pts"):  # 齿面 Ra：分度线延长到符号尖端（细点画线）
+            if d.kind == "roughness" and ex.get("ext_pts"):  # 齿面 Ra：分度线延长线（细点画线）；孔壁 Ra：轮廓延长线（细实线）
                 ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in ex["ext_pts"]],
-                                                    "font": "CTRLFONT", "width": 0.0}, "齿面粗糙度：分度线延长线"))
+                                                    "font": "SOLIDFONT" if ex.get("ext_solid") else "CTRLFONT", "width": 0.0},
+                                    "粗糙度符号所在的延长线"))
             if d.kind == "datum":
                 ops.append(NativeOp("tk.drw.datum", {"drawing": D, "view": vw, "at": at, "pos": pos, "label": d.text}))
             elif d.kind == "gtol":

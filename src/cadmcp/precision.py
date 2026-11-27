@@ -78,9 +78,26 @@ def runout(d: float, grade: int) -> float:
 PIN_HOLE_POSITION = 0.03
 
 
-def auto_plate_precision(spec: PartSpec) -> PartSpec:
+def _disc_bore(spec: PartSpec, fit_holes, ev):
+    """圆形底座（拉伸圆盘：端盖、法兰、垫圈类）上与外圆同心、从顶/底面钻的配合孔（中心孔）：返回 (孔, IT)，否则 None。"""
+    prof = spec.base.profile
+    if getattr(prof, "shape", "") != "circle":
+        return None
+    cx, cy = (float(ev(v)) for v in prof.center)
+    for f, it in fit_holes:
+        if f.face in ("top", "bottom") and f.pattern is None and len(f.positions) == 1:
+            x, y = (float(ev(v)) for v in f.positions[0])
+            if abs(x - cx) < 1e-6 and abs(y - cy) < 1e-6:
+                return f, it
+    return None
+
+
+def auto_plate_precision(spec: PartSpec, ev=float) -> PartSpec:
     """板块类：有配合孔（公差带 IT ≤ 7，如销孔 H7）且用户未写基准/几何公差时，底面为 A、左侧面 B、前侧面 C，
-    配合孔注对 A|B|C 的位置度 Φ0.03（经验值）；配合孔按公差等级补 Ra。"""
+    配合孔注对 A|B|C 的位置度 Φ0.03（经验值）；配合孔按公差等级补 Ra。
+    圆盘类（圆形底座 + 同心配合中心孔，如端盖、法兰盘）：中心孔轴线为基准 A（回转件以孔定心，不用外形的面），
+    贴合端面（有止口凸台的一面，否则底面）注对 A 的端面圆跳动（GB/T 1184 圆跳动 7 级，主参数 = 外径），
+    其余配合孔注对 A 的位置度 Φ0.03（经验值）。"""
     from .ir.part import Hole
     fit_holes = []
     for f in spec.features:
@@ -91,6 +108,18 @@ def auto_plate_precision(spec: PartSpec) -> PartSpec:
     if not fit_holes:
         return spec
     datums, tols, rough = list(spec.datums), list(spec.tolerances), list(spec.roughness)
+    disc = _disc_bore(spec, fit_holes, ev)
+    if disc is not None and not datums and not tols:
+        from .ir.part import Boss
+        bore, it = disc
+        datums = [Datum(name="A", target=f"hole:{bore.name}")]
+        faces = {b.face for b in spec.features if isinstance(b, Boss)}
+        seat = "top" if "top" in faces else "bottom" if "bottom" in faces else "bottom"
+        D = float(ev(spec.base.profile.diameter))
+        tols.append(GeoTol(type="circular_runout", value=runout(D, 7), target=f"face:{seat}", datums=["A"]))
+        for f, _ in fit_holes:
+            if f is not bore:
+                tols.append(GeoTol(type="position", value=PIN_HOLE_POSITION, target=f"hole:{f.name}", datums=["A"]))
     if not datums and not tols:
         datums = [Datum(name="A", target="face:bottom"), Datum(name="B", target="face:left"),
                   Datum(name="C", target="face:front")]
@@ -106,7 +135,7 @@ def auto_plate_precision(spec: PartSpec) -> PartSpec:
 def auto_shaft_precision(spec: PartSpec, ev) -> PartSpec:
     """返回补全后的 spec（不改原对象）。ev：表达式求值（轴段长度/直径可能是参数表达式）。"""
     if not isinstance(spec.base, ShaftBase):
-        return auto_plate_precision(spec) if getattr(spec.base, "type", "") == "extrude" else spec
+        return auto_plate_precision(spec, ev) if getattr(spec.base, "type", "") == "extrude" else spec
     steps = [(s.tolerance, float(ev(s.diameter))) for s in spec.base.steps]
     gears = {f.step for f in spec.features if isinstance(f, ShaftGear)}
     fits = {i: g for i, (t, _) in enumerate(steps) if (g := _grade(t)) and g[1] <= 7}

@@ -525,6 +525,10 @@ def _gear_drawing_ops(plan, model_file: str) -> list[NativeOp]:
             ops.append(NativeOp("leader_note", {"view": d.view, "text": d.text, "at_model": None, "ref": d.ref,
                                                 "text_pos": lb["text_at"], "anchor": lb["anchor"]}, "孔径引线标注"))
         elif d.kind == "roughness":
+            if ex_.get("ext_pts"):  # 轮廓线延长线（细实线），符号尖端在其上
+                ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in ex_["ext_pts"]],
+                                                  "style": "SOLID", "weight": "thin", "ref": d.ref + ":ext"},
+                                    "孔壁轮廓线延长到粗糙度符号尖端（GB/T 131）"))
             ops.append(NativeOp("surface_finish", {"view": d.view, "ref": d.ref, "at": ex_.get("sheet_at"), "pos": None,
                                                    "fallback_text": f"√{d.text}", "at_model": None, "ra": d.value,
                                                    "leader": False}))

@@ -95,9 +95,23 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
             s.poly(pts, THICK)
         else:
             s.circle(ex, ey, rb, THICK)
-    for h in parts["others"]:
+    for h in parts["others"]:  # 腹板孔/均布孔：孔圆（沉孔加孔口圆）；均布孔画分布圆与径向中心线，其余画十字中心线
+        c = getattr(h, "circular", None)
+        if c and len(h.instances) > 1:
+            s.circle(ex, ey, c["pcd"] / 2 * sc, THIN, CENTER)
         for inst in h.instances:
-            s.circle(ex + inst.xyz[0] * sc, ey + inst.xyz[1] * sc, h.max_dia / 2 * sc, THICK)
+            hx, hy = ex + inst.xyz[0] * sc, ey + inst.xyz[1] * sc
+            s.circle(hx, hy, h.max_dia / 2 * sc, THICK)
+            if h.drill < h.max_dia - 1e-6:
+                s.circle(hx, hy, h.drill / 2 * sc, THICK)
+            e_ = h.max_dia / 2 * sc + 2
+            if c and len(h.instances) > 1:
+                L_ = math.hypot(hx - ex, hy - ey) or 1.0
+                ux, uy = (hx - ex) / L_, (hy - ey) / L_
+                s.line(hx - ux * e_, hy - uy * e_, hx + ux * e_, hy + uy * e_, THIN, CENTER)
+            else:
+                s.line(hx - e_, hy, hx + e_, hy, THIN, CENTER)
+                s.line(hx, hy - e_, hx, hy + e_, THIN, CENTER)
 
     # ---- 尺寸与精度符号 ----
     for d in plan.dims:
@@ -108,6 +122,9 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
         elif d.kind == "linear" and ex_.get("orient") in ("h", "v") and "sheet_pts" in ex_:
             draw_sheet_linear(s, d)
         elif d.kind == "roughness" and "sheet_at" in ex_:
+            if ex_.get("ext_pts"):  # 轮廓线的延长线（细实线），符号尖端在其上
+                (xa_, ya_), (xb_, yb_) = ex_["ext_pts"]
+                s.line(xa_, ya_, xb_, yb_, THIN)
             render_gdt.draw(s, "roughness", *ex_["sheet_at"], ex_, d.text)
         elif d.kind == "datum" and "sheet_at" in ex_:
             render_gdt.datum(s, *ex_["sheet_at"], tuple(ex_["normal"]), d.text, ex_.get("reach", 7.0))
@@ -122,7 +139,10 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
             exb, eyb = lb["elbow"]
             s.line(ax, ay, exb, eyb, THIN)
             s.line(exb, eyb, lb["end"][0], lb["end"][1], THIN)
-            _arrow(s, ax, ay, ax - exb, ay - eyb)
+            if lb.get("dot"):  # 指在中心线（分布圆）上：圆点
+                s.parts.append(f"<circle cx='{ax:.2f}' cy='{s.y(ay):.2f}' r='0.6' fill='black'/>")
+            else:
+                _arrow(s, ax, ay, ax - exb, ay - eyb)
             s.text(*lb["text_at"], d.text, 3.5)
         else:
             continue

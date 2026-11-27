@@ -311,6 +311,10 @@ def _face_gaps(face: str, p: ResolvedPart | None, axis: str) -> list[tuple[float
                 and pk["face"] in ("top", "bottom") and axis[-1] in "xy":
             vals = [vc((x, y, 0), axis) for x, y in pk["profile"].outline]
             out.append((min(vals), max(vals)))
+    for bs in getattr(p, "bosses", None) or []:  # 凸台（止口）占住的那段顶面：face:top 指底座顶面，不指凸台顶
+        if bs["face"] == face and axis[-1] in "xy":
+            vals = [vc((x, y, 0), axis) for x, y in bs["profile"].outline]
+            out.append((min(vals), max(vals)))
     return out
 
 
@@ -370,6 +374,12 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: Resolve
                 d -= s1 - s0
         u = u1 if comp[0] > 0 else u0 if comp[0] < 0 else t_
         w = w1 if comp[1] > 0 else w0 if comp[1] < 0 else t_
+        tops = [bs["z0"] for bs in (getattr(p, "bosses", None) or []) if bs["face"] == face == "top"]
+        if tops:  # 顶面有凸台：符号指到底座顶面（凸台以外的那一圈）
+            if comp[0]:
+                u = vc((0.0, 0.0, min(tops)), ha)
+            else:
+                w = vc((0.0, 0.0, min(tops)), va)
         return v.type, (u, w), (comp[0], comp[1])
     return None
 
@@ -806,7 +816,91 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         overall_dim_sheet(plan, p)
         _face_ra_slide(plan, p)
         _hole_ra_retry(plan, p)
+        _hole_datum_retry(plan, p)
     return _general_ra_retry(plan, p)
+
+
+def _hole_datum_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """孔轴线基准（三角形贴孔轮廓、沿径向引出方框）压到标注或中心线/分布圆时：沿孔周换角度 × 引线长度，
+    用预览出图检查取冲突最少的（压点画线权重低于实线压字；不比原位置好则不动）。"""
+    hole_of = {f"datum:{x['name']}": x["target"][len("hole:"):] for x in p.datums if x["target"].startswith("hole:")}
+    ds = [d for d in plan.dims if d.kind == "datum" and d.ref in hole_of and d.at is not None
+          and d.view in VIEW_AXES and "sheet_at" in (d.extra or {})]
+    if not ds:
+        return
+    from .render_svg import render
+    vmap = {v.type: v for v in plan.views}
+
+    def bad() -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        return 10 * (len(out["crossings"]) + len(out["collisions"])) + len(out.get("dash_crossings") or [])
+    for d in ds:
+        h = next((x for x in p.holes if x.name == hole_of[d.ref]), None)
+        if h is None:
+            continue
+        v = vmap[d.view]
+        ha, va = VIEW_AXES[d.view]
+        inst = h.instances[0]
+        cu, cw = vc(inst.xyz, ha), vc(inst.xyz, va)
+        r = h.max_dia / 2
+        disks, rings = [], []  # 图纸坐标：别的孔（实心圆盘，方框不进）；外圆、凸台圆、分布圆（圆周，方框不跨）
+        for h2 in p.holes:
+            if h2.face == h.face or (h2.through and OPPOSITE.get(h2.face) == h.face):
+                pts = [_uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va))) for i in h2.instances]
+                disks += [(x_, y_, h2.max_dia / 2 * v.scale) for x_, y_ in pts if h2 is not h]
+                if getattr(h2, "circular", None) and len(pts) > 1:
+                    rings.append((sum(q[0] for q in pts) / len(pts), sum(q[1] for q in pts) / len(pts),
+                                  h2.circular["pcd"] / 2 * v.scale))
+        for pr in [p.profile] + [bs["profile"] for bs in getattr(p, "bosses", None) or []]:
+            if pr is not None and getattr(pr, "shape", "") == "circle" and h.face in ("top", "bottom"):
+                ol = pr.outline
+                mx, my = sum(q[0] for q in ol) / len(ol), sum(q[1] for q in ol) / len(ol)
+                rr = max(math.hypot(q[0] - mx, q[1] - my) for q in ol)
+                x_, y_ = _uv_sheet(v, p.bbox, (vc((mx, my, 0), ha), vc((mx, my, 0), va)))
+                rings.append((x_, y_, rr * v.scale))
+
+        def geo_bad(ex_) -> int:  # 方框与孔、圆周的几何冲突（出图检查只查文字）
+            sp = ex_["sheet_pos"]
+            bx = (sp[0] - 3.3, sp[1] - 3.3, sp[0] + 3.3, sp[1] + 3.3)
+            n_ = 0
+            for cx_, cy_, rr in disks + rings:
+                near = math.hypot(max(bx[0] - cx_, 0, cx_ - bx[2]), max(bx[1] - cy_, 0, cy_ - bx[3]))
+                far = max(math.hypot(qx - cx_, qy - cy_) for qx in (bx[0], bx[2]) for qy in (bx[1], bx[3]))
+                if (cx_, cy_, rr) in disks and near < rr + 0.5:
+                    n_ += 1
+                elif (cx_, cy_, rr) in rings and near < rr + 0.5 and far > rr - 0.5:
+                    n_ += 1
+            return 10 * n_
+
+        at0, ex0 = d.at, dict(d.extra)
+        best = (bad() + geo_bad(ex0), at0, ex0)
+        if best[0] == 0:
+            continue
+        for ang in (225, 210, 240, 195, 255, 315, 300, 330, 135, 150, 120, 45, 30, 60, 180, 0):
+            c, s_ = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+            if abs(c) < 0.2 or abs(s_) < 0.2:  # 贴近十字中心线：引线与中心线重合
+                continue
+            at_ = (cu + r * c, cw + r * s_)
+            ax, ay = _uv_sheet(v, p.bbox, at_)
+            n_ = (round(c, 4), round(s_, 4))
+            for reach in (7.0, 10.0, 13.0, 17.0, 22.0):
+                d.at = at_
+                d.extra = {**ex0, "normal": n_, "reach": reach, "sheet_at": (round(ax, 2), round(ay, 2)),
+                           "sheet_pos": (round(ax + c * (reach + 3), 2), round(ay + s_ * (reach + 3), 2))}
+                g_ = geo_bad(d.extra)
+                if g_ >= best[0]:
+                    continue
+                n = bad() + g_
+                if n < best[0]:
+                    best = (n, d.at, dict(d.extra))
+                if n == 0:
+                    break
+            if best[0] == 0:
+                break
+        _, d.at, d.extra = best
 
 
 def _hole_ra_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -1366,8 +1460,8 @@ def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 continue
             dist, inst, dcut = min(cut, key=lambda c: c[0])
             half = math.sqrt(r * r - dist * dist)
-            need = 8.0 + 2 * 4.2 * 0.58 + len(d.text) * 2.0 + 3
-            if 2 * half * vscale.get(sec.view, 1.0) < need:
+            # 孔腔半宽（孔壁 → 孔轴线）要放得下 √ 与 Ra 文字（引线 ≥ 3.5）：否则文字跨孔轴线（点画线），留在孔所在面的视图
+            if half * vscale.get(sec.view, 1.0) - 8.0 - len(d.text) * 2.0 < 3.5:
                 continue
             prof = hole_profile(h)
             depths = [dd for dd, rr in prof if abs(rr - r) < 1e-6]
@@ -1390,11 +1484,8 @@ def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
             u, w = min(walls)
             d.view, d.at = sec.view, (round(u, 6), round(w, 6))
             d.extra = {**(d.extra or {}), "normal": (1, 0), "in_section": sec.label}
-            # 孔轴线（细点画线）在孔腔正中：引线缩短到 Ra 文字末端（尖端 + 引线 + 7 + 字宽）不越过轴线；
-            # 半个孔宽放不下时保持 8 mm（文字跨轴线）
-            room = half * vscale.get(sec.view, 1.0) - 8.0 - len(d.text) * 2.0
-            if room >= 3.5:
-                d.extra["reach"] = round(min(8.0, room), 2)
+            # 孔轴线（细点画线）在孔腔正中：引线缩短到 Ra 文字末端（尖端 + 引线 + 7 + 字宽）不越过轴线
+            d.extra["reach"] = round(min(8.0, half * vscale.get(sec.view, 1.0) - 8.0 - len(d.text) * 2.0), 2)
 
 
 def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:

@@ -115,9 +115,10 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
         if kw is not None and bore is not None:
             hk = hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev,
-                                 rings=(bore.max_dia / 2 * sc, df / 2 * sc, da / 2 * sc),
-                                 circles=tuple((ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc)
-                                               for h in parts["others"] for i in h.instances))
+                                 rings=(bore.max_dia / 2 * sc, df / 2 * sc, da / 2 * sc)
+                                 + tuple(h.circular["pcd"] / 2 * sc for h in parts["others"] if getattr(h, "circular", None)),
+                                 circles=tuple((ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc + 2.0)
+                                               for h in parts["others"] for i in h.instances))  # 含孔中心线伸出 2 mm
             dims += hk
             if g.get("blank_runout") and spec.dimensions != "none":
                 # 轮毂键槽对称度（对基准 A 轴孔，GB/T 1184 8 级按键宽）：箭头从右侧与槽宽尺寸线对齐，框格在齿顶圆右侧
@@ -127,8 +128,6 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 from .detailing import hub_keyway_symmetry_extra
                 dims.append(Dim("left", "gtol", None, v_, " | ".join(cells_), f"gtol:symmetry@{kw['name']}", None, {
                     "cells": cells_, **hub_keyway_symmetry_extra(hk, ex, cy, g["da"] / 2 * sc)}))
-        for h in parts["others"]:
-            dims.append(Dim("left", "callout", None, None, h.callout, h.name, None, {}))
     # 表面结构：齿面 Ra 注在分度线上（GB/T 4459.2），轴孔 Ra 注在孔壁（剖视）
     dims.append(Dim("front", "roughness", None, g["flank_ra"], f"Ra {g['flank_ra']:g}", "ra:flank", None, {
         "normal": (0, 1), "sheet_at": (round(xr + 2.5, 2), round(cy + d / 2 * sc, 2)),
@@ -137,10 +136,17 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         digits = "".join(ch for ch in bore.tolerance if ch.isdigit())
         ra = 0.8 if digits and int(digits) <= 6 else 1.6
         rb = bore.max_dia / 2
-        dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:hole:{bore.name}", None, {
-            "normal": (0, 1), "sheet_at": (round(xl + min(3.0, b * sc * 0.15), 2), round(cy - rb * sc, 2)),
-            "sheet_pos": (round(xl + min(3.0, b * sc * 0.15), 2), round(cy - rb * sc, 2)),
-            "in_section": True}))  # 站在下半孔壁上（孔内空白处）
+        if rb * sc >= 10:  # 孔够大：站在下半孔壁上（孔内空白处），√ 与文字不到轴线
+            dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:hole:{bore.name}", None, {
+                "normal": (0, 1), "sheet_at": (round(xl + min(3.0, b * sc * 0.15), 2), round(cy - rb * sc, 2)),
+                "sheet_pos": (round(xl + min(3.0, b * sc * 0.15), 2), round(cy - rb * sc, 2)),
+                "in_section": True}))
+        else:  # 小孔：文字会越过轴线 → 标在下孔壁轮廓线向右端面外的延长线上（GB/T 131），延长线细实线
+            yw_ = round(cy - rb * sc, 2)
+            xt_ = round(xr + 8, 2)
+            dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:hole:{bore.name}", None, {
+                "normal": (0, 1), "sheet_at": (xt_, yw_), "sheet_pos": (xt_, yw_), "in_section": True,
+                "ext_pts": [(round(xr + 1, 2), yw_), (round(xt_ + 1.5, 2), yw_)], "ext_solid": True}))
 
     tr = g.get("blank_runout")
     if tr and bore is not None and spec.dimensions != "none":
@@ -148,6 +154,7 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         import math
         rb = bore.max_dia / 2
         holes_ = [(ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc) for h in parts["others"] for i in h.instances]
+        pcds_ = [h.circular["pcd"] / 2 * sc for h in parts["others"] if getattr(h, "circular", None)]
 
         def place(ang, reach):
             nx, ny = math.cos(math.radians(ang)), math.sin(math.radians(ang))
@@ -158,6 +165,9 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
             bx, by = ex + (rb * sc + reach + 3.5) * nx, cy + (rb * sc + reach + 3.5) * ny
             ok = all(math.hypot(max(abs(bx - hx) - 4.5, 0.0), max(abs(by - hy) - 4.5, 0.0)) > hr + 0.6
                      for hx, hy, hr in holes_)
+            ok = ok and abs(by - cy) > 3.8 and abs(bx - ex) > 3.8  # 方框（字母）不压端视图十字中心线
+            dist = math.hypot(bx - ex, by - cy)
+            ok = ok and all(abs(dist - pr) > 4.5 * 1.42 + 0.5 for pr in pcds_)  # 不跨分布孔中心圆（点画线）
             return ok, nx, ny, reach
         # 左上 150° 起试（避开上方键槽、左下 225° 的孔径引线）：方框不压分布孔；放不下再加长引线（越过分布孔圈/齿顶圆）
         found = None
@@ -186,11 +196,45 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         dims.append(Dim("front", "gtol", None, tr, " | ".join(cells), "gtol:circular_runout@face", None, {
             "normal": (1, 0), "cells": cells, "reach": 8.0, "sheet_at": (round(xr, 2), round(y_face, 2)),
             "sheet_pos": (round(xr + 8, 2), round(y_face, 2))}))
+    if spec.dimensions != "none" and parts["others"]:
+        dims += web_hole_callouts(parts["others"], dims, ex, cy, sc, da, kw is not None)
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="gear", revisions=list(spec.revisions))
     plan.gear_table = param_table(plan, p)
+    _callout_retry(plan, p)
     return plan
+
+
+def _callout_retry(plan: DrawingPlan, p: ResolvedPart) -> None:
+    """端视图腹板孔/分布圆引出标注仍压线压字（尺寸界线、框格引线等几何粗估没算到的）：按备选顺序用预览出图检查，
+    取冲突最少的；备选（extra["_alts"]）用完即删。"""
+    from .render_svg import render
+
+    def bad(text):
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        hard = list(out["crossings"]) + [t for pair in out["collisions"] for t in pair]
+        dash = out.get("dash_crossings") or []
+        return 10 * len(out["crossings"]) + 10 * len(out["collisions"]) + len(dash), (text in hard or text in dash)
+    for d in plan.dims:
+        alts = (d.extra or {}).pop("_alts", None)
+        if not alts:
+            continue
+        n0, mine = bad(d.text)
+        if not mine:
+            continue
+        best = (n0, d.extra["label"])
+        for lb in alts:
+            d.extra["label"] = lb
+            n, mine = bad(d.text)
+            if n < best[0]:
+                best = (n, lb)
+            if not mine and n < n0:
+                break
+        d.extra["label"] = best[1]
 
 
 def param_table_rows(plan: DrawingPlan) -> dict[str, Any]:
@@ -206,3 +250,105 @@ def param_table(plan: DrawingPlan, p: ResolvedPart) -> dict[str, Any]:
     width = sum(w for _, w in TABLE_COLS)
     return {"origin": (W - MARGIN - width, H - MARGIN), "columns": list(TABLE_COLS), "rows": rows,
             "row_height": TABLE_ROW_H, "size": (width, TABLE_ROW_H * (len(rows) + 1))}
+
+
+def _radial_label(ex: float, cy: float, ang: float, r_from: float, r_out: float, text: str,
+                  src: tuple[float, float] | None = None) -> dict:
+    """端视图引出标注（图纸 mm）：引线从 src（缺省为端视图中心）沿 ang 方向、离 src r_from 处起，引到离端视图中心
+    r_out 之外，折成水平线写字（引线朝右则向右写、朝左则向左写）。"""
+    import math
+    ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+    sx, sy = src if src is not None else (ex, cy)
+    anchor = (sx + r_from * ux, sy + r_from * uy)
+    # 射线 src + t·u 与半径 r_out 的圆（圆心为端视图中心）的交点
+    fx, fy = sx - ex, sy - cy
+    bq = fx * ux + fy * uy
+    t = -bq + math.sqrt(max(bq * bq - (fx * fx + fy * fy - r_out * r_out), 0.0))
+    elbow = (sx + t * ux, sy + t * uy)
+    tw = text_width(text, 3.5)
+    if ux >= 0:
+        end, text_at = (elbow[0] + tw + 1, elbow[1]), (elbow[0] + 0.5, elbow[1] + 0.8)
+    else:
+        end, text_at = (elbow[0] - tw - 1, elbow[1]), (elbow[0] - tw - 0.5, elbow[1] + 0.8)
+    r2 = lambda q: (round(q[0], 2), round(q[1], 2))  # noqa: E731
+    return {"anchor": r2(anchor), "elbow": r2(elbow), "end": r2(end), "text_at": r2(text_at), "dir": 1 if ux >= 0 else -1,
+            "len": round(t - r_from, 2)}
+
+
+def web_hole_callouts(others: list, dims: list, ex: float, cy: float, sc: float, da: float, keyed: bool) -> list:
+    """齿轮端视图上腹板孔/均布孔的引出标注（GB/T 4458.4 均布孔：n×孔径 + 均布，另注分布圆直径）：
+    从选定的一个孔沿径向引出到齿顶圆外；分布圆标注从两孔之间的分布圆上引出（圆点）。
+    方向避开已有标注：轴孔引线（左下 225°）、键槽尺寸与对称度框格（上方）、基准 A，以及十字中心线（0/90/180/270°）。"""
+    import math
+    taken = [225.0] + ([60.0, 90.0, 110.0] if keyed else [])
+    for d in dims:
+        n_ = (d.extra or {}).get("normal")
+        if d.view == "left" and d.kind == "datum" and n_:
+            taken.append(math.degrees(math.atan2(n_[1], n_[0])) % 360)
+
+    def adist(a, b):
+        return abs((a - b + 180) % 360 - 180)
+
+    from .detailing import _box_hit, _seg_box
+    boxes = []  # 端视图已有标注的占位（图纸 mm）：尺寸数字、基准方框、框格
+    for d in dims:
+        e_ = d.extra or {}
+        if d.view != "left" or "sheet_pos" not in e_:
+            continue
+        px, py = e_["sheet_pos"]
+        tw_ = text_width(d.text, 3.5)
+        if d.kind == "linear" and e_.get("orient") == "v":
+            boxes.append((px - 4.5, py - tw_ / 2 - 1, px + 1, py + tw_ / 2 + 1))
+        elif d.kind == "linear":
+            boxes.append((px - tw_ / 2 - 1, py - 1, px + tw_ / 2 + 1, py + 4.5))
+        elif d.kind == "datum":
+            boxes.append((px - 3.5, py - 3.5, px + 3.5, py + 3.5))
+        elif d.kind == "gtol":
+            boxes.append((px - 4, py - 0.5, px + 4 + 8 * len(e_.get("cells", [])), py + 6.5))
+
+    def hits(lb):
+        tw_ = abs(lb["end"][0] - lb["elbow"][0])
+        tb = (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1], max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 4.5)
+        return sum(_seg_box(lb["anchor"], lb["elbow"], b) + (_box_hit(tb, b) > 0) for b in boxes) if tw_ else 0
+
+    def score(a):
+        return min([adist(a, t) for t in taken] + [3 * min(adist(a, c) for c in (0, 90, 180, 270))])
+    out = []
+    r_out = da / 2 * sc + 6
+    for h in others:
+        angs = [math.degrees(math.atan2(i.xyz[1], i.xyz[0])) % 360 for i in h.instances]
+        rads = [math.hypot(i.xyz[0], i.xyz[1]) * sc for i in h.instances]
+        cand = []  # (孔, 引线方向)：斜向引出（不与十字/径向中心线重合）
+        for j, i in enumerate(h.instances):
+            hx, hy = ex + i.xyz[0] * sc, cy + i.xyz[1] * sc
+            for dang in (45, 135, 225, 315, 30, 60, 120, 150, 210, 240, 300, 330):
+                if adist(dang, angs[j]) < 12 or adist(dang, angs[j] + 180) < 12:  # 与该孔径向中心线重合
+                    continue
+                lb_ = _radial_label(ex, cy, dang, h.max_dia / 2 * sc, r_out, h.callout, src=(hx, hy))
+                ea = math.degrees(math.atan2(lb_["elbow"][1] - cy, lb_["elbow"][0] - ex)) % 360
+                cand.append(((hits(lb_), -round(min(score(ea), 40) / 10), lb_["len"]), j, lb_))
+        cand.sort(key=lambda t: t[0])
+        _, k, lb = cand[0]
+        alts = [{kk: v for kk, v in c_[2].items() if kk != "len"} for c_ in cand[1:13]]
+        lb = {kk: v for kk, v in lb.items() if kk != "len"}
+        out.append(Dim("left", "callout", None, h.max_dia, h.callout, h.name, None, {"label": lb, "_alts": alts}))
+        taken.append(math.degrees(math.atan2(lb["elbow"][1] - cy, lb["elbow"][0] - ex)) % 360)
+        boxes.append((min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 0.5, max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 4.5))
+        c = getattr(h, "circular", None)
+        if c and len(angs) > 1:
+            srt = sorted(angs)
+            mids = [((a + ((b - a) % 360) / 2) % 360) for a, b in zip(srt, srt[1:] + srt[:1])]
+            text = f"Φ{c['pcd']:g} 分布圆"
+            cand = [(m_, _radial_label(ex, cy, m_, c["pcd"] / 2 * sc, r_out, text)) for m_ in mids]
+            cand.sort(key=lambda t: (hits(t[1]), -score(t[0])))
+            m, lb2 = cand[0]
+            alts2 = [{kk: v for kk, v in c_[1].items() if kk != "len"} | {"dot": True} for c_ in cand[1:]]
+            for rr in (0.25, 0.5, 0.75):  # 分布圆标注也可从两孔之间偏一点的位置引出
+                alts2 += [{kk: v for kk, v in _radial_label(ex, cy, (a_ + ((b_ - a_) % 360) * rr) % 360, c["pcd"] / 2 * sc,
+                                                             r_out, text).items() if kk != "len"} | {"dot": True}
+                          for a_, b_ in zip(srt, srt[1:] + srt[:1])]
+            lb2 = {kk: v for kk, v in lb2.items() if kk != "len"}
+            out.append(Dim("left", "callout", None, c["pcd"], text, f"{h.name}.pcd", None,
+                           {"label": {**lb2, "dot": True}, "_alts": alts2}))
+            taken.append(m)
+    return out

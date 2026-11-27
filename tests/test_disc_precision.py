@@ -1,0 +1,43 @@
+"""圆盘类（拉伸圆盘 + 同心配合孔）精度与齿轮端视图腹板孔标注。"""
+import json
+
+from cadmcp.detailing import plan_part_drawing
+from cadmcp.ir import DrawingSpec, PartSpec
+from cadmcp.ir.resolve import resolve_part
+from cadmcp.render_svg import render
+
+CAP = {"name": "D80", "part_no": "D-80", "title": "端盖", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 100}, "thickness": 20}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 30, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "pocket", "name": "KW", "face": "top", "depth": "through", "profile": {"shape": "rect", "width": 8, "height": 5.3, "center": [0, 15.65]}}, {"feature": "hole", "name": "PC", "type": "tapped", "size": "M5", "pattern": {"kind": "circular", "radius": 33, "count": 4, "start_angle": 45}}, {"feature": "boss", "name": "Spigot", "height": 5, "profile": {"shape": "circle", "diameter": 50, "center": [0, 0]}}], "auto_precision": True}
+GEAR = {"name": "D43", "part_no": "D-43", "title": "齿轮", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 186}, "thickness": 25}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 25, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "pocket", "name": "KW", "face": "top", "depth": "through", "profile": {"shape": "rect", "width": 8, "height": 5.3, "center": [0, 13.15]}}, {"feature": "hole", "name": "PC", "type": "counterbore", "size": "M6", "pattern": {"kind": "circular", "radius": 39, "count": 3, "start_angle": 30}}], "gear": {"module": 3, "teeth": 60}}
+
+
+def _plan(spec):
+    p = resolve_part(PartSpec.model_validate(spec))
+    return p, plan_part_drawing(DrawingSpec(model=p.name), p)
+
+
+def test_disc_bore_is_datum_and_seat_face_runout():
+    """端盖：中心配合孔为基准 A（不是板类的底面/侧面 A|B|C），带止口的一面注对 A 的端面圆跳动，
+    跳动箭头指在止口外一圈的底座顶面上（不指凸台顶面高度的空处）。"""
+    p, plan = _plan(CAP)
+    assert [(d["name"], d["target"]) for d in p.datums] == [("A", "hole:Bore")]
+    assert [(g["type"], g["target"], g["datums"]) for g in p.geotols] == [("circular_runout", "face:top", ["A"])]
+    g = next(d for d in plan.dims if d.kind == "gtol")
+    base_top = p.bosses[0]["z0"]
+    assert g.at[1] == base_top and g.at[1] < p.bbox.zmax
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
+
+
+def test_gear_web_holes_called_out_with_pcd():
+    """齿轮腹板沉孔：端视图有引出标注（n×孔 均布）与分布圆标注，引线不沿中心线；沉孔画两圆；小轴孔 Ra 标在孔壁延长线上。"""
+    p, plan = _plan(GEAR)
+    co = {d.ref: d for d in plan.dims if d.kind == "callout"}
+    assert co["PC"].extra["label"] and co["PC.pcd"].extra["label"]["dot"]
+    lb = co["PC"].extra["label"]
+    dx, dy = lb["elbow"][0] - lb["anchor"][0], lb["elbow"][1] - lb["anchor"][1]
+    assert abs(dx) > 1 and abs(dy) > 1  # 斜引出
+    ra = next(d for d in plan.dims if d.ref == "ra:hole:Bore")
+    assert ra.extra.get("ext_pts") and ra.extra["sheet_at"][0] > plan.views[0].origin_on_sheet[0]
+    svg, out = render(plan, p)
+    assert "3×Φ6.6" in svg and "Φ78 分布圆" in svg
+    assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
