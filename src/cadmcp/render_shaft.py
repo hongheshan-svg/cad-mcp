@@ -440,7 +440,8 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             k = int(d.ref[4:].split("_")[0])
             x = P(bore_dia_place(part, k, sc), 0)[0]
             dia = d.at[1]
-            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, overflow=bore_dia_overflow(part, k, sc, d.text) or "up")
+            _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, overflow=bore_dia_overflow(part, k, sc, d.text) or "up",
+                  over_at=(d.extra or {}).get("over_at"))
         elif d.kind == "diameter" and d.at is not None:
             zm, dia = d.at
             i = int(d.ref[4:].split("_")[0])

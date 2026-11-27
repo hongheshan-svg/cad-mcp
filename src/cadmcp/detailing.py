@@ -3770,10 +3770,19 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                        "orient": "h"}
         elif d.kind == "diameter" and d.ref.startswith("bore"):
             k = int(d.ref[4:].split("_")[0])
-            x = X(bore_dia_place(p, k, sc))
+            zb_ = bore_dia_place(p, k, sc)
+            x = X(zb_)
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
                        "sheet_pos": (round(x, 2), round(cy, 2)), "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定），同预览
+            ov_ = bore_dia_overflow(p, k, sc, d.text)
+            if ov_:  # 孔里写不下：文字整段写到外轮廓之外（不压孔壁剖面线与外轮廓），尺寸线穿过孔壁延长
+                tw_ = text_width(d.text, 3.5)
+                za_, zc_ = zb_ - 5.0 / sc, zb_ + 1.0 / sc  # 竖写文字在线左侧约 4.5 mm 宽：取这段里最粗的外轮廓
+                r_out = max(dd for (_, dd), (z0_, z1_) in zip(p.shaft_steps, (p.step_z(j) for j in range(len(p.shaft_steps))))
+                            if z0_ < zc_ and za_ < z1_) / 2
+                oa = cy + r_out * sc + 1.0 if ov_ == "up" else cy - r_out * sc - 1.0 - tw_
+                d.extra.update({"over_at": round(oa, 2), "sheet_pos": (round(x, 2), round(oa + tw_ / 2, 2))})
         elif d.kind == "diameter" and d.ref.startswith("step"):
             i = int(d.ref[4:].split("_")[0])
             x = X(shaft_dia_z(p, i, sc))
@@ -4334,13 +4343,26 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
     tboxes = []  # 向上伸出的直径文字框
+    def dia_item(d):  # (伸出方向, 文字框, 直径线 x)；轴段直径与内孔直径（孔里写不下时文字在外轮廓之外）
+        if d.ref.startswith("step"):
+            i = int(d.ref[4:].split("_")[0])
+            return shaft_dia_overflow(p, i, sc, d.text), shaft_dia_text_box(p, i, fv, d.text), \
+                shaft_sx(fv, None, shaft_dia_z(p, i, sc))
+        k = int(d.ref[4:].split("_")[0])
+        ex = d.extra or {}
+        ov = bore_dia_overflow(p, k, sc, d.text)
+        if not ov or ex.get("over_at") is None or "sheet_pts" not in ex:
+            return None, None, None
+        x = ex["sheet_pts"][0][0]
+        tw = text_width(d.text, 3.5)
+        return ov, (x - 4.5, ex["over_at"], x - 1.0, ex["over_at"] + tw), x
+
     for d in plan.dims:
-        if d.view != "front" or d.kind != "diameter" or not d.ref.startswith("step"):
+        if d.view != "front" or d.kind != "diameter" or not d.ref.startswith(("step", "bore")):
             continue
-        i = int(d.ref[4:].split("_")[0])
-        ov_ = shaft_dia_overflow(p, i, sc, d.text)
+        ov_, box_, xline_ = dia_item(d)
         if ov_ == "down":  # 向下伸出：文字移到下方尺寸行之下（over_at 仍为文字下端）
-            x0, y0, x1, y1 = shaft_dia_text_box(p, i, fv, d.text)
+            x0, y0, x1, y1 = box_
             tw = y1 - y0
             start = y0
             for _ in range(12):
@@ -4354,11 +4376,11 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                     _box_hit((x0, start, x1, start + tw), _view_box(v)) > 0 for v in plan.views if v is not fv and _view_box(v)):
                 ex = d.extra or {}
                 d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
-                vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), start - 1, y0))
+                vlines.append((xline_, start - 1, y0))
             continue
         if ov_ != "up":
             continue
-        x0, y0, x1, y1 = shaft_dia_text_box(p, i, fv, d.text)
+        x0, y0, x1, y1 = box_
         tw = y1 - y0
         start = y0
         for _ in range(12):
@@ -4374,7 +4396,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if start > y0 + 1e-6:
             ex = d.extra or {}
             d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
-        vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), y0 - 1, start + tw + 1))
+        vlines.append((xline_, y0 - 1, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
         tboxes.append((x0, start, x1, start + tw))
     _shaft_num_dodge_vlines(plan, vlines)
