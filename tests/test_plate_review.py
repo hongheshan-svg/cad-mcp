@@ -273,3 +273,25 @@ def test_boss_overhang_and_pocket_straddle():
     assert ("R014", "PK", "error") in _rules([b([0, 0]), pk([15, 0])], t=15)  # 型腔跨凸台边
     assert not any(r[0] == "R014" for r in _rules([b([0, 0]), pk([0, 0])], t=15))  # 整个在凸台顶内
     assert not any(r[0] == "R014" for r in _rules([b([-25, 0]), pk([30, 0])], t=15))  # 整个在板面
+
+
+SIDE_HOLES = {"name":"S","part_no":"S","title":"侧孔板","material":"45#","surface_treatment":"发黑","base":{"type":"extrude","profile":{"shape":"rect","width":120,"height":80},"thickness":30},"features":[{"feature":"hole","name":"H1","type":"clearance","size":"M8","positions":[[-40,-25],[40,-25],[-40,25],[40,25]]},{"feature":"hole","name":"F1","face":"front","type":"tapped","size":"M6","depth":15,"positions":[[-30,15],[30,15]]},{"feature":"hole","name":"R1","face":"right","type":"tapped","size":"M8","depth":20,"positions":[[0,15]]}]}
+
+
+def test_side_face_holes_views_and_section():
+    """侧面孔：前面孔各实例都留在主视图上（剖切不移去它们）；右侧面孔用右视图（可见），局部剖范围盖住孔深并剖出孔。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    from cadmcp.section import _perp_visible
+    p = resolve_part(PartSpec.model_validate(SIDE_HOLES))
+    plan = plan_part_drawing(DrawingSpec(model="S"), p)
+    types = [v.type for v in plan.views]
+    assert "right" in types and "left" not in types
+    for sec in plan.sections:
+        assert _perp_visible(p, sec)
+        if "R1" in sec.features:
+            h0, h1, _ = sec.path[0]
+            assert h0 <= 60 - 20 + 1 and sec.geometry["voids"]  # 盖住孔深 20 并剖出孔
+    svg, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

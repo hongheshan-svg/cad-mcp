@@ -547,6 +547,13 @@ def prune_default_views(spec: DrawingSpec, p: ResolvedPart, min_feat: float) -> 
     types = [v.type for v in spec.views]
     side = {h.face for h in p.holes} | {pk["face"] for pk in p.pockets} | {b_.get("face", "top") for b_ in p.bosses}
     left_sec = isinstance(spec.sections, list) and any(s.view == "left" for s in spec.sections)
+    if p.base_type == "extrude" and "left" in types and "right" not in types and side & {"left", "right"} == {"right"} \
+            and not left_sec:  # 特征只在右侧面：改用右视图（GB/T 14692 六基本视图，第一角画法放主视图左侧），孔为可见实线
+        spec = spec.model_copy(update={"views": [v.model_copy(update={"type": "right"}) if v.type == "left" else v
+                                                 for v in spec.views]})
+        types = [v.type for v in spec.views]
+        infos.append({"rule": "D021", "severity": "info", "message": "左视图改为右视图：侧面特征只在右侧面，右视图中为可见轮廓",
+                      "fix": "需要左视图时在 views 中显式列出 left 并指定 sections"})
     if p.base_type == "extrude" and "left" in types and not side & {"left", "right"} and not left_sec:
         types.remove("left")
         infos.append({"rule": "D021", "severity": "info", "message": "省略左视图：左右侧面无特征，厚度已在主视图表达",
@@ -2738,6 +2745,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
         hard.append(box)
+        ord_texts.append(box)  # 后放的引线不得穿过已放的标注文字
         leaders.append(((ax, ay), (ex, ey)))
         d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
                                                  "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
@@ -2751,11 +2759,12 @@ def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below:
     """引出标注一个锚点的 8 方向 × 7 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。
     rr ≥ 5：锚点为孔心，引线起点取在孔轮廓上（沿引线方向偏 rr）；返回的 ax, ay 为该轮廓点。"""
     for L in (10, 16, 24, 34, 46, 60, 80):
-        for ang in (45, 135, -45, -135, 25, 155, -25, -155):
+        for ang, dd in [(a_, None) for a_ in (45, 135, -45, -135, 25, 155, -25, -155)] + \
+                [(a_, d_) for a_ in (75, 105, -75, -105) for d_ in (1, -1)]:  # 近竖直引线：文字可朝任一侧
             c_, s_ = math.cos(math.radians(ang)), math.sin(math.radians(ang))
             ax, ay = (ax0 + rr * c_, ay0 + rr * s_) if rr >= 5 else (ax0, ay0)
             ex, ey = ax + L * c_, ay + L * s_
-            dirn = 1 if math.cos(math.radians(ang)) >= 0 else -1
+            dirn = dd or (1 if math.cos(math.radians(ang)) >= 0 else -1)
             box = (ex, ey - 0.5 - below, ex + tw, ey + LABEL_H + 0.5) if dirn > 0 else \
                 (ex - tw, ey - 0.5 - below, ex, ey + LABEL_H + 0.5)
             cost = L * 1.5

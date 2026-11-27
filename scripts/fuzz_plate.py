@@ -31,6 +31,14 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
         feats.append({"feature": "pocket", "name": "P", "face": "top", "depth": round(T / 2),
                       "profile": {"shape": "rect", "width": round(W / 4), "height": round(H / 4), "center": [0, 0],
                                   **({"corner_radius": 3} if rng.random() < .5 else {})}})
+    if T >= 12 and rng.random() < .25:  # 侧面螺孔（前面或右侧面，板厚中间）
+        fc = rng.choice(["front", "right"])
+        L_ = W if fc == "front" else H
+        n_ = rng.choice([1, 2])
+        sz = rng.choice(["M4", "M5", "M6"]) if T < 20 else rng.choice(["M6", "M8"])
+        pos = [[0, round(T / 2)]] if n_ == 1 else [[-round(L_ / 4), round(T / 2)], [round(L_ / 4), round(T / 2)]]
+        feats.append({"feature": "hole", "name": "S1", "face": fc, "type": "tapped", "size": sz,
+                      "depth": rng.choice([10, 15]), "positions": pos})
     boss = None
     if not any(f["feature"] == "pocket" for f in feats) and rng.random() < .3:  # 顶面凸台（与型腔二选一）
         bw = round(min(W, H) * rng.choice([.3, .4, .5]))
@@ -47,10 +55,11 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
         print("SPEC", n, _j.dumps(spec, ensure_ascii=False))
     try:
         p = resolve_part(PartSpec.model_validate(spec))
-        cs = [(i.uv, h.max_dia / 2) for h in p.holes for i in h.instances]
-        if any(((a[0][0]-b[0][0])**2 + (a[0][1]-b[0][1])**2) ** .5 < a[1] + b[1] + 3 for k, a in enumerate(cs) for b in cs[k+1:]):
+        cs = [(i.uv, h.max_dia / 2, h.face) for h in p.holes for i in h.instances]
+        if any(a[2] == b[2] and ((a[0][0]-b[0][0])**2 + (a[0][1]-b[0][1])**2) ** .5 < a[1] + b[1] + 3
+               for k, a in enumerate(cs) for b in cs[k+1:]):
             stats["invalid"] += 1; continue
-        if p.pockets and any(abs(u) < W / 8 + r + 3 and abs(v) < H / 8 + r + 3 for (u, v), r in cs):
+        if p.pockets and any(f_ == "top" and abs(u) < W / 8 + r + 3 and abs(v) < H / 8 + r + 3 for (u, v), r, f_ in cs):
             stats["invalid"] += 1; continue
         if boss is not None:  # 孔骑在凸台边上、同组孔一部分在凸台上：规格不合理
             from cadmcp import rules

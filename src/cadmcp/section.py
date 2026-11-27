@@ -89,7 +89,9 @@ def _interesting(p) -> list[tuple[str, list[tuple[float, float]], str]]:
         inner = (h.cbore or h.csink or h.type == "tapped" or not h.through or h.face not in ("top", "bottom")
                  or h.tolerance)  # 配合孔（H7 等）剖开表达孔壁与倒角
         if inner and not h.slot:  # 前/后面上的孔（孔轴垂直剖切面）：剖切位置取孔深中点，而非孔口所在的零件表面
-            out.append((h.name, [(i.xyz[0], i.xyz[1] - i.normal[1] * h.depth / 2 if i.normal[1] else i.xyz[1])
+            # 左/右面上的孔（孔轴沿 H）：代表点取孔深中点，局部剖范围才盖住整段孔
+            out.append((h.name, [(i.xyz[0] - i.normal[0] * h.depth / 2 if i.normal[0] else i.xyz[0],
+                                  i.xyz[1] - i.normal[1] * h.depth / 2 if i.normal[1] else i.xyz[1])
                                  for i in h.instances], "hole"))
     for pk in p.pockets:
         if not pk["through"] and pk["face"] in ("top", "bottom"):
@@ -112,6 +114,8 @@ def _local_range(p, view: str, reps: list[tuple[float, float]], lo_h: float, hi_
 def _half_width(p, name: str) -> float:
     for h in p.holes:
         if h.name == name:
+            if h.instances and h.instances[0].normal[0]:  # 孔轴沿 H：半宽 = 半个孔深（含钻尖）
+                return hole_profile(h)[-1][0] / 2
             return h.max_dia / 2
     for pk in p.pockets:
         if pk["name"] == name:
@@ -124,11 +128,42 @@ def needs_section(p) -> bool:
     return p.base_type == "extrude" and p.profile is not None and bool(_interesting(p))
 
 
+def _perp_visible(p, sec: SectionPlan) -> bool:
+    """主视图剖切：前/后面上的孔（孔轴垂直剖切面）各实例都须被所在段的剖切面切到（剖切位置在孔口与孔底之间），
+    否则该实例在剖切面前方被移去，主视图上看不到它（其标注也无处指引）。"""
+    hi_, di_ = AX[FRAME[sec.view][0]], AX[FRAME[sec.view][1]]
+    for h in p.holes:
+        for i in h.instances:
+            if i.normal[di_] == 0:
+                continue
+            x = i.xyz
+            seg = next((sg for sg in sec.path if sg[0] - 1e-6 <= x[hi_] <= sg[1] + 1e-6), None)
+            if seg is None:
+                if sec.kind == "local":
+                    continue  # 局部剖之外保留外形
+                return False
+            depth = (seg[2] - x[di_]) * -i.normal[di_]
+            if not 0 < depth < hole_profile(h)[-1][0]:
+                return False
+    return True
+
+
 def auto_section(p, label: str = "A") -> SectionPlan | None:
-    """自动选剖切：一个 D 位置能剖到所有内部结构 → 全剖；否则阶梯剖（最多 3 个位置）。"""
+    """自动选剖切（见 _auto_section）；前/后面孔会被剖掉的方案不用：改为不剖这些孔、只剖其余结构，仍不行则不剖。"""
     if not needs_section(p):
         return None
-    feats = _interesting(p)
+    sec = _auto_section(p, label, _interesting(p))
+    if sec is None or _perp_visible(p, sec):
+        return sec
+    di_ = AX[FRAME["front"][1]]
+    perp = {h.name for h in p.holes if any(i.normal[di_] != 0 for i in h.instances)}
+    rest = [f for f in _interesting(p) if f[0] not in perp]
+    sec = _auto_section(p, label, rest) if rest else None
+    return sec if sec is not None and _perp_visible(p, sec) else None
+
+
+def _auto_section(p, label: str, feats) -> SectionPlan | None:
+    """一个 D 位置能剖到所有内部结构 → 全剖；否则阶梯剖（最多 3 个位置）。"""
     view, (ha, da) = "front", FRAME["front"]
     hi_, di_ = AX[ha], AX[da]
     b = p.bbox
@@ -295,9 +330,13 @@ def geometry(p, sec: SectionPlan) -> dict[str, Any]:
             prof = hole_profile(h)
             for inst in h.instances:
                 x = inst.xyz
-                if not (h0 - 1e-6 <= x[hi_] <= h1 + 1e-6):
-                    continue
                 axis = [i for i in range(3) if inst.normal[i] != 0][0]
+                if axis == hi_:  # 孔轴沿 H（左/右面上的孔）：孔段与剖切段有重叠即剖到
+                    e = x[hi_] - inst.normal[hi_] * prof[-1][0]
+                    if max(x[hi_], e) < h0 - 1e-6 or min(x[hi_], e) > h1 + 1e-6:
+                        continue
+                elif not (h0 - 1e-6 <= x[hi_] <= h1 + 1e-6):
+                    continue
                 inward = -inst.normal[axis]
                 if axis == di_:  # 孔轴垂直剖切面：剖到的是圆截面
                     depth = (d - x[di_]) * inward
