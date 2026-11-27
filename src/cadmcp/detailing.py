@@ -1716,9 +1716,26 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     secs0 = sorted((v for v in views if v.type == "section"), key=lambda v: v.origin_on_sheet[0])
     if len(secs0) > 1:
         xs0 = [v.origin_on_sheet[0] for v in secs0]
+        from .render_gdt import _widths
+        from .standards import tol_text as _tt
+
+        def _kw(v):
+            return next(f for f in kws if f["name"] == v.target)
+
+        def w_over(v):  # 槽宽数字写不进两界线之间时写在右界线外：伸出断面右缘多少（图纸 mm）
+            f = _kw(v)
+            tw_ = text_width(_tt(f["width"], "N9") if spec.fit_deviations else f"{f['width']:g}N9", 3.5)
+            if tw_ <= f["width"] * scale - 1:
+                return 0.0
+            return max(0.0, f["width"] / 2 * scale + 1.5 + tw_ - f["d"] / 2 * scale)
+
+        def frame_left(v):  # 键槽对称度框格在断面左侧（_shaft_section_dim_sheet）：伸出断面左缘多少
+            g = next((g for g in p.geotols if g["target"] == f"keyway:{v.target}"), None)
+            return 0.0 if g is None else 3.0 + sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
         ps = [xs0[0]]
         for k in range(1, len(secs0)):
-            need = (secs0[k - 1].size_mm[0] + secs0[k].size_mm[0]) / 2 + 16
+            need = (secs0[k - 1].size_mm[0] + secs0[k].size_mm[0]) / 2 \
+                + max(16.0, w_over(secs0[k - 1]) + frame_left(secs0[k]) + 3.0)
             ps.append(max(xs0[k], ps[-1] + need))
         sh_ = sum(ps) / len(ps) - sum(xs0) / len(xs0)
         sh_ = min(sh_, ps[0] - secs0[0].size_mm[0] / 2 - (MARGIN + 12))  # 左端不出图框（留尺寸带）
@@ -3353,9 +3370,19 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     w_fits = xb - xa >= tw_w + 2
     # 放不下：箭头在外，数字移到槽深尺寸（自由侧）的另一侧
     wx = (xa + xb) / 2 if w_fits else ((xa - 4 - tw_w / 2) if sx > 0 else (xb + 4 + tw_w / 2))
+    # 尺寸线在槽底下 7 mm；放大图小（区域圆半径小）、数字压到材料侧波浪线（区域圆周 ±0.5）时移到波浪线之下
+    yw_ = ya - 7
+    xd_, yd_ = v.origin_on_sheet
+    rs_ = v.size_mm[1] / 2
+    bx_ = (wx - tw_w / 2, yw_ - 0.7, wx + tw_w / 2, yw_ + 2.8)
+    near_ = (max(bx_[0] - xd_, 0.0, xd_ - bx_[2]) ** 2 + max(bx_[1] - yd_, 0.0, yd_ - bx_[3]) ** 2) ** 0.5
+    far_ = (max(abs(bx_[0] - xd_), abs(bx_[2] - xd_)) ** 2 + max(abs(bx_[1] - yd_), abs(bx_[3] - yd_)) ** 2) ** 0.5
+    if near_ - 0.6 < rs_ < far_ + 0.6:
+        yw_ = yd_ - rs_ - 4.5
     out = [Dim("detail", "linear", "z", f["width"], f"{f['width']:g}", f"{f['name']}_w", None, {
         "detail": v.label, "sheet_pts": [(round(xa, 2), round(ya, 2)), (round(xb, 2), round(ya, 2))],
-        "sheet_pos": (round(wx, 2), round(ya - 7, 2)), "orient": "h", "below": True, "arrows_out": not w_fits,
+        "sheet_pos": (round(wx, 2), round(yw_, 2)),
+        "orient": "h", "below": True, "arrows_out": not w_fits,
         "pick_pts": [(round(xa, 2), round((ya + ys) / 2, 2)), (round(xb, 2), round((ya + ys) / 2, 2))]})]
     zf = f["z0"] if sx < 0 else f["z1"]  # 自由侧槽壁
     xf = S(zf, y2)[0]

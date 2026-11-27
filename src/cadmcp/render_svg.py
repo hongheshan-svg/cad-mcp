@@ -82,9 +82,9 @@ class _Svg:
                           f"stroke='{STROKE}' stroke-width='{w}'{d}/>")
 
     def poly(self, pts, w=THICK, close=True, dash=None):
-        if w >= THICK and not dash:
+        if w >= THIN and not dash:  # 粗实线轮廓；细实线折线（螺纹大径 3/4 圈圆弧等）同样查压字
             ring = list(pts) + ([pts[0]] if close else [])
-            self.outlines += [(a[0], a[1], b[0], b[1]) for a, b in zip(ring, ring[1:])]
+            (self.outlines if w >= THICK else self.thins).extend((a[0], a[1], b[0], b[1]) for a, b in zip(ring, ring[1:]))
         d = " ".join(f"{x:.2f},{self.y(y):.2f}" for x, y in pts)
         tag = "polygon" if close else "polyline"
         da = f" stroke-dasharray='{dash}'" if dash else ""
