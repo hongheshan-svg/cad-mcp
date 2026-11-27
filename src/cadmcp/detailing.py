@@ -3896,8 +3896,31 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
         if cands:
             c = min(cands, key=lambda c_: (not xa < c_ < xb, abs(c_ - c0)))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
-        elif short:  # 两侧都被占（别的数字/引线）：放到轮廓与尺寸行之间的低一道
-            d.extra = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], round(py - 7, 2))}
+        elif short:  # 两侧都被占（别的数字/引线）：放到轮廓与尺寸行之间的低一道，并按该道的引线位置定数字（可越过引线）
+            py1 = round(py - 7, 2)
+            xs1 = [x for sg in leads for y in (py1 + 0.5, py1 + 2, py1 + 3.8) if (x := x_at(sg, y)) is not None]
+            row1 = _label_row_spans(plan, py1)
+            for o in plan.dims:
+                eo = o.extra or {}
+                if o is d or o.view != "front" or o.kind != "linear" or o.axis != "z" or "sheet_pos" not in eo \
+                        or "sheet_pts" not in eo or o.ref == "overall_z" or o.ref.startswith("step"):
+                    continue
+                row1 += [(q[0] - 0.3, q[0] + 0.3) for q in eo["sheet_pts"]]  # 外一道尺寸的界线也穿过这一道
+                if eo.get("track") == 1:
+                    ot = text_width(o.text, 3.5)
+                    oc = eo.get("text_x", eo["sheet_pos"][0])
+                    row1.append((oc - ot / 2, oc + ot / 2))
+            row1 += [(xa - 0.3, xa + 0.3), (xb - 0.3, xb + 0.3)]  # 自己的界线（数字放不进两界线之间）
+            c1 = [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]
+            if xs1:
+                c1 += [max(xs1) + 1.2 + tw / 2, min(xs1) - 1.2 - tw / 2]
+            c1 = [c for c in c1 if not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs1)
+                  and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row1)]
+            ne = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], py1)}
+            if c1:
+                c = min(c1, key=lambda c_: abs(c_ - (xa + xb) / 2))
+                ne = {**ne, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py1)}
+            d.extra = ne
 
 
 def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float, float]]) -> None:
