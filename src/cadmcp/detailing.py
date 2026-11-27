@@ -1235,13 +1235,14 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
     balls = [(b["pos"][0] - 6, b["pos"][1] - 6, b["pos"][0] + 6, b["pos"][1] + 6) for b in plan.balloons if "pos" in b]
     leads = [(b["anchor"], b["pos"]) for b in plan.balloons if "pos" in b and "anchor" in b]
     taken: list = []
+    wleads: list = []
     for d in plan.dims:
         if d.kind != "weld" or "sheet_at" not in (d.extra or {}):
             continue
         ax, ay = d.extra["sheet_at"]
         best = None
-        for dx in (10, 16, 24, 34, -10 - WELD_SYM_W, -16 - WELD_SYM_W):
-            for dy in (12, 18, 26, 34, 42, -12, -18, -26, -34, -42):
+        for dx in (10, 16, 24, 34, 46, -10 - WELD_SYM_W, -16 - WELD_SYM_W, -26 - WELD_SYM_W):
+            for dy in (12, 18, 26, 34, 42, 52, 62, -12, -18, -26, -34, -42, -52):
                 pos = (ax + dx, ay + dy)
                 bx = weld_symbol_box((ax, ay), pos)
                 if bx[0] < MARGIN + 2 or bx[2] > W - MARGIN - 2 or bx[1] < MARGIN + 2 or bx[3] > H - MARGIN - 2:
@@ -1249,6 +1250,7 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
                 hard = sum(_box_hit(bx, o) > 0 for o in balls + taken + others)
                 hard += sum(_seg_box(p1, p2, bx) for p1, p2 in leads)
                 hard += sum(_seg_box((ax, ay), pos, o) for o in balls + taken)
+                hard += sum(_seg_box(p1, p2, bx) for p1, p2 in wleads)  # 已放焊缝符号的引线不穿本符号
                 soft = _box_hit(bx, view_box) > 0
                 key = (hard, soft, abs(dx) + abs(dy))
                 if best is None or key < best[0]:
@@ -1256,6 +1258,7 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
         if best is not None:
             d.extra["sheet_pos"] = (round(best[1][0], 2), round(best[1][1], 2))
             taken.append(best[2])
+            wleads.append(((ax, ay), best[1]))
 
 
 def _as_body(p: ResolvedPart) -> ResolvedPart:
