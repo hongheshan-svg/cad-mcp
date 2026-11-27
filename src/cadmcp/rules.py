@@ -135,9 +135,20 @@ def check_part(p: ResolvedPart) -> list[Finding]:
         start = p.bbox.zmax if face == "top" else p.bbox.zmin
         plate = p.bbox.zmin + p.thickness if face == "top" else p.bbox.zmax - p.thickness
         for h in p.holes:
-            if h.face != face or h.at is not None or h.plate_box is not None:
+            if h.face != face or h.plate_box is not None:
                 continue
             r = h.max_dia / 2
+            if h.at is not None:  # 写了起算面：孔位却在更高的凸台范围内 → 孔口埋在凸台实体里
+                for inst in h.instances:
+                    for b in bs:
+                        top_ = b["z0"] + b["height"]
+                        if dist_to_outline(inst.uv, list(b["profile"].outline)) > -r and \
+                                b["z0"] - 1e-6 <= h.at < top_ - 1e-6:
+                            out.append(_f("R014", "error", f"{h.name}[{inst.index}]",
+                                          f"孔起算面 at={h.at:g} 在凸台 {b['name']} 内部（凸台顶 {top_:g}），孔口埋在实体里",
+                                          f"凸台上的孔改为 at: {top_:g} 或不写 at；凸台内外的孔拆成两组"))
+                            break
+                continue
             for inst in h.instances:
                 surf, edge = plate, None
                 for b in bs:

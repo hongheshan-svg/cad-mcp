@@ -679,7 +679,9 @@ def _draw_section(s, sec, V, v, cx, cy, g=None):
                        (math.dist(p1, q1) < 0.05 and math.dist(p2, q2) < 0.05):
                         shared.append((p1, p2))
     half_x = V((sec.half_from, 0, 0) if sec.view == "front" else (0, sec.half_from, 0))[0] if sec.half_from is not None else None
-    for poly in solid:
+    for i_, poly in enumerate(solid):
+        # 与别的实体剖面共线重合的边（凸台与板相接处等）是同一实体内部，不画
+        others = [(o[k], o[(k + 1) % len(o)]) for j_, o in enumerate(solid) if j_ != i_ for k in range(len(o))]
         for k in range(len(poly)):
             a, b = poly[k], poly[(k + 1) % len(poly)]
             if any(math.dist(a, c) < 0.05 and math.dist(b, d) < 0.05 or math.dist(a, d) < 0.05 and math.dist(b, c) < 0.05
@@ -687,7 +689,7 @@ def _draw_section(s, sec, V, v, cx, cy, g=None):
                 continue
             if half_x is not None and abs(a[0] - half_x) < 0.05 and abs(b[0] - half_x) < 0.05:
                 continue
-            for c, d in _sub_segments(a, b, openings + shared):
+            for c, d in _sub_segments(a, b, openings + shared + others):
                 s.line(*c, *d, THICK)
     for pl in g["edges"]:
         s.poly([V(q) for q in pl], THICK, close=False)

@@ -31,6 +31,17 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
         feats.append({"feature": "pocket", "name": "P", "face": "top", "depth": round(T / 2),
                       "profile": {"shape": "rect", "width": round(W / 4), "height": round(H / 4), "center": [0, 0],
                                   **({"corner_radius": 3} if rng.random() < .5 else {})}})
+    boss = None
+    if not any(f["feature"] == "pocket" for f in feats) and rng.random() < .3:  # 顶面凸台（与型腔二选一）
+        bw = round(min(W, H) * rng.choice([.3, .4, .5]))
+        boss = {"feature": "boss", "name": "B", "height": rng.choice([5, 10, 15]),
+                "profile": {"shape": "circle", "diameter": bw, "center": [0, 0]} if rng.random() < .5 else
+                {"shape": "rect", "width": bw, "height": round(bw * .8), "center": [0, 0],
+                 **({"corner_radius": 3} if rng.random() < .5 else {})}}
+        for f in feats:  # 凸台外的孔从板面起算
+            if f["feature"] == "hole" and any(abs(x) > bw / 2 or abs(y) > bw / 2 for x, y in f["positions"]):
+                f["at"] = T
+        feats.append(boss)
     spec = {"name": f"F{n}", "part_no": f"F-{n}", "title": "测试板", "material": "Q235",
             "base": {"type": "extrude", "profile": {"shape": "rect", "width": W, "height": H}, "thickness": T},
             "features": feats}
@@ -44,6 +55,12 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
             stats["invalid"] += 1; continue
         if p.pockets and any(abs(u) < W / 8 + r + 3 and abs(v) < H / 8 + r + 3 for (u, v), r in cs):
             stats["invalid"] += 1; continue
+        if boss is not None:  # 孔骑在凸台边上、同组孔一部分在凸台上：规格不合理
+            from cadmcp import rules
+            if any(f["rule"] == "R014" for f in rules.check_part(p)):
+                stats["invalid"] += 1; continue
+        if boss is not None:
+            stats["boss"] += 1
         plan = plan_part_drawing(DrawingSpec(model=p.name), p)
         svg, out = render(plan, p)
         from cadmcp.detailing import view_overlaps

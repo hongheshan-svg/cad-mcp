@@ -167,6 +167,8 @@ def test_hole_off_boss_needs_at():
     assert not any(r[0] == "R014" for r in _rules([b, t([35, 25], at=10)], t=10))
     assert not any(r[0] == "R014" for r in _rules([b, t([0, 0])], t=10))  # 凸台顶上的孔
     assert ("R014", "T[0]", "error") in _rules([b, t([15, 0])], t=10)  # 骑在凸台边上
+    assert ("R014", "T[0]", "error") in _rules([b, t([0, 0], at=10)], t=10)  # 凸台上的孔从板面起算：埋在凸台里
+    assert not any(r[0] == "R014" for r in _rules([b, t([0, 0], at=25)], t=10))
 
 
 def test_boss_drawn_and_dimensioned():
@@ -195,3 +197,31 @@ def test_boss_drawn_and_dimensioned():
     # 主视图外形：板 160×10 + 凸台 30×15（不是 160×25 的整块包围盒）
     assert (round(160 * sc, 1), round(10 * sc, 1)) in sizes and (round(30 * sc, 1), round(15 * sc, 1)) in sizes
     assert (round(160 * sc, 1), round(25 * sc, 1)) not in sizes
+
+
+def test_boss_section_no_seam():
+    """剖视图：凸台与板是同一实体，相接处不画线（剖面多边形共线重合的边不画）。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    spec = {"name": "B", "part_no": "B-01", "title": "凸台板", "material": "Q235", "surface_treatment": "发黑",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 200, "height": 120}, "thickness": 15},
+            "features": [{"feature": "hole", "name": "H0", "type": "counterbore", "size": "M8", "at": 15,
+                          "positions": [[-70, -40], [70, -40], [-70, 40], [70, 40]]},
+                         {"feature": "hole", "name": "H1", "type": "tapped", "size": "M6", "depth": 12,
+                          "positions": [[-15, 0], [15, 0]]},
+                         {"feature": "boss", "name": "B", "height": 10,
+                          "profile": {"shape": "rect", "width": 60, "height": 48, "center": [0, 0]}}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model="B"), p)
+    sec = next(x for x in plan.sections if x.kind in ("full", "step"))
+    v = next(x for x in plan.views if x.type == sec.view)
+    svg, out = render(plan, p)
+    import re
+    sc, (cx, cy) = v.scale, v.origin_on_sheet
+    y_seam = 297 - (cy + (15 - 25 / 2) * sc)  # 板顶面（凸台底）在 SVG 中的 y
+    x_lo, x_hi = cx - 25 * sc, cx + 25 * sc  # 凸台底边中段
+    seam = [m for m in re.findall(r"<line x1='([\d.]+)' y1='([\d.]+)' x2='([\d.]+)' y2='([\d.]+)'[^>]*stroke-width='0.5", svg)
+            if abs(float(m[1]) - y_seam) < 0.1 and abs(float(m[3]) - y_seam) < 0.1
+            and min(float(m[0]), float(m[2])) < x_hi and max(float(m[0]), float(m[2])) > x_lo]
+    assert seam == []
