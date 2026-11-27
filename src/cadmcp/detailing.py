@@ -3132,6 +3132,14 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     if p.geotols:  # 几何公差框格的竖引线（框格行 → 轮廓）
         vlines += [shaft_sx(front, Ltot, z) for z, _ in shaft_gtol_layout(p, sc).values()]
     tw_l = text_width(v.label, 3.5)
+    y_top_ = front.origin_on_sheet[1] + max(dd for _, dd in p.shaft_steps) / 2 * sc
+    hrows = []  # 上方键槽/环槽/孔深定位尺寸的尺寸线（与 shaft_dim_sheet 同一行高）：引线与标号不压
+    for d in others or []:
+        if d.view == "front" and d.kind == "linear" and d.axis == "z" and d.at is not None \
+                and not d.ref.startswith(("step", "overall")):
+            xa_, xb_ = sorted(shaft_sx(front, Ltot, z) for z in d.at)
+            y_ = y_top_ + 14 - TRACK_DY * (d.extra or {}).get("track", 0)
+            hrows.append((xa_, y_ - 0.4, xb_, y_ + 0.4))
     prev = []  # 已放好的别的局部放大图标号：(引线, 字框)
     for v2 in getattr(front, "_detail_peers", []):
         dt2 = getattr(v2, "detail", None) or {}
@@ -3148,6 +3156,7 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
             hit += 2 * ((lx < xe0 + 2 and lx + tw_l > xe0 - 30) or (lx < xe1 + 30 and lx + tw_l > xe1 - 2))
         a0_ = (cx + sg * r * k, cy + r * k)
         mybox = (lx - 0.5, b_[1] - 2.2, lx + tw_l + 0.5, b_[1] + 3.3)
+        hit += sum(_seg_box(a0_, b_, hb) + (_box_hit(mybox, hb) > 0) for hb in hrows)
         for (la, lb_), bx2 in prev:  # 与别的标号：引线穿字、字压字、引线相交
             hit += 3 * (_seg_box(a0_, b_, bx2) + _seg_box(la, lb_, mybox) + (_box_hit(mybox, bx2) > 0) + _seg_cross(a0_, b_, la, lb_))
         if best is None or (hit, n_) < best[0]:
@@ -3979,6 +3988,14 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
               for f in p.shaft_features if f["step"] == i and f["kind"] == "keyway"]
     zones.append((Ltot / 2, (text_width(f"{Ltot:g}", 3.5) / 2 + 2.0) / sc))  # 总长数字（向下伸出移到尺寸行之下时会穿过）
+    for f in p.shaft_features:  # 键槽定位尺寸（轴段起点 → 键槽）：数字短时写在界线外两侧之一，两侧都算
+        if f["step"] == i and f["kind"] == "keyway" and f["z0"] - z0 > 1e-6:
+            tw_k = (text_width(f"{f['z0'] - z0:g}", 3.5) + 2.0) / sc
+            zones.append(((z0 + f["z0"]) / 2, (f["z0"] - z0) / 2 + tw_k))
+    # 键槽剖切符号（轮廓上下 3–8 mm 的短粗线 + 右侧字母，在键槽中点）：伸出轮廓的竖写文字不压它（有基准的段剖切位置另挪，不计）
+    if not any(x["target"] == f"step:{i}" for x in p.datums):
+        zones += [((f["z0"] + f["z1"]) / 2 + 1.5 / sc, 3.0 / sc) for f in p.shaft_features
+                  if f["kind"] == "keyway" and f["step"] == i]
     fspans = []  # 框格横向范围（模型 z）：伸出的直径线尽量不从框格里穿过（框格平移有限，见 _shaft_gtol_frame_dx）
     if p.geotols:  # 几何公差框格的竖引线（从框格行下到轮廓 / 轴肩水平引线）：伸出轮廓的竖写文字别压上去
         zones += [(zl, 1.0 / sc) for zl, _ in shaft_gtol_layout(p, sc).values() if z0 - 5 / sc <= zl <= z1 + 5 / sc]
@@ -4043,6 +4060,9 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
             if ok_:
                 _, _, z_, sd_, g_ = min(ok_)
                 return z_, sd_, g_
+        if force_long:  # 轮廓内放不下、必须伸出：按排序取最好的（先不压数字区/剖切符号，再离轴肩远），不退回段中点
+            span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+            return z, sd, min(gap(*span) * sc, 0.0)
         long_txt = False
     z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
     span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
