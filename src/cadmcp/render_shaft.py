@@ -715,18 +715,36 @@ def _detail_view(s, plan, part, v, segs, refs) -> None:
             continue
         (xa, ya), (xb, yb) = ex["sheet_pts"]
         px, py = ex["sheet_pos"]
-        if ex["orient"] == "h":  # 槽宽：注在槽底下方（材料内），数字在尺寸线上方
+        if ex["orient"] == "h" and ex.get("above"):  # 挡圈槽定位：外圆上方，界线自轮廓向上；放不下时箭头在外、数字在左
+            for x in (xa, xb):
+                s.line(x, ya + 1, x, py + 1.5, THIN)
+            if ex.get("arrows_out"):
+                s.line(min(px - _text_w(d.text, 3.5) / 2 - 0.5, xa - 4), py, xb + 4, py, THIN)
+                _arrow(s, xa, py, 1, 0)
+                _arrow(s, xb, py, -1, 0)
+            else:
+                s.line(xa, py, xb, py, THIN)
+                _arrow(s, xa, py, -1, 0)
+                _arrow(s, xb, py, 1, 0)
+            s.text(px, py + 0.8, d.text, 3.5, "middle")
+        elif ex["orient"] == "h":  # 槽宽：注在槽底下方（材料内），数字在尺寸线上方；放不下时箭头在外、数字在一侧
             for x in (xa, xb):
                 s.line(x, ya - 1, x, py - 1.5, THIN)
-            s.line(xa, py, xb, py, THIN)
-            _arrow(s, xa, py, -1, 0)
-            _arrow(s, xb, py, 1, 0)
+            if ex.get("arrows_out"):
+                tw = _text_w(d.text, 3.5)
+                s.line(min(xa - 4, px - tw / 2 - 0.5), py, max(xb + 4, px + tw / 2 + 0.5), py, THIN)
+                _arrow(s, xa, py, 1, 0)
+                _arrow(s, xb, py, -1, 0)
+            else:
+                s.line(xa, py, xb, py, THIN)
+                _arrow(s, xa, py, -1, 0)
+                _arrow(s, xb, py, 1, 0)
             s.text(px, py + 0.8, d.text, 3.5, "middle")
         else:  # 槽深：自由侧，尺寸界线自槽底角水平引出，箭头在外，数字在尺寸线向上的延长线左侧
             sg = 1 if px > xa else -1
             s.line(xa + sg * 1, ya, px + sg * 1.5, ya, THIN)
             tw = _text_w(d.text, 3.5)
-            s.line(px, ya - 4, px, py + tw / 2 + 1, THIN)
+            s.line(px, min(ya - 4, py - tw / 2 - 1), px, max(yb + 4, py + tw / 2 + 1), THIN)
             _arrow(s, px, ya, 0, 1)
             _arrow(s, px, yb, 0, -1)
             s.text(px - 1, py, d.text, 3.5, "middle", -90)

@@ -127,6 +127,10 @@ SPECS = [
     '{"name": "S124", "part_no": "S-124", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 60, "diameter": 27, "tolerance": "js6"}, {"length": 40, "diameter": 32, "tolerance": "m6"}, {"length": 25, "diameter": 42, "tolerance": "m6"}, {"length": 15, "diameter": 50, "tolerance": "m6"}, {"length": 40, "diameter": 55, "tolerance": "js6"}]}, "features": [{"feature": "keyway", "name": "K4", "step": 4, "length": 28}], "auto_precision": true}',
     '{"name": "S142", "part_no": "S-142", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 40, "diameter": 24}, {"length": 50, "diameter": 27, "tolerance": "js6"}, {"length": 30, "diameter": 32}, {"length": 60, "diameter": 40}, {"length": 60, "diameter": 50}], "bores": [{"diameter": 12, "tolerance": "H7"}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 28}, {"feature": "keyway", "name": "K1", "step": 1, "length": 36}, {"feature": "keyway", "name": "K4", "step": 4, "length": 45}], "auto_precision": true}',
     '{"name": "S61", "part_no": "S-61", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 50, "diameter": 17}, {"length": 15, "diameter": 25}, {"length": 15, "diameter": 35, "tolerance": "k6"}], "cross_holes": [{"step": 2, "diameter": 4}], "end_holes": [{"side": "start", "size": "M6", "depth": 9}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 36}], "auto_precision": true}',
+    '{"name": "S24", "part_no": "S-24", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 10, "diameter": 47}, {"length": 80, "diameter": 55, "tolerance": "js6"}, {"length": 50, "diameter": 60, "tolerance": "k6"}, {"length": 10, "diameter": 52, "tolerance": "f7"}]}, "features": [{"feature": "keyway", "name": "K2", "step": 2, "length": 36}, {"feature": "groove", "name": "G3", "type": "circlip", "step": 3}]}',
+    '{"name": "S85", "part_no": "S-85", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 30, "diameter": 55, "tolerance": "h7"}, {"length": 10, "diameter": 52, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 22}, {"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}',
+    '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 15, "diameter": 42}, {"length": 10, "diameter": 45}, {"length": 10, "diameter": 50}, {"length": 60, "diameter": 60}, {"length": 50, "diameter": 57}, {"length": 20, "diameter": 49}], "center_holes": {"type": "B"}, "cross_holes": [{"step": 4, "diameter": 6}]}, "features": [{"feature": "groove", "name": "G1", "type": "undercut", "step": 1}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}, {"feature": "keyway", "name": "K3", "step": 3, "length": 45}]}',
+    '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 50, "tolerance": "h7"}, {"length": 10, "diameter": 55}, {"length": 60, "diameter": 47}, {"length": 40, "diameter": 44, "tolerance": "js6"}, {"length": 30, "diameter": 41}, {"length": 50, "diameter": 38, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G0", "type": "circlip", "step": 0}, {"feature": "keyway", "name": "K2", "step": 2, "length": 45}]}',
 ]
 
 
@@ -272,3 +276,25 @@ def test_thin_plate_thickness_text_outside_reaches_cad():
     sw = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.op == "overall_dimension" and o.args["ref"] == d.ref)
     assert tuple(sw.args["pos"]) == (d.extra["sheet_pos"][0], d.extra["text_y"])
     assert any(o.args.get("at") == CD._xy((d.extra["sheet_pos"][0], d.extra["text_y"])) for o in CD.tk_detail_ops(plan))
+
+
+def test_crowded_circlip_goes_to_detail_view():
+    """挡圈槽定位尺寸在主视图写不下：改用局部放大图，槽宽/槽深/定位尺寸注在放大图内（带选边点，SW/Creo 都能标）；
+    主视图只留标准号引出，不再注定位尺寸。"""
+    from cadmcp.adapters.creo import drawing as CD
+    from cadmcp.adapters.solidworks import compile as SW
+    spec = json.loads('{"name": "S24", "part_no": "S-24", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 10, "diameter": 47}, {"length": 80, "diameter": 55, "tolerance": "js6"}, {"length": 50, "diameter": 60, "tolerance": "k6"}, {"length": 10, "diameter": 52, "tolerance": "f7"}]}, "features": [{"feature": "keyway", "name": "K2", "step": 2, "length": 36}, {"feature": "groove", "name": "G3", "type": "circlip", "step": 3}]}')
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    det = [v for v in plan.views if v.type == "detail"]
+    assert len(det) == 1 and det[0].target == "G3"
+    refs = {d.ref for d in plan.dims if d.view == "detail"}
+    assert refs == {"G3_w", "G3_h", "G3_pos"}
+    assert not any(d.view == "front" and d.ref == "G3_pos" for d in plan.dims)
+    assert any(d.view == "front" and d.kind == "callout" and d.ref == "G3" for d in plan.dims)
+    assert all(d.extra.get("pick_pts") for d in plan.dims if d.view == "detail")
+    sw = SW.compile_drawing(plan, "m.sldprt")
+    assert sum(1 for o in sw if o.op == "shaft_dimension" and str(o.args.get("view", "")).startswith("detail:")) == 3
+    vw = CD.detail_view_name(det[0].label)
+    cr = CD.tk_detail_ops(plan)
+    assert sum(1 for o in cr if o.op == "tk.drw.dim" and o.args.get("view") == vw) == 3

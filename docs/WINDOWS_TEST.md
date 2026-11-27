@@ -586,3 +586,8 @@ Creo：`feat.round` edges 同样给点坐标。
 - 空心轴/套内孔直径（`bore<k>_dia`）孔里写不下时：文字整段写到外轮廓之外（`over_at` = 文字下端，向上时为外轮廓上方 1 mm，
   必要时再抬过上方尺寸行），`sheet_pos` 同步为文字中点；尺寸线穿过孔壁剖面延长到文字。核对 SW/Creo 文字是否在零件外、
   尺寸线是否随之延长。
+- 挡圈槽挤不下时的局部放大图（`detailing.circlip_crowded`）：定位尺寸（轴段起点 → 槽左壁）在主视图写不进两界线之间时，
+  该槽改画局部放大图（2–2.5:1 为主），主视图只留“挡圈槽 Φd2×m（GB/T 894-d）”引出；放大图内注槽宽 `G*_w`、槽深 `G*_h`、
+  定位 `G*_pos`（外圆上方，选边点 `pick_pts` 为轴段端面与槽左壁）。槽宽写不进时箭头在外、数字移到槽深尺寸另一侧（`arrows_out`）。
+  核对：SW `CreateDetailViewAt4` 的圆是否包住轴段端面、三个尺寸能否在放大图里选到边；Creo `tk.drw.detail_view` 同理。
+  样例：`tests/test_fuzz_layout.py::test_crowded_circlip_goes_to_detail_view`。

@@ -1508,6 +1508,12 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                 for f in p.shaft_features if f["kind"] == "groove")
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
                            enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
+    if len(row_h) == 1 and any(circlip_crowded(f, scale) for f in p.shaft_features):
+        row_h = row_h + [30.0]  # 要加挡圈槽局部放大图：主视图下方加一行再选图幅/比例
+        sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
+                               enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
+    if len(row_h) > 1 or kws:  # 主视图挤不下的挡圈槽 → 局部放大图（槽宽、槽深、定位尺寸注在放大图内）
+        dets = dets + [f for f in p.shaft_features if circlip_crowded(f, scale)]
     # 直径带极限偏差的文字一律写全（车间按数值加工检验，不让人查表）：放不进该段时伸出轮廓，不改为只注公差带代号
     p._dia_code_only = set()
     W, H = SHEETS[sheet]
@@ -1676,6 +1682,10 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                 dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], f"{f['d'] - f['depth']:g}",
                                 f"{f['name']}_t", (f["d"], f["depth"])))
             else:
+                if f in dets and f["type"] == "circlip":  # 挡圈槽：主视图只留标准号引出，尺寸见局部放大图
+                    dims.append(Dim("front", "callout", None, None, f["callout"], f["name"],
+                                    ((f["z0"] + f["z1"]) / 2, f["d"] / 2)))
+                    continue
                 if f in dets:  # 越程槽：形状与尺寸见局部放大图；紧靠轴肩时位置不必再注
                     sz1 = p.step_z(f["step"])[1]
                     if f["z0"] - sz0 > 1e-6 and sz1 - f["z1"] > 1e-6:
@@ -3012,7 +3022,8 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     sz0, sz1 = p.step_z(f["step"])
     i = f["step"]
     d_next = p.shaft_steps[i + 1][1] if i + 1 < len(p.shaft_steps) else 0.0
-    shoulder_right = abs(f["z1"] - sz1) < 1e-6 and d_next > f["d"]
+    gap_r = 3.0 if f.get("type") == "circlip" else 1e-6  # 挡圈槽离轴肩留 1 mm 承载边：仍算贴着轴肩
+    shoulder_right = sz1 - f["z1"] < gap_r and d_next > f["d"]
     sx = -1 if shoulder_right else 1  # 自由侧方向（−1 = 左）
     k = 0.7071
     # 标号避开主视图上方的竖线（键槽/环槽等定位尺寸的界线、轴肩线）：引线长 5/9/13 mm，自由侧优先
@@ -3035,6 +3046,9 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
         b_ = (cx + sg * (r + L_) * k, cy + (r + L_) * k)
         lx = b_[0] + sg * 1.2 + (0 if sg > 0 else -tw_l)
         hit = sum(1 for x in vlines if lx - 0.6 <= x <= lx + tw_l + 0.6)
+        if p.shaft_chamfer:  # 轴端倒角引出（自端面向外上方斜引）：标号不进两端外侧
+            xe0, xe1 = shaft_sx(front, Ltot, 0.0), shaft_sx(front, Ltot, Ltot)
+            hit += 2 * ((lx < xe0 + 2 and lx + tw_l > xe0 - 30) or (lx < xe1 + 30 and lx + tw_l > xe1 - 2))
         a0_ = (cx + sg * r * k, cy + r * k)
         mybox = (lx - 0.5, b_[1] - 2.2, lx + tw_l + 0.5, b_[1] + 3.3)
         for (la, lb_), bx2 in prev:  # 与别的标号：引线穿字、字压字、引线相交
@@ -3053,17 +3067,38 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     y2 = f["d2"] / 2
     (xa, ya), (xb, _) = S(f["z0"], y2), S(f["z1"], y2)
     ys = S(zc, yc)[1]
+    tw_w = text_width(f"{f['width']:g}", 3.5)
+    w_fits = xb - xa >= tw_w + 2
+    # 放不下：箭头在外，数字移到槽深尺寸（自由侧）的另一侧
+    wx = (xa + xb) / 2 if w_fits else ((xa - 4 - tw_w / 2) if sx > 0 else (xb + 4 + tw_w / 2))
     out = [Dim("detail", "linear", "z", f["width"], f"{f['width']:g}", f"{f['name']}_w", None, {
         "detail": v.label, "sheet_pts": [(round(xa, 2), round(ya, 2)), (round(xb, 2), round(ya, 2))],
-        "sheet_pos": (round((xa + xb) / 2, 2), round(ya - 7, 2)), "orient": "h", "below": True,
+        "sheet_pos": (round(wx, 2), round(ya - 7, 2)), "orient": "h", "below": True, "arrows_out": not w_fits,
         "pick_pts": [(round(xa, 2), round((ya + ys) / 2, 2)), (round(xb, 2), round((ya + ys) / 2, 2))]})]
     zf = f["z0"] if sx < 0 else f["z1"]  # 自由侧槽壁
     xf = S(zf, y2)[0]
     xl = xf + sx * 6
     out.append(Dim("detail", "linear", "y", h, f"{h:g}", f"{f['name']}_h", None, {
         "detail": v.label, "sheet_pts": [(round(xf, 2), round(ya, 2)), (round(xf, 2), round(ys, 2))],
-        "sheet_pos": (round(xl, 2), round(ys + 4 + text_width(f"{h:g}", 3.5) / 2, 2)), "orient": "v", "small": True,
+        # 挡圈槽自由侧在左（定位尺寸行在其上方）：槽深数字写在尺寸线向下的延长线上（本段材料内）
+        "sheet_pos": (round(xl, 2), round((ya - 4 - text_width(f"{h:g}", 3.5) / 2) if f.get("type") == "circlip" and sx < 0
+                                          else (ys + 4 + text_width(f"{h:g}", 3.5) / 2), 2)), "orient": "v", "small": True,
         "pick_pts": [(round((xa + xb) / 2, 2), round(ya, 2)), (round(xf + sx * 3, 2), round(ys, 2))]}))
+    if f["type"] == "circlip":  # 定位尺寸：轴段起点端面 → 槽左壁，注在外圆上方
+        d_prev = p.shaft_steps[i - 1][1] if i > 0 else 0.0
+        xs0 = S(sz0, yc)[0]
+        xg = S(f["z0"], yc)[0]
+        yp = ys + 7
+        tw = text_width(f"{f['offset']:g}", 3.5)
+        fits = xg - xs0 >= tw + 2
+        tx = (xs0 + xg) / 2 if fits else xs0 - 4 - tw / 2
+        lo, hi = sorted((d_prev / 2, f["d"] / 2))
+        y_face = (hi + lo) / 2 if d_prev > f["d"] else max(lo + (p.shaft_chamfer if i == 0 else 0) + 0.3, yc - 0.6 * rm, (hi + lo) / 2)
+        y_face = min(y_face, yc + 0.6 * rm)
+        out.append(Dim("detail", "linear", "z", f["offset"], f"{f['offset']:g}", f"{f['name']}_pos", None, {
+            "detail": v.label, "sheet_pts": [(round(xs0, 2), round(ys, 2)), (round(xg, 2), round(ys, 2))],
+            "sheet_pos": (round(tx, 2), round(yp, 2)), "orient": "h", "above": True, "arrows_out": not fits,
+            "pick_pts": [(round(xs0, 2), round(S(sz0, y_face)[1], 2)), (round(xg, 2), round((ya + ys) / 2, 2))]}))
     return out
 
 
@@ -3581,9 +3616,23 @@ ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII")
 def detail_geom(f: dict, scale: float) -> tuple[float, float]:
     """局部放大图（环槽）：放大比例 ds（槽深放大后 ≥ 2 mm，且至少为主视图 2 倍）与区域模型半径 rm（图上半径 ≤ 28 mm）。"""
     h = (f["d"] - f["d2"]) / 2
+    if f.get("type") == "circlip":  # 挡圈槽（主视图挤不下）：区域含定位端面（轴段起点），定位尺寸注在放大图内
+        need = f["offset"] + f["width"] / 2 + 1.5
+        ds = max((k for k in DETAIL_SCALES if k >= 2 * scale and need * k <= 28.0), default=2 * scale)
+        return ds, min(need, 0.8 * f["d"] / 2)
     ds = next((k for k in DETAIL_SCALES if h * k >= 2.0 and k >= 2 * scale), DETAIL_SCALES[-1])
     rm = min(f["width"] / 2 + 3.0, 28.0 / ds, 0.8 * f["d"] / 2)
     return ds, rm
+
+
+def circlip_crowded(f: dict, scale: float) -> bool:
+    """挡圈槽定位尺寸（自轴段起点）在主视图放不下数字，且放大图（≥ 2 倍主视图、半径 ≤ 28 mm）能容下定位端面。"""
+    if f.get("kind") != "groove" or f.get("type") != "circlip" or f["offset"] <= 1e-6:
+        return False
+    if f["offset"] * scale >= text_width(f"{f['offset']:g}", 3.5) + 1.5:
+        return False
+    need = f["offset"] + f["width"] / 2 + 1.5
+    return need * 2 * scale <= 28.0 and need <= 0.8 * f["d"] / 2
 
 
 def detail_sheet(v: "ViewPlan"):
