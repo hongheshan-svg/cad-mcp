@@ -5740,7 +5740,12 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
         cands = [lo + (hi - lo) * k / 20 for k in range(2, 19)]
         return max(cands, key=lambda c: (min([abs(c - b) for b in busy] or [1e9]), -abs(c - (lo + hi) / 2)))
 
-    bend_taken: list = []  # 已放折弯说明的文字框
+    bend_taken: list = []  # 已放折弯说明的文字框；展开图上的孔圆（文字不压孔）
+    for h in p.holes:
+        for u, v_ in (h.flat_uv or []):
+            hx, hy = F(u, v_)
+            hr = h.drill / 2 * sc + 0.4
+            bend_taken.append((hx - hr, hy - hr, hx + hr, hy + hr))
     for d in plan.dims:
         if d.view != "flat_pattern":
             continue
@@ -5789,10 +5794,17 @@ def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None =
     px, py = at
     lead: list = []
     hit = lambda b_: any(_box_hit(b_, t_) > 0 for t_ in taken or [])  # noqa: E731
+    def slide(c, lo, hi):  # 文字沿折弯线从中部向两端逐 1 mm 试位置（压孔等再挪）：返回第一个可用的中心
+        for k in range(int(max(hi - lo, 0)) + 1):
+            for t in ((c + k, c - k) if k else (c,)):
+                if lo <= t <= hi:
+                    yield t
     if bd["flat_axis"] == "v":  # 水平折弯线 y = py
         tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
         ty = py + 1 if y1 - py > 4.6 else py - 3.2
-        if tw <= (x1 - x0) - 4 and not hit((tx - tw / 2, ty, tx + tw / 2, ty + 3)):
+        tx = next((t for t in slide(tx, x0 + 2 + tw / 2, x1 - 2 - tw / 2)
+                   if not hit((t - tw / 2, ty, t + tw / 2, ty + 3))), None) if tw <= (x1 - x0) - 4 else None
+        if tx is not None:
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 0, "sheet_pos": (tx - tw / 2, ty)}
         else:
             lead = [[(x1 + 1, py), (x1 + 18, py)]]
@@ -5800,7 +5812,9 @@ def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None =
     else:  # 竖直折弯线 x = px
         ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
         tx = px - 1 if px - x0 > 4.6 else px + 3.2
-        if tw <= (y1 - y0) - 4 and not hit((tx - 3, ty - tw / 2, tx, ty + tw / 2)):
+        ty = next((t for t in slide(ty, y0 + 2 + tw / 2, y1 - 2 - tw / 2)
+                   if not hit((tx - 3, t - tw / 2, tx, t + tw / 2))), None) if tw <= (y1 - y0) - 4 else None
+        if ty is not None:
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 90, "sheet_pos": (tx, ty - tw / 2)}
         else:
             n_u = sum(1 for b in p.bends if b["flat_axis"] != "v")
