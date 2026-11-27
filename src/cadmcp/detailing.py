@@ -1338,7 +1338,13 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     plan = _plan_shaft(spec, p, today)
     need = getattr(plan, "_lift_need", 0.0)
     if need > 0:  # 伸出轮廓的直径文字（偏差写全）上方没地方：视图整体下移再排（不压技术要求才用）
-        p2 = _plan_shaft(spec, p, today, top_extra=need)
+        extra, p2 = 0.0, None
+        for _ in range(4):  # 下移后排布会变（尺寸行、标注跟着重排），缺口可能还剩一点：累加再试
+            extra += need
+            p2 = _plan_shaft(spec, p, today, top_extra=extra)
+            need = getattr(p2, "_lift_need", 0.0)
+            if need <= 0 or _shaft_hits_notes(p2):
+                break
         if not _shaft_hits_notes(p2) and getattr(p2, "_lift_need", 0.0) <= 0:
             plan = p2
         elif spec.sheet in (None, "auto") and plan.sheet == "A4":  # A4 竖放上下都没地方：换 A3 再排
