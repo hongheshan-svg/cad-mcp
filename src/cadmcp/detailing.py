@@ -1497,7 +1497,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
                         {"sheet_pts": [(round(xa_, 2), round(y_, 2)), (round(xb_, 2), round(y_, 2))]}))
     for v in views:  # 局部放大图：视图位置已定后算主视图圆圈/编号与放大图内尺寸的图纸坐标
         if v.type == "detail":
-            dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none")
+            dims += _detail_plan(p, front, v, Ltot, spec.dimensions != "none", dims)
     if p.flange_holes and spec.dimensions != "none":
         dims += _flange_hole_dims(p, next(v for v in views if v.type == "left"), D)
     if hub_kws and spec.dimensions != "none":  # 视图位置已定（含上方让位下移）后再算端视图尺寸的图纸坐标
@@ -2651,7 +2651,8 @@ def _shaft_dia_label(p: ResolvedPart, j: int, deviations: bool = True) -> str:
     return _dia_text(p.shaft_steps[j][1], tj, deviations and j not in getattr(p, "_dia_code_only", ()))
 
 
-def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float, with_dims: bool) -> list[Dim]:
+def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float, with_dims: bool,
+                 others: list[Dim] | None = None) -> list[Dim]:
     """局部放大图：主视图上细实线圆 + 引线罗马数字（引向未被轴肩占据的一侧上方）；放大图内注槽宽 b（槽底下方）
     与槽深 h（自由侧，箭头在外，数字在尺寸线延长线上）。"""
     f = next(x for x in p.shaft_features if x["name"] == v.target)
@@ -2665,10 +2666,21 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     shoulder_right = abs(f["z1"] - sz1) < 1e-6 and d_next > f["d"]
     sx = -1 if shoulder_right else 1  # 自由侧方向（−1 = 左）
     k = 0.7071
-    a = (cx + sx * r * k, cy + r * k)
-    b = (cx + sx * (r + 5) * k, cy + (r + 5) * k)
+    # 标号避开主视图上方的竖线（键槽/环槽等定位尺寸的界线、轴肩线）：引线长 5/9/13 mm，自由侧优先
+    vlines = [shaft_sx(front, Ltot, z) for d in (others or []) if d.view == "front" and d.kind == "linear"
+              and d.axis == "z" and d.at is not None for z in d.at]
+    tw_l = text_width(v.label, 3.5)
+    best = None
+    for n_, (sg, L_) in enumerate([(sx, 5), (sx, 9), (sx, 13), (-sx, 5), (-sx, 9)]):
+        b_ = (cx + sg * (r + L_) * k, cy + (r + L_) * k)
+        lx = b_[0] + sg * 1.2 + (0 if sg > 0 else -tw_l)
+        hit = sum(1 for x in vlines if lx - 0.6 <= x <= lx + tw_l + 0.6)
+        if best is None or (hit, n_) < best[0]:
+            best = ((hit, n_), sg, b_, lx)
+    _, sg, b, lx = best
+    a = (cx + sg * r * k, cy + r * k)
     dt.update({"circle": (round(cx, 2), round(cy, 2), round(r, 2)), "leader": [(round(a[0], 2), round(a[1], 2)), (round(b[0], 2), round(b[1], 2))],
-               "label_at": (round(b[0] + sx * 1.2 + (0 if sx > 0 else -text_width(v.label, 3.5)), 2), round(b[1] - 1.2, 2)),
+               "label_at": (round(lx, 2), round(b[1] - 1.2, 2)),
                "free_side": sx})
     if not with_dims:
         return []
