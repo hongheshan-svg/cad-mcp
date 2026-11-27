@@ -2995,6 +2995,18 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 tx_, ty_ = x + ddx * 9, y + ddy * 9 - 1.5
                 hard.append((min(x, tx_ - 3) - 0.5, min(y, ty_ - 1.0) - 0.5, max(x, tx_ + 3) + 0.5, max(y, ty_ + 4.0) + 0.5))
     ord_texts: list = []  # 坐标尺寸数字（引线穿过算硬伤）
+    if part is not None:  # 孔的表面结构（默认在孔左侧，排完后才选边）：引线不穿默认位置的 Ra 值文字
+        for d in plan.dims:
+            ex_ = d.extra or {}
+            if d.kind != "roughness" or not d.ref.startswith("ra:hole:") or d.at is None or d.view not in vmap \
+                    or ex_.get("in_section") or tuple(ex_.get("normal", ())) != (-1, 0):
+                continue
+            h_ = next((h for h in part.holes if h.name == d.ref[len("ra:hole:"):]), None)
+            if h_ is None:
+                continue
+            x, y = _uv_sheet(vmap[d.view], bbox, d.at)
+            sx = x - ra_reach(-1, d.text, h_.max_dia / 2 * vmap[d.view].scale)
+            ord_texts.append((sx + 5.0, y + 3.8, sx + 7 + len(d.text) * 2.0, y + 8.0))  # 只框 Ra 值文字（孔本身不算）
     for v in vmap.values():  # 总体尺寸数字（overall_dim_sheet 后定位，规则相同：先按它的规则占位，引线不穿）
         ha, va = VIEW_AXES[v.type]
         (ulo, uhi), (wlo, whi) = vrange(bbox, ha), vrange(bbox, va)
