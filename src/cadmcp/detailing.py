@@ -1929,7 +1929,8 @@ def _fit_dims(a, views, balloons, sheet_size, ts) -> tuple[list[Dim], int]:
     def seg_box(a_, b_, bx):  # 线段与矩形是否相交（取样）
         return any(bx[0] <= a_[0] + (b_[0] - a_[0]) * k_ / 40 <= bx[2] and bx[1] <= a_[1] + (b_[1] - a_[1]) * k_ / 40 <= bx[3]
                    for k_ in range(41))
-    for k, f in enumerate(assembly_fits(a)):
+    all_fits = assembly_fits(a)
+    for k, f in enumerate(all_fits):
         u = [f["p1"][i] - f["p0"][i] for i in range(3)]
         for v in views:
             if v.type not in VIEW_AXES:
@@ -1955,6 +1956,18 @@ def _fit_dims(a, views, balloons, sheet_size, ts) -> tuple[list[Dim], int]:
                 ow, oh = o.size_mm
                 others.append((ox - ow / 2 - 16, oy - oh / 2, ox - ow / 2 - 2, oy + oh / 2))
                 others.append((ox - ow / 2, oy - oh / 2 - 16, ox + ow / 2, oy - oh / 2 - 2))
+            # 别的配合处（销、轴）的投影区：引出线横穿过去不好看（尺寸线应从就近一侧引出）
+            parts_ = []
+            for g in all_fits:
+                if g is f or (g["inst_hole"], g["inst_shaft"]) == (f["inst_hole"], f["inst_shaft"]):
+                    continue
+                q0 = _uv_sheet(v, a.bbox, (vc(g["p0"], ha), vc(g["p0"], va)))
+                q1 = _uv_sheet(v, a.bbox, (vc(g["p1"], ha), vc(g["p1"], va)))
+                if (abs(q0[0] - p0[0]) < 1e-6 and abs(q1[0] - p1[0]) < 1e-6) or \
+                        (abs(q0[1] - p0[1]) < 1e-6 and abs(q1[1] - p1[1]) < 1e-6):
+                    continue  # 同轴（轴承内外圈）：不算
+                rg = g["d"] / 2 * v.scale
+                parts_.append((min(q0[0], q1[0]) - rg, min(q0[1], q1[1]) - rg, max(q0[0], q1[0]) + rg, max(q0[1], q1[1]) + rg))
             W_, H_ = sheet_size
             # 先试离配合处近的一侧（左半边的孔往左引，右半边往右），免得尺寸线横穿别的零件
             near = (p0[0] + p1[0]) / 2 < cx if vertical_axis else (p0[1] + p1[1]) / 2 < cy
@@ -1980,7 +1993,8 @@ def _fit_dims(a, views, balloons, sheet_size, ts) -> tuple[list[Dim], int]:
                 out_ = box[0] < 7 or box[1] < 7 or box[2] > W_ - 7 or box[3] > H_ - 7
                 hit = 10 * out_ + 3 * sum(_box_hit(box, o) > 0 for o in obst + texts + others) \
                     + 3 * sum(seg_box(*sg, box) for sg in segs) + 3 * sum(seg_box(*line, t__) for t__ in texts) \
-                    + sum(seg_box(*line, t__) for t__ in obst + others)
+                    + sum(seg_box(*line, t__) for t__ in obst + others) \
+                    + 3 * sum(seg_box(*line, t__) for t__ in parts_)
                 if best is None or hit < best[0]:
                     best = (hit, pts, pos, box, orient, axis, line, side)
                 if hit == 0:
