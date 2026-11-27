@@ -2984,6 +2984,27 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 tx_, ty_ = x + ddx * 9, y + ddy * 9 - 1.5
                 hard.append((min(x, tx_ - 3) - 0.5, min(y, ty_ - 1.0) - 0.5, max(x, tx_ + 3) + 0.5, max(y, ty_ + 4.0) + 0.5))
     ord_texts: list = []  # 坐标尺寸数字（引线穿过算硬伤）
+    for v in vmap.values():  # 总体尺寸数字（overall_dim_sheet 后定位，规则相同：先按它的规则占位，引线不穿）
+        ha, va = VIEW_AXES[v.type]
+        (ulo, uhi), (wlo, whi) = vrange(bbox, ha), vrange(bbox, va)
+        (x0, y0), (x1, y1) = _uv_sheet(v, bbox, (ulo, wlo)), _uv_sheet(v, bbox, (uhi, whi))
+        ords = [d for d in plan.dims if d.view == v.type]
+        has_ord_h = any(d.kind == "ordinate" and d.axis == ha for d in ords)
+        norms = [tuple(d.extra["normal"]) for d in ords if d.kind in ("datum", "gtol", "roughness")
+                 and d.extra and "normal" in d.extra and not d.extra.get("attach")]
+        for d in ords:
+            ex_ = d.extra or {}
+            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit"):
+                continue
+            tw = text_width(d.text, 3.5)
+            if d.axis == ha:
+                y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)
+                xm = (x0 + x1) / 2 if tw <= abs(x1 - x0) - 1 else max(x0, x1) + 1.5 + tw / 2
+                ord_texts.append((xm - tw / 2, y - 0.5, xm + tw / 2, y + 4.0))
+            elif d.axis == va:
+                x = x0 - (22 if (-1, 0) in norms else 10)
+                ym = (y0 + y1) / 2 if tw <= abs(y1 - y0) - 1 else min(y0, y1) - 1.5 - tw / 2
+                ord_texts.append((x - 4.0, ym - tw / 2, x + 0.5, ym + tw / 2))
     for d in plan.dims:  # 坐标值数字（ordinate_dim_sheet 已定位；靠近剖切符号时外移 8 mm，按外移后的位置占位）
         ex = d.extra or {}
         if d.kind != "ordinate" or "sheet_pos" not in ex or d.view not in vmap:
