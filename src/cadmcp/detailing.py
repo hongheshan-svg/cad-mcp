@@ -3710,6 +3710,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _xh_callout_flip(plan, p)
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
+    _shaft_short_num_frame(plan)
     _shaft_num_dodge_leaders(plan)
     _shaft_dia_lift(plan, p)
 
@@ -3841,12 +3842,50 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
             row += [(x2 - 4.5, x2 + 4.5) for x2, ov2 in lines if (ov2 == "down") == below]
             row += _label_row_spans(plan, ex["sheet_pos"][1])
             for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2):
-                if not any(lo < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi for lo, hi in row):
+                if 5.5 < c - tw / 2 and c + tw / 2 < plan.sheet_size[0] - 5.5 \
+                        and not any(lo < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi for lo, hi in row):
                     ok = [c]
                     break
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+def _shaft_short_num_frame(plan: "DrawingPlan") -> None:
+    """主视图上方放不进界线之间的短尺寸数字：默认写在右侧界线外，会出右图框时改写左侧；
+    左侧贴着同行别的数字/界线（会读成一个数，如 18 与 3.5 → “183.5”）时降到低一道并写左侧。"""
+    W = plan.sheet_size[0]
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "front" or d.kind != "linear" or d.axis != "z" or "sheet_pts" not in ex or "sheet_pos" not in ex \
+                or d.ref == "overall_z" or d.ref.startswith("step") or "text_x" in ex:
+            continue
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        tw = text_width(d.text, 3.5)
+        if tw <= xb - xa - 1 or xb + 1.5 + tw < W - 5 - 0.5:
+            continue
+        py = ex["sheet_pos"][1]
+        c = xa - 1.5 - tw / 2
+        row = []
+        for o in plan.dims:
+            eo = o.extra or {}
+            if o is d or o.view != "front" or o.kind != "linear" or "sheet_pos" not in eo or "sheet_pts" not in eo \
+                    or abs(eo["sheet_pos"][1] - py) > 1:
+                continue
+            ot = text_width(o.text, 3.5)
+            oc = eo.get("text_x", eo["sheet_pos"][0])
+            if oc - ot / 2 < c + tw / 2 + 3.0 and c - tw / 2 - 3.0 < oc + ot / 2:  # 贴着：该数字在自己的界线之间左移
+                oa, ob_ = sorted(q[0] for q in eo["sheet_pts"])
+                nc = min(oc, c - tw / 2 - 3.0 - ot / 2)
+                if nc - ot / 2 >= oa + 0.8 and nc + ot / 2 <= ob_ - 0.8:
+                    o.extra = {**eo, "text_x": round(nc, 2), "sheet_pos": (round(nc, 2), eo["sheet_pos"][1])}
+                    oc = nc
+            row.append((oc - ot / 2, oc + ot / 2))
+        row += _label_row_spans(plan, py)
+        if any(lo < c + tw / 2 + 1.5 and c - tw / 2 - 1.5 < hi for lo, hi in row):
+            d.extra = {**ex, "track": 1, "text_x": round(c, 2), "sheet_pos": (round(c, 2), round(py - 7, 2))}
+        else:
+            d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
 
 
 def _label_row_spans(plan: "DrawingPlan", py: float) -> list[tuple[float, float]]:
@@ -3901,7 +3940,8 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
         cands = [c for c in (lo - tw / 2 - 1.2, hi + tw / 2 + 1.2) if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8]
         cands += [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间偏不开：移到界线外（先界线之间）
         lrow = _label_row_spans(plan, py)  # 界线外的位置还要避开引出标注的文字/水平线
-        cands = [c for c in cands if not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs)
+        W_ = plan.sheet_size[0]
+        cands = [c for c in cands if 5.5 < c - tw / 2 and c + tw / 2 < W_ - 5.5 and not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs)
                  and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row)
                  and (xa < c < xb or not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in lrow))]
         if cands:
@@ -3925,7 +3965,8 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
             c1 = [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]
             if xs1:
                 c1 += [max(xs1) + 1.2 + tw / 2, min(xs1) - 1.2 - tw / 2]
-            c1 = [c for c in c1 if not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs1)
+            c1 = [c for c in c1 if 5.5 < c - tw / 2 and c + tw / 2 < plan.sheet_size[0] - 5.5
+                  and not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs1)
                   and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row1)]
             ne = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], py1)}
             if c1:
@@ -3958,7 +3999,8 @@ def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float
         row += _label_row_spans(plan, py)
         xs_all = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi]
         inside = [c for c in (min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6) if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3]
-        outside = [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间放不下：移到界线外
+        outside = [c for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2)  # 界线之间放不下：移到界线外（不出图框）
+                   if 5.5 < c - tw / 2 and c + tw / 2 < plan.sheet_size[0] - 5.5]
         for c in sorted(inside, key=lambda c: abs(c - c0)) + sorted(outside, key=lambda c: abs(c - c0)):
             if True and not any(c - tw / 2 - 0.5 < x < c + tw / 2 + 0.5 for x in xs_all) \
                     and not any(a - 0.5 < c + tw / 2 and c - tw / 2 < b + 0.5 for a, b in row):

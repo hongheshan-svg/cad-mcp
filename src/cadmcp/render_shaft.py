@@ -20,7 +20,7 @@ def _arrow(s, x, y, dx, dy, size=2.2):
     s.parts.append("<polygon points='" + " ".join(f"{a:.2f},{s.y(b):.2f}" for a, b in pts) + "' fill='#111'/>")
 
 
-def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None):
+def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None, x_max=None):
     """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。文字比两界线间距宽时移到界线之外（默认右侧；
     右侧落在同一行别的尺寸 busy=[(x0, x1)] 上时改到左侧），尺寸线延长到文字下。"""
     from .render_svg import _text_w
@@ -31,7 +31,8 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None):
         x0, x1 = min(xa, xb), max(xa, xb)
         hit_r = any(a < x1 + 1.5 + tw + 1 and b > x1 + 0.5 for a, b in busy or [])
         hit_l = any(a < x0 - 0.5 and b > x0 - 1.5 - tw - 1 for a, b in busy or [])
-        if hit_r and not hit_l:
+        out_r = x_max is not None and x1 + 1.5 + tw > x_max - 0.5  # 右侧会出图框
+        if hit_r and not hit_l or out_r:
             s.line(x0 - 1.5 - tw, y, x1, y, THIN)
             s.text(x0 - 1.5 - tw, y + 0.8, text, 3.5)
         else:
@@ -411,7 +412,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 y = y_bot - 15
                 _hdim(s, xa, xb, cy - radius_at(za + 1e-6) * sc, cy - radius_at(zb - 1e-6) * sc, y, d.text,
                       busy=_row_text_spans(plan, d, P, lambda d2: d2.ref.startswith("step")),
-                      text_x=(d.extra or {}).get("text_x"))
+                      text_x=(d.extra or {}).get("text_x"), x_max=plan.sheet_size[0] - 5)
             else:  # 键槽、环槽定位：画在主视图上方
                 tr_ = (d.extra or {}).get("track", 0)
                 y = y_top + 14 - 7 * tr_
@@ -433,7 +434,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                                 xx_ = x1_ + (x2_ - x1_) * (yy_ - y1_) / (y2_ - y1_)
                                 row_.append((xx_ - 0.5, xx_ + 0.5))
                 _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_,
-                      text_x=(d.extra or {}).get("text_x"))
+                      text_x=(d.extra or {}).get("text_x"), x_max=plan.sheet_size[0] - 5)
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
             from .detailing import bore_dia_overflow, bore_dia_place
             k = int(d.ref[4:].split("_")[0])
