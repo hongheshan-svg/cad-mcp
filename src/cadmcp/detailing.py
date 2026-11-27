@@ -1373,6 +1373,10 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
             if not _shaft_hits_notes(p4):
                 plan = p4
                 break
+    if getattr(plan, "_xh_bad", False) and spec.sheet in (None, "auto") and plan.sheet == "A4":
+        p6 = _plan_shaft(spec.model_copy(update={"sheet": "A3"}), p, today, max_scale=plan.scale)
+        if not getattr(p6, "_xh_bad", False) and not _shaft_hits_notes(p6) and getattr(p6, "_lift_need", 0.0) <= 0:
+            plan = p6
     nxt = {"A4": "A3", "A3": "A2"}
     if _shaft_hits_notes(plan) and spec.sheet in (None, "auto") and plan.sheet in nxt:  # 仍压技术要求：换大一号图纸
         p5 = _plan_shaft(spec.model_copy(update={"sheet": nxt[plan.sheet]}), p, today, max_scale=plan.scale)
@@ -4267,8 +4271,10 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
             out_ = tbox[0] < 6 or tbox[2] > plan.sheet_size[0] - 6 or ty + 4.5 > plan.sheet_size[1] - 6  # 出图框
             cost = 100 * out_ + 10 * (hits((ax, ay), (ex_, ty), boxes + placed) + over) + 5 * xing + k
             if best is None or cost < best[0]:
-                best = (cost, sg, ty, ex_, tbox)
-        _, sg, ty, ex_, tbox = best
+                best = (cost, sg, ty, ex_, tbox, cost - k >= 10)  # 末项：出框 / 穿字 / 压字（不计候选序号）
+        if best[5]:  # 找不到不穿字、不出框的位置：记下，由 plan_shaft_drawing 换大图幅再排
+            plan._xh_bad = True
+        _, sg, ty, ex_, tbox, _ = best
         end = ex_ + sg * w
         lines_ += [((ax, ay), (ex_, ty)), ((ex_, ty), (end, ty))]
         d.extra["label"] = {**lb, "elbow": (round(ex_, 2), round(ty, 2)), "end": (round(end, 2), round(ty, 2)),
