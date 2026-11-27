@@ -79,7 +79,12 @@ for n in range(N):
         a = svc._models()[asm["name"]].resolved
         plan = plan_assembly_drawing(DrawingSpec(model=asm["name"]), a)
         svg, out = render(plan, a)
-        if out["crossings"] or out["collisions"]:
+        from cadmcp.detailing import view_overlaps
+        vo = view_overlaps(plan)
+        if vo:
+            stats["viewclash"] += 1
+            bad.append((n, "viewclash", vo[:3], None, locals().get("spec") or locals().get("asm")))
+        elif out["crossings"] or out["collisions"]:
             stats["overlap"] += 1
             bad.append((n, "overlap", out["crossings"][:3], out["collisions"][:3], {"parts": parts, "asm": asm}))
         else:

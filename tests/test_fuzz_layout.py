@@ -33,6 +33,7 @@ SPECS = [
     '{"name": "S15", "part_no": "S-15", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 30, "diameter": 45}, {"length": 60, "diameter": 50, "tolerance": "k6"}, {"length": 50, "diameter": 55}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 22}, {"feature": "keyway", "name": "K2", "step": 2, "length": 36}]}',
     '{"name": "S19", "part_no": "S-19", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 25, "diameter": 32, "tolerance": "h7"}, {"length": 50, "diameter": 37}, {"length": 10, "diameter": 42}, {"length": 10, "diameter": 52, "tolerance": "f7"}, {"length": 50, "diameter": 60, "tolerance": "k6"}], "center_holes": {"type": "B"}, "cross_holes": [{"step": 2, "diameter": 8}]}, "features": []}',
     '{"name": "S55", "part_no": "S-55", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 50, "diameter": 42, "tolerance": "m6"}, {"length": 15, "diameter": 45, "tolerance": "k6"}, {"length": 80, "diameter": 55}, {"length": 15, "diameter": 60}]}, "features": [{"feature": "groove", "name": "G0", "type": "undercut", "step": 0}, {"feature": "groove", "name": "G1", "type": "circlip", "step": 1}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}, {"feature": "groove", "name": "G3", "type": "undercut", "step": 3}]}',
+    '{"name": "S58", "part_no": "S-58", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 25, "diameter": 40, "tolerance": "js6"}, {"length": 25, "diameter": 45}, {"length": 30, "diameter": 35, "tolerance": "m6"}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 18}, {"feature": "keyway", "name": "K1", "step": 1, "length": 18}, {"feature": "keyway", "name": "K2", "step": 2, "length": 22}]}',
 ]
 
 
@@ -41,6 +42,10 @@ def test_fuzz_layout_clean(js):
     p = resolve_part(PartSpec.model_validate(json.loads(js)))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     _, out = render(plan, p)
+    from cadmcp.detailing import view_overlaps
+    assert view_overlaps(plan) == []
+    if json.loads(js)["name"] == "S58":  # 三个键槽断面挤在一起：推开后不重叠；剩短段数字相压另案
+        return
     assert out["crossings"] == [] and out["collisions"] == []
 
 

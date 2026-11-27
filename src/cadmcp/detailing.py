@@ -1318,6 +1318,18 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         zc = (f["z0"] + f["z1"]) / 2
         views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (shaft_sx(front, Ltot, zc), cy_sec),
                               label=label, target=f["name"]))
+    # 相邻键槽近、断面图互相重叠：从左到右推开（中心距 ≥ 两半宽 + 16 mm 尺寸带），整串以原位置均值为中心
+    secs0 = sorted((v for v in views if v.type == "section"), key=lambda v: v.origin_on_sheet[0])
+    if len(secs0) > 1:
+        xs0 = [v.origin_on_sheet[0] for v in secs0]
+        ps = [xs0[0]]
+        for k in range(1, len(secs0)):
+            need = (secs0[k - 1].size_mm[0] + secs0[k].size_mm[0]) / 2 + 16
+            ps.append(max(xs0[k], ps[-1] + need))
+        sh_ = sum(ps) / len(ps) - sum(xs0) / len(xs0)
+        sh_ = min(sh_, ps[0] - secs0[0].size_mm[0] / 2 - (MARGIN + 12))  # 左端不出图框（留尺寸带）
+        for v, x_ in zip(secs0, ps):
+            v.origin_on_sheet = (round(x_ - max(sh_, 0.0), 2), v.origin_on_sheet[1])
     # 断面图伸进右侧技术要求/标题栏一列且低于该栏顶部：左移让开（移出剖切位置的断面图带 X-X 标注，GB/T 17452 允许）
     n_notes_ = len(_notes_and_title(spec, p, sheet, scale, today)[0])
     col_x_, col_top_ = W - 5 - 180, 5 + 56 + 14 + 5 * n_notes_ + 6 + 16
@@ -3686,6 +3698,16 @@ def local_section_sheet(plan: "DrawingPlan", s) -> dict[str, Any] | None:
     h0, h1, d = s.path[0]
     z = s.bbox.zmax
     return {"boundary": out, "cut_points": [_p3(s.view, h0, d, z), _p3(s.view, h1, d, z)]}
+
+
+def view_overlaps(plan: "DrawingPlan", pad: float = 1.0) -> list[tuple[str, str]]:
+    """视图本体（包围框）两两重叠的列表：排布回归用（文字冲突检测查不到视图叠在一起）。"""
+    bx = []
+    for v in plan.views:
+        cx, cy = v.origin_on_sheet
+        w, h = v.size_mm
+        bx.append((f"{v.type}:{v.label or v.target}", (cx - w / 2 + pad, cy - h / 2 + pad, cx + w / 2 - pad, cy + h / 2 - pad)))
+    return [(a, b) for i, (a, ba) in enumerate(bx) for b, bb in bx[i + 1:] if _box_hit(ba, bb) > 0]
 
 
 def spread_1d(xs: list[float], gap: float) -> list[float]:

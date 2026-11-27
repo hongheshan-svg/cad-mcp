@@ -46,7 +46,12 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
             stats["invalid"] += 1; continue
         plan = plan_part_drawing(DrawingSpec(model=p.name), p)
         svg, out = render(plan, p)
-        if out["crossings"] or out["collisions"]:
+        from cadmcp.detailing import view_overlaps
+        vo = view_overlaps(plan)
+        if vo:
+            stats["viewclash"] += 1
+            bad.append((n, "viewclash", vo[:3], None, locals().get("spec") or locals().get("asm")))
+        elif out["crossings"] or out["collisions"]:
             stats["overlap"] += 1; bad.append((n, "overlap", out["crossings"][:2], out["collisions"][:2], spec))
         else:
             stats["ok"] += 1
