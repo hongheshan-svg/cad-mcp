@@ -3842,14 +3842,31 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
     orders = [sorted(idx, key=lambda k: (info[k]["zf"] is None, zkey(k))), sorted(idx, key=zkey),
               sorted(idx, key=lambda k: (info[k]["zf"] is not None, zkey(k)))]
     cost, st = min((run(o) for o in orders), key=lambda t: t[0]) if info else (0, {})
-    if 1 < len(info) <= 3 and cost >= 20:  # 框格少而贪心仍有穿框/压 Ra 预留位：穷举（≤ 28³ 种），可用第四行
-        import itertools
-        opts = [[(z, r, pf) for z, pf in it["cands"] for r in (0, 1, 2, 3)] for it in info]
-        for combo in itertools.product(*opts):
-            t = dict(enumerate(combo))
-            c = total(t)
-            if c < cost - 1e-9:
-                cost, st = c, t
+    if 1 < len(info) <= 5 and cost >= 20:  # 框格不多而贪心仍有穿框/压 Ra 预留位：分支定界求最优（可用第四行）
+        opts = [sorted(((solo(it, z, r, pf), (z, r, pf)) for z, pf in it["cands"] for r in (0, 1, 2, 3)),
+                       key=lambda t: t[0]) for it in info]
+        best_ = [cost, dict(st)]
+        cur: dict[int, tuple] = {}
+        budget = [200000]  # 节点数上限（防极端情况变慢）
+
+        def dfs(k, acc):
+            if budget[0] <= 0:
+                return
+            if k == len(info):
+                if acc < best_[0] - 1e-9:
+                    best_[0], best_[1] = acc, dict(cur)
+                return
+            for c0, o in opts[k]:
+                budget[0] -= 1
+                if acc + c0 >= best_[0] - 1e-9:
+                    break  # 按 solo 升序：后面的只会更大
+                c = acc + c0 + sum(pair(info[k], o[:2], info[j], cur[j][:2]) for j in cur)
+                if c < best_[0] - 1e-9:
+                    cur[k] = o
+                    dfs(k + 1, c)
+                    del cur[k]
+        dfs(0, 0.0)
+        cost, st = best_
     res = {info[k]["key"]: (st[k][0], st[k][1]) for k in st}
     _LAYOUT_CACHE[key] = (p, res, cost)
     return res
