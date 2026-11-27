@@ -875,6 +875,12 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
         obstacles.append(tuple(hb))
     for d in plan.dims:  # 已定图纸坐标的尺寸线/数字（轴类主视图下方的长度尺寸带比视图框外 6 mm 更远）
         ex = d.extra or {}
+        lb = ex.get("label") or {}
+        if "elbow" in lb and "end" in lb:  # 引出标注（中心孔、环槽、横孔…）：水平线与文字
+            xs_ = [lb["elbow"][0], lb["end"][0]] + ([lb["text_at"][0], lb["text_at"][0] + text_width(d.text, 3.5)]
+                                                    if "text_at" in lb else [])
+            ye_ = lb["elbow"][1]
+            obstacles.append((min(xs_) - 1, ye_ - 1, max(xs_) + 1, ye_ + 5))
         pts = [q for q in ex.get("sheet_pts") or [] if isinstance(q, (tuple, list)) and len(q) == 2]
         if len(pts) >= 2:
             xs_, ys_ = [q[0] for q in pts], [q[1] for q in pts]
