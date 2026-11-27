@@ -411,3 +411,20 @@ def test_gear_flank_ra_left_when_right_blocked():
     from cadmcp.adapters.solidworks import compile as SW
     ops = SW.compile_drawing(plan, "m.sldprt")
     assert any(o.op == "view_line" and o.args.get("ref", "").endswith(":ext") for o in ops)
+
+
+def test_gear_shaft_pitch_root_lines_broken_at_text():
+    """齿轮轴：分度线/齿根线由规划层给出（非模型几何），穿过直径文字处断开（GB/T 4458.4）；SW/Creo 都画出。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S50", "part_no": "S-50", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 80, "diameter": 25, "tolerance": "k6"}, {"length": 40, "diameter": 30, "tolerance": "k6"}, {"length": 30, "diameter": 25}, {"length": 20, "diameter": 20}, {"length": 10, "diameter": 15, "tolerance": "k6"}, {"length": 20, "diameter": 28}], "center_holes": {"type": "B"}, "shoulder_fillet": 1.5}, "features": [{"feature": "groove", "name": "G0", "type": "circlip", "step": 0}, {"feature": "keyway", "name": "K2", "step": 2, "length": 22}, {"feature": "gear", "name": "Z5", "step": 5, "module": 2, "teeth": 12}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    pitch = [ln for ln in plan.lines if ln["ref"].endswith(":pitch")]
+    root = [ln for ln in plan.lines if ln["ref"].endswith(":root")]
+    assert len(pitch) >= 2 and len(root) > 2  # 两侧各一条；齿根线穿过直径文字处断开
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    from cadmcp.adapters.solidworks import compile as SW
+    ops = SW.compile_drawing(plan, "m.sldprt")
+    assert sum(o.op == "view_line" and o.args["ref"].endswith((":pitch", ":root")) for o in ops) == len(plan.lines)
+    from cadmcp.adapters.creo import drawing as CD
+    cops = CD.compile_drawing(plan, "m.prt", toolkit=True)
+    assert sum(o.op == "tk.drw.line" and "齿轮段" in o.why for o in cops) == len(plan.lines)

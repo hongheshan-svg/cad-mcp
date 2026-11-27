@@ -683,6 +683,10 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                 **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else
                                                    {"text_pos": pos} if pos else {}),
                                                 **({"angle": 90} if (d.extra or {}).get("rot") == 90 else {})}))
+    for ln in plan.lines:  # 齿轮段分度线（细点画线）/齿根线（细实线）：非模型几何，视图草图画出
+        ops.append(NativeOp("view_line", {"view": ln["view"], "points": [list(q) for q in ln["pts"]],
+                                          "style": "CENTER" if ln["style"] == "center" else "SOLID", "weight": "thin",
+                                          "ref": ln["ref"]}, "齿轮段分度线/齿根线（GB/T 4459.2）"))
     for d in plan.dims:  # 齿面 Ra 的分度线延长线：细点画线（GB/T 4459.2）
         if d.kind == "roughness" and (d.extra or {}).get("ext_pts"):
             ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["ext_pts"]],

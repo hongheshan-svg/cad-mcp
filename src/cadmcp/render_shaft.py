@@ -374,7 +374,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         if d.kind == "roughness" and (d.extra or {}).get("ext_pts"):
             (xa_, ya_), (xb_, yb_) = d.extra["ext_pts"]
             s.line(xa_, ya_, xb_, yb_, THIN, CENTER)
-    for f in (f for f in part.shaft_features if f["kind"] == "gear"):
+    for ln in plan.lines:  # 规划层给出的附加细线（齿轮段分度线/齿根线，尺寸文字处断开）
+        if ln.get("view") == "front":
+            (xa_, ya_), (xb_, yb_) = ln["pts"]
+            s.line(xa_, ya_, xb_, yb_, THIN, CENTER if ln.get("style") == "center" else None)
+    for f in (f for f in part.shaft_features if f["kind"] == "gear") if not plan.lines else ():
         for sign in (1, -1):
             s.line(*P(f["z0"] - 2 / sc, sign * f["pd"] / 2), *P(f["z1"] + 2 / sc, sign * f["pd"] / 2), THIN, CENTER)
             s.line(*P(f["z0"], sign * f["df"] / 2), *P(f["z1"], sign * f["df"] / 2), THIN)

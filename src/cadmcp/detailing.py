@@ -122,6 +122,7 @@ class DrawingPlan:
     asm_section: dict[str, Any] = field(default_factory=dict)  # 装配图主视图全剖（见 plan_asm_section）
     axes: list[dict[str, Any]] = field(default_factory=list)  # 装配图回转件轴线/中心线：{view, pts:[(x,y),(x,y)]}（图纸 mm）
     gear_table: dict[str, Any] = field(default_factory=dict)  # 齿轮参数表：origin/columns/rows/row_height/size
+    lines: list[dict[str, Any]] = field(default_factory=list)  # 视图中附加的细线（非模型几何）：{view, pts, style center|thin, ref}
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -4193,6 +4194,43 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_num_dodge_datum(plan)  # 基准方框落进下方链式尺寸行（短轴段放不开）：数字偏到方框一侧或界线外
     _shaft_top_num_clear(plan)  # 上方尺寸数字被竖线（外层界线、框格引线、伸出的直径线）穿过：界线之间挪到空处
     _shaft_ra_on_dim(plan)  # 标在孔径尺寸线上的 Ra：接在（已定位的）尺寸文字之后
+    _shaft_gear_lines(plan, p)  # 齿轮段分度线/齿根线（非模型几何），在尺寸文字处断开
+
+
+def _shaft_gear_lines(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """齿轮轴主视图的齿轮段（GB/T 4459.2 外形视图）：分度线细点画线（两端伸出端面 2 mm）、齿根线细实线，
+    都不是模型几何，规划层给出图纸坐标写入 plan.lines，预览/SW/Creo 共用。
+    尺寸数字不得被图线穿过（GB/T 4458.4）：穿过直径竖写文字处断开。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    gears = [f for f in p.shaft_features if f["kind"] == "gear"]
+    if fv is None or not gears:
+        return
+    sc, cy = fv.scale, fv.origin_on_sheet[1]
+    boxes = []
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view == "front" and d.kind == "diameter" and d.ref.startswith("step"):
+            i = int(d.ref[4:].split("_")[0])
+            boxes.append(shaft_dia_text_box(p, i, fv, d.text, ex.get("over_at")))
+
+    def pieces(xa, xb, y):
+        gaps = sorted((b[0] - 0.8, b[2] + 0.8) for b in boxes if b[1] - 0.3 < y < b[3] + 0.3 and b[0] < xb and xa < b[2])
+        out, x = [], xa
+        for g0, g1 in gaps:
+            if g0 > x + 0.5:
+                out.append((x, min(g0, xb)))
+            x = max(x, g1)
+        if xb > x + 0.5:
+            out.append((x, xb))
+        return out
+    for f in gears:
+        xa, xb = sorted((shaft_sx(fv, None, f["z0"]), shaft_sx(fv, None, f["z1"])))
+        for sg in (1, -1):
+            for r, style, ext in ((f["pd"] / 2, "center", 2.0), (f["df"] / 2, "thin", 0.0)):
+                y = round(cy + sg * r * sc, 2)
+                for a, b in pieces(xa - ext, xb + ext, y):
+                    plan.lines.append({"view": "front", "pts": [(round(a, 2), y), (round(b, 2), y)], "style": style,
+                                       "ref": f"{f['name']}:{'pitch' if style == 'center' else 'root'}"})
 
 
 def _shaft_top_num_clear(plan: "DrawingPlan") -> None:

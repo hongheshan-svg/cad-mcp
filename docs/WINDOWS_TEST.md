@@ -608,3 +608,6 @@ Creo：`feat.round` edges 同样给点坐标。
 - 齿轮轴齿面粗糙度（`ra:flank:<名>`，GB/T 4459.2 注在分度线延长线上）：右邻轴段比分度圆粗时改标在齿段左端外，
   符号可沿延长线外移避开上方竖线；延长线由规划层给出 `extra["ext_pts"]`（图纸坐标），SW `view_line`（CENTER、细）、
   Creo `tk.drw.line` 画出。核对：原生延长线与分度线对齐、Ra 尖端落在延长线上。
+- 齿轮轴主视图齿轮段的分度线（细点画线）、齿根线（细实线）：非模型几何，原先原生图上没有；现在规划层给出 `plan.lines`
+  （图纸坐标，穿过直径文字处断开，GB/T 4458.4），SW `view_line`（CENTER / SOLID、细）、Creo `tk.drw.line`（CTRLFONT / SOLIDFONT）画出。
+  核对：线型、线宽是否生效；视图移动后线是否跟随（视图草图线随视图）。齿轮参数表压到标注时改放右侧栏之上或左上角（`gear_table.origin`）。
