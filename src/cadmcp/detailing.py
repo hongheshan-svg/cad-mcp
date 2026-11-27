@@ -3514,6 +3514,8 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
     obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) if h["dir"] == "view"
              else cross_hole_zone(p, h, sc)[:2] for h in p.cross_holes]
     busy += [(h["z"] - h["d"] / 2, h["z"] + h["d"] / 2) for h in p.cross_holes if h["step"] == i]
+    # 正对视向的横孔：标注引线从孔圆右上 45° 斜出轮廓，轮廓内经过 z ∈ [z, z + D/2]，竖写文字别放在这里
+    obst += [(h["z"], h["z"] + h["D"] / 2) for h in p.cross_holes if h["step"] == i and h["dir"] == "view"]
     for f in p.shaft_features:
         if f["step"] == i and f["kind"] == "thread":
             zt = f["z0"] if f["side"] == "end" else f["z1"]
