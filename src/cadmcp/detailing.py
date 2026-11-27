@@ -202,12 +202,13 @@ def _fill(sh: str, s: float, col_w, row_h) -> float:
 
 
 def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str,
-            notes_h: float = 0.0, max_scale: float | None = None) -> tuple[str, float]:
+            notes_h: float = 0.0, max_scale: float | None = None, enlarge: bool = False) -> tuple[str, float]:
     sheets = [sheet] if sheet and sheet != "auto" else list(SHEETS)
     if kind == "part":
         # 工程师习惯：能 1:1 就 1:1；小件或孔太小才放大；图幅优先 A4/A3
+        # enlarge：定位尺寸在 1:1 下写不进两界线之间（短轴上槽挨着轴肩），A4/A3 放得下 2:1 时放大
         tiny = max(b.size) <= 30 or (0 < min_feature < MIN_FEATURE_ON_PAPER)
-        order = ([5.0, 2.0] if tiny else []) + [1.0, 0.5, 0.2, 0.1, 0.05, 0.02]
+        order = ([5.0, 2.0] if tiny else [2.0] if enlarge else []) + [1.0, 0.5, 0.2, 0.1, 0.05, 0.02]
         order = [s for s in order if max_scale is None or s <= max_scale + 1e-9]
         for group in ([s for s in sheets if s in ("A4", "A3")], [s for s in sheets if s not in ("A4", "A3")]):
             for s in order:
@@ -1428,7 +1429,10 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + \
         ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
-    sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale)
+    tight = any(f.get("offset", 0) > 0 and f["offset"] < text_width(f"{f['offset']:g}", 3.5) + 1.5
+                for f in p.shaft_features if f["kind"] == "groove")
+    sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
+                           enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
     # 直径带极限偏差的文字一律写全（车间按数值加工检验，不让人查表）：放不进该段时伸出轮廓，不改为只注公差带代号
     p._dia_code_only = set()
     W, H = SHEETS[sheet]

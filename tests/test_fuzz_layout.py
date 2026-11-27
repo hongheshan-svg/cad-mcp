@@ -111,6 +111,7 @@ SPECS = [
     '{"name": "S8", "part_no": "S-8", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 80, "diameter": 42}, {"length": 40, "diameter": 47}, {"length": 30, "diameter": 50, "tolerance": "h7"}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 56}, {"feature": "keyway", "name": "K1", "step": 1, "length": 28}, {"feature": "keyway", "name": "K2", "step": 2, "length": 22}]}',
     '{"name": "S123", "part_no": "S-123", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 15, "diameter": 37}, {"length": 50, "diameter": 45, "tolerance": "js6"}, {"length": 50, "diameter": 35}, {"length": 20, "diameter": 25}, {"length": 15, "diameter": 22, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K2", "step": 2, "length": 36}, {"feature": "groove", "name": "G3", "type": "circlip", "step": 3}, {"feature": "groove", "name": "G4", "type": "circlip", "step": 4}]}',
     '{"name": "S115", "part_no": "S-115", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 20, "diameter": 47}, {"length": 30, "diameter": 50, "tolerance": "h7"}, {"length": 15, "diameter": 45, "tolerance": "f7"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 22}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}]}',
+    '{"name": "S18", "part_no": "S-18", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 47, "tolerance": "f7"}, {"length": 10, "diameter": 50, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}',
 ]
 
 
@@ -214,3 +215,13 @@ def test_fuzz_specs_compile_both_adapters(js):
         assert CC.compile_part_tk(spec, p)
     except CadError as e:  # Creo TOOLKIT 首期不支持钣金/焊接件（文档已注明）
         assert e.code == "CAPABILITY_UNSUPPORTED" and json.loads(js)["base"]["type"] in ("sheet_metal", "weldment")
+
+
+def test_short_shaft_tight_groove_enlarges():
+    """短轴上挡圈槽紧挨轴肩，定位尺寸 6.85 在 1:1 下写不进两界线之间：A4 放得下 2:1 时放大画（不是默认 1:1）。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S18", "part_no": "S-18", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 47, "tolerance": "f7"}, {"length": 10, "diameter": 50, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert plan.scale == 2.0 and plan.sheet == "A4"
+    p2 = resolve_part(PartSpec.model_validate(json.loads('{"name": "S18", "part_no": "S-18", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 47, "tolerance": "f7"}, {"length": 10, "diameter": 50, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}')))
+    plan2 = plan_part_drawing(DrawingSpec(model=p2.name, sheet="A2"), p2)  # 指定大图幅：不因此放大
+    assert plan2.scale == 1.0
