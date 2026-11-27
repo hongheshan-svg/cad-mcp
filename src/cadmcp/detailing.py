@@ -873,13 +873,38 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
         obstacles.append((cx - vw / 2 - 6, cy - vh / 2 - 6, cx + vw / 2 + 14, cy + vh / 2 + (12 if v.label else 6)))
     if hb:
         obstacles.append(tuple(hb))
+    for d in plan.dims:  # 已定图纸坐标的尺寸线/数字（轴类主视图下方的长度尺寸带比视图框外 6 mm 更远）
+        ex = d.extra or {}
+        pts = [q for q in ex.get("sheet_pts") or [] if isinstance(q, (tuple, list)) and len(q) == 2]
+        if len(pts) >= 2:
+            xs_, ys_ = [q[0] for q in pts], [q[1] for q in pts]
+            obstacles.append((min(xs_) - 1, min(ys_) - 1, max(xs_) + 1, max(ys_) + 1))
+        sp = ex.get("sheet_pos")
+        if isinstance(sp, (tuple, list)) and len(sp) == 2 and d.text:
+            tw_ = text_width(d.text, 3.5)
+            obstacles.append((sp[0] - tw_ / 2 - 1, sp[1] - 1.5, sp[0] + tw_ / 2 + 1, sp[1] + 4.5))
+            if d.kind == "linear" and d.axis == "z" and d.at is not None:  # 轴向尺寸线：横贯其所在视图
+                v_ = next((v for v in plan.views if v.type == d.view), None)
+                if v_ is not None:
+                    cx_, w_ = v_.origin_on_sheet[0], v_.size_mm[0]
+                    obstacles.append((cx_ - w_ / 2 - 2, sp[1] - 3, cx_ + w_ / 2 + 2, sp[1] + 4.5))
 
     def free(x, y):
         box = (x, y - 2, x + GR_W, y + GR_H)
         return box[3] <= H - 6 and not any(_box_hit(box, o) > 0 for o in obstacles)
 
     cands = [(x0, y0), (W - 6 - GR_W, y0)] + [(x0, y0 + 4 * k) for k in range(1, 60)] + [(W - 6 - GR_W, H - 6 - GR_H)]
-    return next(((round(x, 2), round(y, 2)) for x, y in cands if free(x, y)), (x0, y0))
+    hit = next(((round(x, 2), round(y, 2)) for x, y in cands if free(x, y)), None)
+    if hit:
+        return hit
+    # 都不空：再试图纸左侧下部一列，仍不行取与视图/尺寸重叠面积最小的位置
+    cands2 = cands + [(15.0, y0 + 4 * k) for k in range(0, 60)]
+
+    def cost(x, y):
+        box = (x, y - 2, x + GR_W, y + GR_H)
+        return (box[3] > H - 6) * 1e6 + sum(_box_hit(box, o) for o in obstacles)
+    x, y = min(cands2, key=lambda c: cost(*c))
+    return (round(x, 2), round(y, 2))
 
 
 def _place_table(plan: "DrawingPlan", w: float, h: float) -> tuple[float, float, float, float]:
@@ -1349,12 +1374,23 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     for k, (f, (ds_, rm_)) in enumerate(sorted(zip(dets, dgeo), key=lambda t: t[0]["z0"])):
         zc = (f["z0"] + f["z1"]) / 2
         w = 2 * rm_ * ds_
-        x = shaft_sx(front, Ltot, zc)
-        for _ in range(len(taken) + 1):
-            hit = [b_ for a_, b_ in taken if x - w / 2 - GAP / 2 < b_ and x + w / 2 + GAP / 2 > a_]
-            if not hit:
-                break
-            x = max(hit) + GAP / 2 + w / 2 + 1
+        x0_ = shaft_sx(front, Ltot, zc)
+
+        def slide(sg):  # 向右（sg=1）或向左（−1）让开已放的断面/放大图
+            x_ = x0_
+            for _ in range(len(taken) + 1):
+                hit = [(a_, b_) for a_, b_ in taken if x_ - w / 2 - GAP / 2 < b_ and x_ + w / 2 + GAP / 2 > a_]
+                if not hit:
+                    break
+                x_ = (max(b_ for _, b_ in hit) + GAP / 2 + w / 2 + 1) if sg > 0 else (min(a_ for a_, _ in hit) - GAP / 2 - w / 2 - 1)
+            return x_
+        # 右移出图框（含上方标号/比例、右侧 12 mm 尺寸带）则改向左；两边都不行取出界少的
+        opts = [slide(1), slide(-1)]
+        xc_ = min(max(x0_, MARGIN + 12 + w / 2), W - MARGIN - 12 - w / 2)  # 部位贴近图框：夹回框内
+        if not any(xc_ - w / 2 - GAP / 2 < b_ and xc_ + w / 2 + GAP / 2 > a_ for a_, b_ in taken):
+            opts.append(xc_)
+        over = lambda x_: max(0.0, x_ + w / 2 + 12 - (W - MARGIN), (MARGIN + 12) - (x_ - w / 2))  # noqa: E731
+        x = min(opts, key=lambda x_: (over(x_) > 0, over(x_), abs(x_ - x0_)))
         taken.append((x - w / 2, x + w / 2))
         views.append(ViewPlan("detail", ds_, (w, w), (x, cy_sec), label=ROMAN[k], target=f["name"],
                               detail={"zc": zc, "yc": f["d"] / 2, "rm": rm_}))

@@ -608,7 +608,9 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             if d.view != "section" or not d.ref.startswith(f["name"] + "_"):
                 continue
             if d.ref.endswith("_w"):
-                _hdim(s, vx - hb, vx + hb, vy + r - t1, vy + r - t1, vy + r + 5, d.text)
+                from .detailing import SHEETS, MARGIN
+                fr_ = SHEETS.get(plan.sheet, (1e9, 0))[0] - MARGIN  # 右图框：槽宽数字放不下又会出框时写到左侧
+                _hdim(s, vx - hb, vx + hb, vy + r - t1, vy + r - t1, vy + r + 5, d.text, busy=[(fr_, fr_ + 1e3)])
             else:
                 xs = (d.extra or {}).get("sheet_pos", (vx + r + 6, 0))[0]
                 if xs > vx:
