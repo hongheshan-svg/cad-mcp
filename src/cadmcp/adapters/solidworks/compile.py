@@ -650,6 +650,10 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ops.append(NativeOp("table", {"origin": list(t["origin"]), "columns": [c for c, _ in t["columns"]],
                                       "widths": [w for _, w in t["columns"]], "rows": [list(r) for r in t["rows"]],
                                       "title": "齿轮参数表"}, "图框右上角齿轮参数表"))
+    if plan.layout == "shaft" and plan.shaft_axis:
+        # 直径文字居中写的轴段：轴线在文字处断开，图纸草图中分段画中心线（主视图不要再自动插入整条中心线）
+        ops.append(NativeOp("sheet_centerlines", {"lines": [[list(q) for q in seg] for seg in plan.shaft_axis]},
+                            "轴线分段（在居中直径文字处断开）：ISketchManager.CreateCenterLine（图纸坐标 m）"))
     if plan.layout == "shaft":
         for d in plan.dims:  # 局部放大图内尺寸（槽宽、槽深）：放大图坐标下选边
             ex = d.extra or {}

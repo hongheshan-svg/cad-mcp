@@ -89,6 +89,11 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     if plan.layout == "shaft":
         ops.append(NativeOp("warn", {"message": "轴类图主视图需轴线水平：creopyson 不能改视图朝向，"
                                                 "请在起始件/模板中把 FRONT 命名视图定向为轴线水平"}))
+        if getattr(plan, "shaft_axis", None):
+            gaps = [(round(a[1][0], 1), round(b[0][0], 1)) for a, b in zip(plan.shaft_axis, plan.shaft_axis[1:])]
+            ops.append(NativeOp("warn", {"message": "主视图轴线需在居中的直径文字处断开（图纸 x 区间 "
+                                                    + "、".join(f"{a:g}–{b:g}" for a, b in gaps)
+                                                    + " mm）：基准轴不能分段显示，请隐藏轴线后按此草绘中心线"}))
     if plan.projection != "first_angle":
         ops.append(NativeOp("warn", {"message": f"投影角 {plan.projection}：需模板 projection_type 与之一致，creopyson 无法设置"}))
 

@@ -123,6 +123,8 @@ class DrawingPlan:
     axes: list[dict[str, Any]] = field(default_factory=list)  # 装配图回转件轴线/中心线：{view, pts:[(x,y),(x,y)]}（图纸 mm）
     gear_table: dict[str, Any] = field(default_factory=dict)  # 齿轮参数表：origin/columns/rows/row_height/size
     lines: list[dict[str, Any]] = field(default_factory=list)  # 视图中附加的细线（非模型几何）：{view, pts, style center|thin, ref}
+    shaft_axis: list[Any] = field(default_factory=list)  # 轴线在居中直径文字处断开时的各段（图纸 mm，见 shaft_axis_segments）
+    general_ra_at: tuple[float, float] | None = None  # "其余"粗糙度位置的出图检查改放结果（见 _general_ra_retry）
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -600,7 +602,10 @@ def prune_default_views(spec: DrawingSpec, p: ResolvedPart, min_feat: float) -> 
 
 def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
     if p.base_type == "shaft":
-        return plan_shaft_drawing(spec, p, today)
+        plan = plan_shaft_drawing(spec, p, today)
+        if plan.views and plan.views[0].type == "front" and shaft_axis_gaps(p, plan.views[0]):
+            plan.shaft_axis = shaft_axis_segments(p, plan.views[0])
+        return _general_ra_retry(plan, p)
     if p.base_type == "weldment":
         return plan_weldment_drawing(spec, p, today)
     if p.gear:
@@ -801,7 +806,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         overall_dim_sheet(plan, p)
         _face_ra_slide(plan, p)
         _hole_ra_retry(plan, p)
-    return plan
+    return _general_ra_retry(plan, p)
 
 
 def _hole_ra_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -1120,10 +1125,12 @@ def dim_text_pos(ex: dict | None):
     return sp
 
 
-def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
+def general_roughness_at(plan: "DrawingPlan", ranked: bool = False):
     """"其余"表面结构符号的位置（图纸 mm，左端/基线），SVG 与 CAD 共用。
     默认在技术要求（或右侧栏孔表）上方；与视图（含尺寸带）或孔表重叠时依次改放：同高度靠图框右边 → 默认 x 向上逐格 →
-    图纸右上角。"""
+    图纸右上角。ranked=True：返回按估计重叠排序的候选列表（出图检查改放用）。"""
+    if plan.general_ra_at is not None and not ranked:
+        return plan.general_ra_at
     W, H = plan.sheet_size
     x0 = W - 5 - 180
     hb = plan.hole_table_box
@@ -1171,7 +1178,7 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
 
     cands = [(x0, y0), (W - 6 - GR_W, y0)] + [(x0, y0 + 4 * k) for k in range(1, 60)] + [(W - 6 - GR_W, H - 6 - GR_H)]
     hit = next(((round(x, 2), round(y, 2)) for x, y in cands if free(x, y)), None)
-    if hit:
+    if hit and not ranked:
         return hit
     # 都不空：再试图纸左侧下部一列，仍不行取与视图/尺寸重叠面积最小的位置
     cands2 = cands + [(15.0, y0 + 4 * k) for k in range(0, 60)]
@@ -1179,8 +1186,39 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
     def cost(x, y):
         box = (x, y - 2, x + GR_W, y + GR_H)
         return (box[3] > H - 6) * 1e6 + sum(_box_hit(box, o) for o in obstacles)
+    if ranked:
+        return [(round(x, 2), round(y, 2)) for x, y in sorted(cands2, key=lambda c: cost(*c))]
     x, y = min(cands2, key=lambda c: cost(*c))
     return (round(x, 2), round(y, 2))
+
+
+def _general_ra_retry(plan: "DrawingPlan", p: ResolvedPart) -> "DrawingPlan":
+    """"其余"粗糙度（其余 √Ra x (√)）压到视图上的标注时：按估计重叠从小到大取候选位置，用预览出图检查，
+    取冲突最少的（不比原位置好则不动）。结果写入 plan.general_ra_at，SVG 与 CAD 共用。"""
+    if not (plan.title_block or {}).get("surface_finish"):
+        return plan
+    from .render_svg import render
+
+    def bad() -> tuple[int, int]:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return (10 ** 6, 10 ** 6)
+        txt = list(out["crossings"]) + [t for pair in out["collisions"] for t in pair]
+        return (sum(t in ("(√)", "其余") or t.startswith("其余") for t in txt), len(out["crossings"]) + len(out["collisions"]))
+    b0 = bad()
+    if b0[0] == 0:
+        return plan
+    best = (b0, None)
+    for c in general_roughness_at(plan, ranked=True)[:16]:
+        plan.general_ra_at = c
+        b = bad()
+        if b < best[0]:
+            best = (b, c)
+            if b[0] == 0:
+                break
+    plan.general_ra_at = best[1]
+    return plan
 
 
 def _place_table(plan: "DrawingPlan", w: float, h: float) -> tuple[float, float, float, float]:
@@ -3344,9 +3382,9 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
         b_ = (cx + sg * (r + L_) * k, cy + (r + L_) * k)
         lx = b_[0] + sg * 1.2 + (0 if sg > 0 else -tw_l)
         hit = sum(1 for x in vlines if lx - 0.6 <= x <= lx + tw_l + 0.6)
-        if p.shaft_chamfer:  # 轴端倒角引出（自端面向外上方斜引）：标号不进两端外侧
-            xe0, xe1 = shaft_sx(front, Ltot, 0.0), shaft_sx(front, Ltot, Ltot)
-            hit += 2 * ((lx < xe0 + 2 and lx + tw_l > xe0 - 30) or (lx < xe1 + 30 and lx + tw_l > xe1 - 2))
+        if p.shaft_chamfer:  # 轴端倒角引出（"2×C"，自左端面向左上方斜引）：标号不进左端外侧
+            xe0 = shaft_sx(front, Ltot, 0.0)
+            hit += 2 * (lx < xe0 + 2 and lx + tw_l > xe0 - 30)
         a0_ = (cx + sg * r * k, cy + r * k)
         mybox = (lx - 0.5, b_[1] - 2.2, lx + tw_l + 0.5, b_[1] + 3.3)
         hit += sum(_seg_box(a0_, b_, hb) + (_box_hit(mybox, hb) > 0) for hb in hrows)
@@ -3623,10 +3661,72 @@ def bore_radius_at(p: ResolvedPart, z: float) -> float:
 
 
 def shaft_text_room(p: ResolvedPart, z: float, d: float) -> float:
-    """直径尺寸文字（竖写、居中在轴线上）可用的长度（模型 mm）：实心 = 直径；剖开的空心段 = 孔径（文字在孔的空白里，
-    不压剖面线和孔壁轮廓）。"""
+    """直径尺寸文字（竖写，整段在轴线上方：轴线点画线不穿过数字，GB/T 4458.4）可用的长度（模型 mm）：
+    实心 = 半径；剖开的空心段 = 孔半径（文字在孔的空白里，不压剖面线和孔壁轮廓）。文字起于轴线上 1 mm。"""
     rb = bore_radius_at(p, z)
-    return 2 * rb if rb > 0 else d
+    if rb > 0:
+        return rb
+    th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["z0"] - 1e-6 <= z <= f["z1"] + 1e-6), None)
+    return th["d1"] / 2 if th else d / 2  # 螺纹段：小径细实线以内
+
+
+DIA_AXIS_GAP = 1.0  # 直径文字下端离轴线（图纸 mm）
+
+
+def dia_text_center(cy: float, tw: float) -> float:
+    """直径文字放在轮廓内时的文字中心 y（图纸）：整段在轴线上方。"""
+    return cy + DIA_AXIS_GAP + tw / 2
+
+
+def shaft_dia_axis_break(p: ResolvedPart, j: int, sc: float, text: str | None = None) -> bool:
+    """第 j 段直径文字在轴线一侧写不下、但居中放得进整段直径，且原本要向上伸出轮廓（上方是框格/Ra 行）：
+    文字居中写在轮廓内，轴线（点画线）在文字处断开（用户确认的写法）。只用于实心段（无孔、非螺纹/齿轮段）。"""
+    text = text if text is not None else _shaft_dia_label(p, j)
+    z0, z1 = p.step_z(j)
+    d = p.shaft_steps[j][1]
+    rbs = {round(bore_radius_at(p, z0 + (z1 - z0) * t / 20), 6) for t in range(1, 20)}
+    if len(rbs) > 1:  # 孔只占该段一部分：不断开
+        return False
+    half = rbs.pop() or d / 2  # 空心段：文字在孔的空白里，以孔为界
+    if any(f["step"] == j and f["kind"] in ("thread", "gear") for f in p.shaft_features):
+        return False
+    tw = text_width(text, 3.5)
+    if tw > 2 * half * sc - 3 or _shaft_dia_choice(p, j, sc, centered=True)[2] < 0.2:
+        return False
+    if tw <= half * sc - 2:  # 轴线上方写得下：只有上方位置都被挡（如局部放大图圆）时才居中
+        return shaft_dia_blocked(p, j, sc)
+    R = max(dd for _, dd in p.shaft_steps) / 2
+    has_datum = any(x["target"] == f"step:{j}" for x in p.datums)
+    return not (tw + 3 <= (R - d / 2) * sc + 15 - 1.5 and not has_datum)  # 往下伸得开（shaft_dia_overflow 的 down）则不断开
+
+
+def shaft_dia_text_ym(p: ResolvedPart, j: int, sc: float, cy: float, text: str) -> float:
+    """第 j 段直径文字在轮廓内时的中心 y（图纸）：一般在轴线上方；轴线断开的段居中。"""
+    tw = text_width(text, 3.5)
+    return cy if shaft_dia_axis_break(p, j, sc, text) else dia_text_center(cy, tw)
+
+
+def shaft_axis_gaps(p: ResolvedPart, front: "ViewPlan") -> list[tuple[float, float]]:
+    """轴类主视图轴线（点画线）的断开区间（图纸 x）：居中写的直径文字处。"""
+    out = []
+    for j in range(len(p.shaft_steps)):
+        if shaft_dia_axis_break(p, j, front.scale):
+            x0, _, x1, _ = shaft_dia_text_box(p, j, front, _shaft_dia_label(p, j))
+            out.append((round(x0 - 0.8, 2), round(x1 + 0.8, 2)))
+    return sorted(out)
+
+
+def shaft_axis_segments(p: ResolvedPart, front: "ViewPlan") -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """轴类主视图轴线（细点画线，两端伸出轮廓 3 mm 模型长）按 shaft_axis_gaps 断开后的各段（图纸坐标），预览与 CAD 共用。"""
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    y = front.origin_on_sheet[1]
+    xa, xe = shaft_sx(front, Ltot, -3.0), shaft_sx(front, Ltot, Ltot + 3.0)
+    segs = []
+    for g0, g1 in shaft_axis_gaps(p, front) + [(xe, None)]:
+        if g0 > xa:
+            segs.append(((round(xa, 2), round(y, 2)), (round(g0, 2), round(y, 2))))
+        xa = g1 if g1 is not None else xa
+    return segs
 
 
 def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) -> float:
@@ -3642,7 +3742,7 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
 
     shoulders = [p.step_z(j)[1] for j in range(len(p.shaft_steps) - 1)]  # 外圆轴肩线（链式尺寸界线从这里引出）
     fspans = []  # 孔里写不下、文字伸出外轮廓时：尺寸线尽量不从几何公差框格（及其上方 Ra）的横向范围穿过
-    if with_outer and p.geotols and text_width(_dia_text(b["d"], b["tol"], True), 3.5) > b["d"] * sc - 2:
+    if with_outer and p.geotols and text_width(_dia_text(b["d"], b["tol"], True), 3.5) > b["d"] / 2 * sc - 2:
         from .render_gdt import _widths
         lay = shaft_gtol_layout(p, sc)
         for g in p.geotols:
@@ -3653,6 +3753,7 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
 
     # 外轴肩线只画到孔壁、不进孔内：孔上无基准符号时尺寸线离它 1 mm 即可（有基准符号时 3 mm）
     sh_gap = 3.0 if any(x["target"] == f"bore:{k}" for x in p.datums) else 1.0
+    tw_b = text_width(_dia_text(b["d"], b["tol"], True), 3.5)
 
     def key(z):
         clear = min([abs(z - c) * sc for c in outer + others] or [1e9])
@@ -3663,6 +3764,9 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
         # 横孔（孔圆；引线由引出标注排布另避）：线与左侧竖写文字都不压孔圆
         xh_ok = all(not (h["z"] - h["hole"] / 2 - 1.0 / sc < z + 0.3 / sc and z - 4.7 / sc < h["z"] + h["hole"] / 2 + 0.8 / sc)
                     for h in p.cross_holes)
+        # 正对视向的横孔：标注引线从孔圆向右上 45° 引出，穿过轴线上方 [1, 1 + 文字长] 的高度带
+        xh_ok = xh_ok and all(not (h["z"] + (DIA_AXIS_GAP - 0.5) / sc < z + 0.3 / sc and z - 4.7 / sc < h["z"] + (DIA_AXIS_GAP + tw_b + 0.5) / sc)
+                              for h in p.cross_holes if h["dir"] == "view")
         return (text_ok, clear >= min(4.0, want), xh_ok, min(clear, want), free_, min(z - z0, z1 - z) * sc >= 3,
                 -abs(z - (z0 + z1) / 2))  # 离外径线 ≥ 4 mm 即可时先避横孔
     return max(cands, key=key)
@@ -3672,7 +3776,7 @@ def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | No
     """内孔直径文字放不进孔时伸出到外轮廓之外（down 优先，下方是链式尺寸行之前的空白）。"""
     b = p.shaft_bores[k]
     tw = text_width(text, 3.5)
-    if tw <= b["d"] * sc - 2:
+    if tw <= b["d"] / 2 * sc - 2:  # 孔里轴线上方写得下
         return None
     z = bore_dia_place(p, k, sc)
     R = max(dd for _, dd in p.shaft_steps) / 2
@@ -3834,6 +3938,8 @@ def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | N
     tw = text_width(text, 3.5)
     if tw <= shaft_text_room(p, shaft_dia_z(p, j, sc), d) * sc - 2 and not shaft_dia_blocked(p, j, sc):
         return None
+    if shaft_dia_axis_break(p, j, sc, text):
+        return None
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
     # 该段有基准：三角形与直径尺寸线对齐挂在下端，文字不能往下伸
@@ -3876,6 +3982,10 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     for b in p.shaft_bores:  # 盲孔深度尺寸（孔口端面 → 孔底）的尺寸界线
         if not b["through"]:
             zs += [b["z0"], b["z1"]]
+    for k, b in enumerate(p.shaft_bores):  # 孔里写不下、向上伸出轮廓的内孔直径文字（竖写在线左侧约 4.8 mm）
+        if not b.get("kw") and bore_dia_overflow(p, k, sc, _dia_text(b["d"], b["tol"], True)) == "up":
+            zb_ = bore_dia_place(p, k, sc)
+            zs += [zb_, zb_ - 4.8 / sc]
     for h in p.cross_holes:  # 横孔定位尺寸的两条尺寸界线（轴端段从轴端面量，其余从轴段起点）；标注引线 45° 斜出轮廓
         last = h["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1
         zs += [h["z"], Ltot if last else p.step_z(h["step"])[0]]
@@ -3981,7 +4091,7 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
     bore_up = []  # 伸出外轮廓上方的孔径尺寸线（左侧竖写文字，可能还接着转 90° 的 Ra）：引线与框格都让开
     for k_, b_ in enumerate(p.shaft_bores):
         tw_ = text_width(_dia_text(b_["d"], b_["tol"], True), 3.5)
-        if not b_.get("kw") and tw_ > b_["d"] * sc - 2:  # 孔里写不下（伸出方向按上方处理，宁可多让）
+        if not b_.get("kw") and tw_ > b_["d"] / 2 * sc - 2:  # 孔里写不下（伸出方向按上方处理，宁可多让）
             bore_up.append(bore_dia_place(p, k_, sc, with_outer=False))
 
     short_mid = []  # 短轴段（带公差、直径文字长于段内可放位置）中部：直径线与竖写文字多半在这里
@@ -4148,6 +4258,10 @@ def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     zs = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))
           if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "down"]
     zs += [shaft_cut_z(p, f, sc) for f in p.shaft_features if f["kind"] == "keyway"]
+    for k, b in enumerate(p.shaft_bores):  # 向下伸出外轮廓的内孔直径文字（竖写在线左侧约 4.8 mm）
+        if not b.get("kw") and bore_dia_overflow(p, k, sc, _dia_text(b["d"], b["tol"], True)) == "down":
+            zb_ = bore_dia_place(p, k, sc)
+            zs += [zb_, zb_ - 4.8 / sc]
     z = 0.0
     zs.append(z)
     for L, _ in p.shaft_steps:  # 各段分界：链式长度尺寸的尺寸界线向下引出
@@ -4259,8 +4373,10 @@ def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str,
     ya, yb = cy - d / 2 * sc, cy + d / 2 * sc
     tw = text_width(text, 3.5)
     room = 0.0 if shaft_dia_blocked(p, i, sc) else shaft_text_room(p, z, d) * sc
-    ym = (ya + yb) / 2
-    if tw > room - 2:
+    ym = dia_text_center((ya + yb) / 2, tw)
+    if shaft_dia_axis_break(p, i, sc, text):
+        ym = (ya + yb) / 2
+    elif tw > room - 2:
         ym = ya - 1 - tw / 2 if (shaft_dia_overflow(p, i, sc, text) or "up") == "down" else yb + 1 + tw / 2
         if over_at is not None:
             ym = over_at + tw / 2
@@ -4274,8 +4390,8 @@ def shaft_dia_z(p: ResolvedPart, i: int, sc: float = 1.0) -> float:
 
 
 def shaft_dia_place(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, str]:
-    """见 _shaft_dia_choice。"""
-    z, side, _ = _shaft_dia_choice(p, i, sc)
+    """见 _shaft_dia_choice（轴线断开、文字居中的段按居中文字选位置）。"""
+    z, side, _ = _shaft_dia_choice(p, i, sc, centered=shaft_dia_axis_break(p, i, sc))
     return z, side
 
 
@@ -4284,7 +4400,8 @@ def shaft_dia_blocked(p: ResolvedPart, i: int, sc: float = 1.0) -> bool:
     return _shaft_dia_choice(p, i, sc)[2] < 0.2
 
 
-def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool = False) -> tuple[float, str, float]:
+def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool = False,
+                      centered: bool = False) -> tuple[float, str, float]:
     """第 i 段直径尺寸线的轴向位置与文字侧（left | right，文字竖写在尺寸线左/右）：
     尺寸线离键槽/环槽越远越好；文字不压轴肩线、倒角线、键槽轮廓（文字厚约 4.5 mm 图纸）；优先文字在左、居中；
     避开断开处。"""
@@ -4324,6 +4441,7 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     # 文字长于该段直径（公差文字）→ 会伸到轮廓外；此时尺寸线避开轴段中点（下方链式长度数字、上方键槽尺寸都在中点附近）
     d_i = p.shaft_steps[i][1]
     long_txt = force_long or text_width(_shaft_dia_label(p, i), 3.5) > shaft_text_room(p, (z0 + z1) / 2, d_i) * sc - 2
+    long_txt = long_txt and not centered  # 居中写（轴线断开）：整段直径内放得下
     # 要避开的数字区：链式长度数字（段中点）、键槽长度数字（键槽中点，在轮廓上方）
     zones = [((z0 + z1) / 2, (text_width(f"{z1 - z0:g}", 3.5) / 2 + 2.0) / sc)]
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
@@ -4341,10 +4459,13 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     for f in p.shaft_features:  # 局部放大图的细实线圆（主视图上，圈住环槽/挤的挡圈槽）：竖写文字不压圆周
         if f["kind"] == "groove" and (f["type"] == "grinding" or circlip_crowded(f, sc)):
             _, rm_ = detail_geom(f, sc)
-            if f["d"] / 2 - rm_ < lt + 0.5 / sc:
+            # 文字竖带在轴线上方 [g, g + 2·lt]（dia_text_center）：取竖带内离圆心（槽口，y = d/2）最近的高度
+            ytop = lt if centered else DIA_AXIS_GAP / sc + 2 * lt  # 居中写：[−lt, lt]
+            dy_ = f["d"] / 2 - min(f["d"] / 2, ytop)
+            if dy_ < rm_ + 0.5 / sc:
                 zc_ = (f["z0"] + f["z1"]) / 2
                 zones.append((zc_, rm_ + tw))
-                w_ = max(0.0, rm_ ** 2 - max(0.0, f["d"] / 2 - lt) ** 2) ** 0.5  # 圆周与文字竖带相交的轴向范围
+                w_ = max(0.0, rm_ ** 2 - dy_ ** 2) ** 0.5  # 圆周与文字竖带相交的轴向范围
                 obst.append((zc_ - w_ - 0.3 / sc, zc_ + w_ + 0.3 / sc))
     fspans = []  # 框格横向范围（模型 z）：伸出的直径线尽量不从框格里穿过（框格平移有限，见 _shaft_gtol_frame_dx）
     if p.geotols:  # 几何公差框格的竖引线（从框格行下到轮廓 / 轴肩水平引线）：伸出轮廓的竖写文字别压上去
@@ -4497,7 +4618,8 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             x = X(zb_)
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
-                       "sheet_pos": (round(x, 2), round(cy, 2)), "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定），同预览
+                       "sheet_pos": (round(x, 2), round(dia_text_center(cy, text_width(d.text, 3.5)), 2)),
+                       "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定）；文字在轴线上方，同预览
             ov_ = bore_dia_overflow(p, k, sc, d.text)
             if ov_:  # 孔里写不下：文字整段写到外轮廓之外（不压孔壁剖面线与外轮廓），尺寸线穿过孔壁延长
                 tw_ = text_width(d.text, 3.5)
@@ -4511,7 +4633,8 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             x = X(shaft_dia_z(p, i, sc))
             r = d.at[1] / 2
             d.extra = {**(d.extra or {}), "sheet_pts": [(round(x, 2), round(cy - r * sc, 2)), (round(x, 2), round(cy + r * sc, 2))],
-                       "sheet_pos": (round(x, 2), round(cy, 2)), "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定），同预览
+                       "sheet_pos": (round(x, 2), round(shaft_dia_text_ym(p, i, sc, cy, d.text), 2)),
+                       "orient": "v"}  # 尺寸线就在 x（避开键槽/横孔选定）；文字在轴线上方或居中断开轴线（伸出轮廓时由 _shaft_dia_lift 等改写），同预览
         elif d.kind == "callout" and d.ref.startswith(("ch:", "eh:")):
             # 中心孔：从端面轴线处向外下方引出，文字沿水平线向外（左端向左、右端向右）；保留/不允许保留符号在文字前
             z, _ = d.at
@@ -5376,6 +5499,17 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             leads.append((tuple(a_), tuple(b_)))
             lx, ly = dt["label_at"]
             obst.append((lx - 1, ly - 0.5, lx + 4, ly + 5.5))
+    circs = [tuple(v.detail["circle"]) for v in plan.views
+             if v.type == "detail" and "circle" in (getattr(v, "detail", None) or {})]  # 局部放大图在主视图上的细实线圆
+
+    def circ_cross(tb):  # 文字框与圆周相交（框跨圆周）
+        out = []
+        for ccx, ccy, cr in circs:
+            near = math.hypot(max(tb[0] - ccx, 0, ccx - tb[2]), max(tb[1] - ccy, 0, ccy - tb[3]))
+            far = max(math.hypot(qx - ccx, qy - ccy) for qx in (tb[0], tb[2]) for qy in (tb[1], tb[3]))
+            if near < cr + 0.3 and far > cr - 0.3:
+                out.append((ccx, ccy, cr))
+        return out
     for o in plan.dims:
         eo = o.extra or {}
         if o.view != "front":
@@ -5452,6 +5586,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
                 hit = [b for b in obst + prof if _box_hit(tb_, b) > 0]
                 hit += [(0, min(a_[1], e_[1]) - 0.5, 0, 0) for a_, e_ in leads if _seg_box(a_, e_, tb_)]
+                hit += [(0, ccy - cr - 0.5, 0, 0) for ccx, ccy, cr in circ_cross(tb_)]
                 if not hit:
                     break
                 start = min(b[1] for b in hit) - 1.0 - tw
@@ -5470,6 +5605,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             hit = [b for b in obst + prof if b[0] < x1 + 0.3 and x0 - 0.3 < b[2] and b[1] < start + tw + 0.3 and start - 0.3 < b[3]]
             tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
             hit += [(0, 0, 0, max(a_[1], e_[1]) + 0.5) for a_, e_ in leads if _seg_box(a_, e_, tb_)]  # 斜引线穿文字
+            hit += [(0, 0, 0, ccy + cr + 0.5) for ccx, ccy, cr in circ_cross(tb_)]  # 局部放大图圆周穿文字
             if not hit:
                 break
             start = max(b[3] for b in hit) + 1.0

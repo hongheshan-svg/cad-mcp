@@ -18,6 +18,8 @@ def _check(plan):
     assert gdt
     for d in gdt:
         ax, ay = d.extra["sheet_at"]
+        if d.extra.get("on_dim"):  # Ra 接在伸出轮廓的直径尺寸线延长线上（文字之后），本就在视图框外
+            continue
         v = vmap[d.view]
         cx, cy = v.origin_on_sheet
         w, h = v.size_mm

@@ -29,6 +29,8 @@ class _Svg:
         self.thins: list[tuple[float, float, float, float]] = []  # 线宽 = THIN 的实线（尺寸线、尺寸界线、短引线）
         self.outlines: list[tuple[float, float, float, float]] = []  # 粗实线（可见轮廓），查压字
         self.circles: list[tuple[float, float, float]] = []  # 实线圆（轮廓圆、孔、细实线齿根圆等），查压字
+        self.dashes: list[tuple[float, float, float, float]] = []  # 虚线/点画线（中心线、隐藏线），查压字（另计）
+        self.dash_circles: list[tuple[float, float, float]] = []  # 点画线/虚线圆（分布圆、分度圆）
         self.text_bg = False  # True：文字下垫白底（剖面线遇尺寸数字断开，GB/T 4457.5）
 
     def collisions(self) -> list[tuple[str, str]]:
@@ -67,6 +69,26 @@ class _Svg:
                 out.append(s_)
         return out
 
+    def dash_crossings(self, pad: float = 0.4) -> list[str]:
+        """虚线/点画线穿过文字（GB/T 4458.4：尺寸数字不得被任何图线通过，否则图线断开）。"""
+        out = []
+        for s_, (x0, y0, x1, y1) in self.texts:
+            bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x1 - pad, y1 - pad
+            if bx1 <= bx0 or by1 <= by0:
+                continue
+            hit = any(_seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1) for (ax, ay, cx, cy) in self.dashes)
+            if not hit:
+                for (cx, cy, r) in self.dash_circles:
+                    dx = max(bx0 - cx, 0.0, cx - bx1)
+                    dy = max(by0 - cy, 0.0, cy - by1)
+                    far = max(abs(bx0 - cx), abs(bx1 - cx)) ** 2 + max(abs(by0 - cy), abs(by1 - cy)) ** 2
+                    if dx * dx + dy * dy < r * r < far:
+                        hit = True
+                        break
+            if hit:
+                out.append(s_)
+        return out
+
     def y(self, y: float) -> float:
         return self.H - y
 
@@ -78,6 +100,8 @@ class _Svg:
             self.thins.append((x1, y1, x2, y2))
         elif w >= THICK and not dash:
             self.outlines.append((x1, y1, x2, y2))
+        elif dash:
+            self.dashes.append((x1, y1, x2, y2))
         self.parts.append(f"<line x1='{x1:.2f}' y1='{self.y(y1):.2f}' x2='{x2:.2f}' y2='{self.y(y2):.2f}' "
                           f"stroke='{STROKE}' stroke-width='{w}'{d}/>")
 
@@ -85,6 +109,9 @@ class _Svg:
         if w >= THIN and not dash:  # 粗实线轮廓；细实线折线（螺纹大径 3/4 圈圆弧等）同样查压字
             ring = list(pts) + ([pts[0]] if close else [])
             (self.outlines if w >= THICK else self.thins).extend((a[0], a[1], b[0], b[1]) for a, b in zip(ring, ring[1:]))
+        elif dash:
+            ring = list(pts) + ([pts[0]] if close else [])
+            self.dashes.extend((a[0], a[1], b[0], b[1]) for a, b in zip(ring, ring[1:]))
         d = " ".join(f"{x:.2f},{self.y(y):.2f}" for x, y in pts)
         tag = "polygon" if close else "polyline"
         da = f" stroke-dasharray='{dash}'" if dash else ""
@@ -101,6 +128,8 @@ class _Svg:
     def circle(self, cx, cy, r, w=THICK, dash=None):
         if not dash and w >= THIN:
             self.circles.append((cx, cy, r))
+        elif dash:
+            self.dash_circles.append((cx, cy, r))
         da = f" stroke-dasharray='{dash}'" if dash else ""
         self.parts.append(f"<circle cx='{cx:.2f}' cy='{self.y(cy):.2f}' r='{r:.2f}' fill='none' "
                           f"stroke='{STROKE}' stroke-width='{w}'{da}/>")
@@ -1733,7 +1762,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 s.text(xx + 1.5, by + 2.2, str(val), 3)
                 xx += w
             bom_rows.append((r["item"], r["part_no"], r["qty"]))
-    out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions(), "crossings": s.crossings()}
+    out = {"dim_refs": rendered_refs, "views": [v.type for v in plan.views], "collisions": s.collisions(), "crossings": s.crossings(),
+           "dash_crossings": s.dash_crossings()}
     if asm is not None:
         out.update(bom_rows=bom_rows, balloon_items=balloon_items)
     if plan.hole_table:

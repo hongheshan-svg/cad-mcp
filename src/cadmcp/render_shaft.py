@@ -61,12 +61,16 @@ def _row_text_spans(plan, d, P, same_row) -> list[tuple[float, float]]:
     return out
 
 
-def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None, over_at=None):
+def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None, over_at=None, above_axis=False):
     """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外
-    （overflow = up | down，由规划层 shaft_dia_overflow 决定）。"""
+    （overflow = up | down，由规划层 shaft_dia_overflow 决定）。above_axis：轴线在尺寸线中点，
+    文字整段写在轴线上方（规划层 dia_text_center），room 为轴线以上可用长度。"""
+    from .detailing import dia_text_center
     from .render_svg import _text_w
     tw = _text_w(text, 3.5)
-    ym = (ya + yb) / 2
+    ym = dia_text_center((ya + yb) / 2, tw) if above_axis else (ya + yb) / 2
+    if above_axis and room is None:
+        room = (yb - ya) / 2
     if tw > (yb - ya if room is None else room) - 2:
         if overflow == "down":
             y1_ = over_at + tw if over_at is not None else ya - 1  # 规划层移到下方尺寸行之下（_shaft_dia_lift）
@@ -355,7 +359,9 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             n = 24
             pts = [(x + 1.2 * math.sin(k / n * 2 * math.pi * 1.5), cy - r * sc + 2 * r * sc * k / n) for k in range(n + 1)]
             s.poly(pts, THIN, close=False)
-    s.line(*P(-3, 0), *P(Ltot + 3, 0), THIN, CENTER)
+    from .detailing import shaft_axis_segments
+    for (xa_ax, yax), (xb_ax, _) in shaft_axis_segments(part, main):  # 轴线在居中直径文字处断开
+        s.line(xa_ax, yax, xb_ax, yax, THIN, CENTER)
 
     # 外螺纹（GB/T 4459.1）：大径粗实线（即轮廓），小径细实线画到螺纹终止处（倒角内也画），终止线粗实线
     for f in (f for f in part.shaft_features if f["kind"] == "thread"):
@@ -449,17 +455,19 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             x = P(bore_dia_place(part, k, sc), 0)[0]
             dia = d.at[1]
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, overflow=bore_dia_overflow(part, k, sc, d.text) or "up",
-                  over_at=(d.extra or {}).get("over_at"))
+                  over_at=(d.extra or {}).get("over_at"), above_axis=True)
         elif d.kind == "diameter" and d.at is not None:
             zm, dia = d.at
             i = int(d.ref[4:].split("_")[0])
             from .detailing import shaft_dia_overflow, shaft_dia_place
             zz, side = shaft_dia_place(part, i, sc)
             x = P(zz, 0)[0]
-            from .detailing import shaft_dia_blocked, shaft_text_room
+            from .detailing import shaft_dia_axis_break, shaft_dia_blocked, shaft_text_room
+            brk_ = shaft_dia_axis_break(part, i, sc, d.text)  # 居中写、轴线在文字处断开
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, text_left=side == "left",
-                  room=0.0 if shaft_dia_blocked(part, i, sc) else shaft_text_room(part, zz, dia) * sc,
-                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up", over_at=(d.extra or {}).get("over_at"))
+                  room=dia * sc if brk_ else 0.0 if shaft_dia_blocked(part, i, sc) else shaft_text_room(part, zz, dia) * sc,
+                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up", over_at=(d.extra or {}).get("over_at"),
+                  above_axis=not brk_)
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
             z, r = d.at

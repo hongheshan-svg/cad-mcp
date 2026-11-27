@@ -441,7 +441,7 @@ def test_gear_shaft_pitch_root_lines_broken_at_text():
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     pitch = [ln for ln in plan.lines if ln["ref"].endswith(":pitch")]
     root = [ln for ln in plan.lines if ln["ref"].endswith(":root")]
-    assert len(pitch) >= 2 and len(root) > 2  # 两侧各一条；齿根线穿过直径文字处断开
+    assert len(pitch) >= 2 and len(root) >= 2  # 两侧各一条；压直径文字处断开（文字在轴线上方后多半不再相交）
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
     from cadmcp.adapters.solidworks import compile as SW
@@ -558,3 +558,34 @@ def test_crossings_include_circles():
     s.circle(80, 80, 5.0)  # 远处
     s.circle(10, 40, 11.0, dash="4,1,1,1")  # 点画线圆
     assert s.crossings() == []
+
+
+AXIS_BREAK = {"name": "S247", "part_no": "S-247", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 60, "diameter": 55}, {"length": 10, "diameter": 45, "tolerance": "js6"}, {"length": 15, "diameter": 35, "tolerance": "h7"}, {"length": 20, "diameter": 32}, {"length": 10, "diameter": 24}], "end_holes": [{"side": "end", "size": "M8", "depth": 12}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 45}, {"feature": "groove", "name": "G4", "type": "grinding", "step": 4}], "auto_precision": True}
+
+
+def test_crowded_bearing_dia_centered_axis_broken():
+    """短轴承位上方是框格行、直径文字（偏差写全）在轴线上方写不下：文字居中写在轮廓内，轴线在文字处断开
+    （用户确认）；其余轴段文字在轴线上方。预览、SW 分段中心线共用 plan.shaft_axis。"""
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    from cadmcp.detailing import dia_text_center, shaft_axis_gaps, shaft_dia_axis_break, text_width
+    p = resolve_part(PartSpec.model_validate(AXIS_BREAK))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    sc, cy = plan.scale, plan.views[0].origin_on_sheet[1]
+    brk = [j for j in range(len(p.shaft_steps)) if shaft_dia_axis_break(p, j, sc)]
+    assert 1 in brk and 0 not in brk
+    gaps = shaft_axis_gaps(p, plan.views[0])
+    assert len(gaps) == len(brk) and len(plan.shaft_axis) == len(gaps) + 1
+    for d in plan.dims:
+        if d.ref.startswith("step") and d.kind == "diameter":
+            j = int(d.ref[4:].split("_")[0])
+            y = d.extra["sheet_pos"][1]
+            if j in brk:
+                assert y == pytest.approx(cy, abs=0.01) and "over_at" not in d.extra
+                x = d.extra["sheet_pts"][0][0]
+                assert any(a < x - 1 and x < b for a, b in gaps) or any(a <= x - 4.5 and x - 1 <= b for a, b in gaps)
+            elif d.extra.get("over_at") is None:
+                assert y == pytest.approx(dia_text_center(cy, text_width(d.text, 3.5)), abs=0.01)
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    ops = compile_drawing(plan, "S.SLDPRT")
+    assert any(o.op == "sheet_centerlines" and len(o.args["lines"]) == len(plan.shaft_axis) for o in ops)
