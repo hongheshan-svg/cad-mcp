@@ -1519,6 +1519,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     dims: list[Dim] = []
     if spec.dimensions != "none":
         z = 0.0
+        open_i = shaft_open_step(p)
         for i, (L, d) in enumerate(p.shaft_steps):
             tol = p.shaft_tolerances[i] if p.shaft_tolerances else None
             th = next((f for f in p.shaft_features if f["kind"] == "thread" and f["step"] == i), None)
@@ -1530,8 +1531,10 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                 d, tol, spec.fit_deviations and i not in getattr(p, "_dia_code_only", ())),
                             f"step{i}_dia",
                             (z + L / 2, d)))
-            if len(p.shaft_steps) > 1:
-                dims.append(Dim("front", "linear", "z", L, f"{L:g}", f"step{i}_len", (z, z + L)))
+            if len(p.shaft_steps) > 1:  # 各段长 + 总长会成封闭尺寸链：开口环注成参考尺寸（加括号，GB/T 4458.4）
+                ref_ = i == open_i
+                dims.append(Dim("front", "linear", "z", L, f"({L:g})" if ref_ else f"{L:g}", f"step{i}_len", (z, z + L),
+                                {"reference": True} if ref_ else None))
             z += L
         dims.append(Dim("front", "linear", "z", Ltot, f"{Ltot:g}", "overall_z", (0.0, Ltot)))
         for k, b in enumerate(p.shaft_bores):  # 内孔：直径（带公差带与偏差）；盲孔注孔深（从孔口端面起）
@@ -3882,6 +3885,22 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+def shaft_open_step(p: ResolvedPart) -> int | None:
+    """阶梯轴长度链的开口环（注成参考尺寸）：段长全注再加总长是封闭尺寸链（GB/T 4458.4 不允许）。
+    选最不重要的一段：无配合公差、段上无键槽/环槽/螺纹/齿轮/横孔，其中最长的；都不满足时选无公差段中最长的；
+    全部有公差时不设开口环（返回 None，由设计者决定）。"""
+    n = len(p.shaft_steps)
+    if n < 2:
+        return None
+    tol = p.shaft_tolerances or [None] * n
+    busy = {f["step"] for f in p.shaft_features} | {h["step"] for h in p.cross_holes}
+    free = [i for i in range(n) if not tol[i] and i not in busy]
+    cand = free or [i for i in range(n) if not tol[i]]
+    if not cand:
+        return None
+    return max(cand, key=lambda i: (p.shaft_steps[i][0], -i))
 
 
 def _shaft_short_num_frame(plan: "DrawingPlan") -> None:

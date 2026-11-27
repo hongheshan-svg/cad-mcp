@@ -35,7 +35,8 @@ def test_broken_plan_bigger_scale_and_true_length_dims():
     full = plan_part_drawing(DrawingSpec(model="LS1", broken_view=False), p)
     brk = plan_part_drawing(DrawingSpec(model="LS1"), p)
     assert brk.scale > full.scale and brk.views[0].breaks
-    assert any(d.text == "520" for d in brk.dims) and any(d.text == "652" for d in brk.dims)
+    # 断开的长光轴段是段长链的开口环：注成参考尺寸 (520)（GB/T 4458.4 不注封闭尺寸链）
+    assert any(d.text == "(520)" for d in brk.dims) and any(d.text == "652" for d in brk.dims)
     v = brk.views[0]
     L = 652
     assert abs(shaft_sx(v, L, 542) - shaft_sx(v, L, 82) - BREAK_GAP) < 1e-9

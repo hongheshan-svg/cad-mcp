@@ -333,7 +333,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
             p1, p2 = ex.get("pick_pts") or ex["sheet_pts"]  # pick_pts：原生选边点（与预览尺寸界线起点不同时）
             args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",
                     "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
-            if d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
+            if ex.get("reference"):  # 参考尺寸（封闭链开口环）：保留实测值、加括号
+                args["text"] = "(@D)"
+            elif d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值
                 args["text"] = d.text
                 from ...detailing import split_deviation
                 sp = split_deviation(d.text)

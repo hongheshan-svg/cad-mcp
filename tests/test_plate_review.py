@@ -320,3 +320,20 @@ def test_circlip_explicit_dims_skip_table():
     with pytest.raises(CadError) as ei:
         resolve_part(PartSpec.model_validate(spec))
     assert "width/depth" in (ei.value.hint or "")
+
+
+def test_shaft_open_ring_reference_dim():
+    """段长全注 + 总长 = 封闭尺寸链：最不重要的一段（无公差、无特征、最长）注成参考尺寸 (L)。"""
+    from cadmcp.detailing import plan_part_drawing, shaft_open_step
+    from cadmcp.ir import DrawingSpec
+    spec = {"name": "S", "part_no": "S", "title": "轴", "material": "45#",
+            "base": {"type": "shaft", "steps": [{"length": 25, "diameter": 25, "tolerance": "k6"},
+                                                {"length": 40, "diameter": 30}, {"length": 20, "diameter": 35},
+                                                {"length": 30, "diameter": 30, "tolerance": "k6"}]},
+            "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 18}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    assert shaft_open_step(p) == 1
+    plan = plan_part_drawing(DrawingSpec(model="S"), p)
+    lens = {d.ref: d.text for d in plan.dims if d.ref.endswith("_len") and d.ref.startswith("step")}
+    assert lens == {"step0_len": "25", "step1_len": "(40)", "step2_len": "20", "step3_len": "30"}
+    assert next(d for d in plan.dims if d.ref == "step1_len").extra["reference"] is True

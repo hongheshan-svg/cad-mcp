@@ -61,4 +61,5 @@ def test_creo_dim_native_tolerance():
     ops = [o for o in tk_detail_ops(plan_part_drawing(DrawingSpec(model="SH2"), p)) if o.op == "tk.drw.dim"]
     k6 = next(o for o in ops if o.args.get("text") == "Φ25k6")
     assert k6.args["tol"] == [0.015, 0.002]
-    assert not any("(" in (o.args.get("text") or "") for o in ops)
+    assert not any("(" in (o.args.get("text") or "") for o in ops if o.args.get("text") != "(@D)")  # 参考尺寸除外
+    assert sum(o.args.get("text") == "(@D)" for o in ops) == 1  # 段长链的开口环：参考尺寸，保留实测值加括号

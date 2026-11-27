@@ -567,3 +567,9 @@ Creo：`feat.round` edges 同样给点坐标。
   核对 SW/Creo 断面图里该尺寸数字是否同样不压槽宽标注；压到时把数字拖到尺寸线下方延长处。
 - 轴右端贴图框的短定位尺寸（如键槽到端面 3.5）：数字写在左侧界线外（`text_x`），相邻长度尺寸的数字在自己界线之间左移
   留出 ≥ 3 mm（避免读成“183.5”）。核对 SW/Creo 里两个数字的位置是否按 `text_x` 放置、没有出图框。
+
+## 轴段长度链开口环（参考尺寸，TODO(实机核对)）
+- 段长全注 + 总长会成封闭尺寸链（GB/T 4458.4）：规划层把最不重要的一段注成参考尺寸，`extra["reference"] = True`，文字 `(L)`。
+- SolidWorks：`IDisplayDimension.ShowParenthesis = True`（失败记 readback `dim_paren_failed`）。核对显示为带括号的数值。
+- Creo：尺寸文字写 `(@D)`（保留实测值加括号）。核对 `ProDimensionTextWstringsSet` 接受 `@D` 且显示为 `(40)` 形式。
+- 样例：`tests/test_plate_review.py::test_shaft_open_ring_reference_dim`。

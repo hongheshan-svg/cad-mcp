@@ -1361,6 +1361,12 @@ class SwExecutor:
                     disp.SetArcEndCondition(i + 1, self._const(conds[c]) or defaults[c])
                 except Exception:  # noqa: BLE001
                     self.readback.setdefault("dim_arc_failed", []).append(ref)
+        if re.match(r"^\(\s*[0-9.]+\s*\)$", text):  # 参考尺寸（封闭链的开口环）：加括号显示
+            try:
+                disp.ShowParenthesis = True
+            except Exception:  # noqa: BLE001
+                self.readback.setdefault("dim_paren_failed", []).append(ref)
+            return {"text": text, "reference": True}
         m = re.match(r"^\s*([Φφ⌀]?)\s*[0-9.]+\s*(.*)$", text)
         suffix = (m.group(2) if m else "").strip()
         prefix = "<MOD-DIAM>" if kind == "diameter" else ""
