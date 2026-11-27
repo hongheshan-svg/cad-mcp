@@ -933,8 +933,9 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
             er = r.extra or {}
             if r.kind == "roughness" and er.get("on_frame") == d.ref[5:] and "sheet_at" in er:
                 rx = er["sheet_at"][0] - dx
-                a_, b_ = min(a_, rx - 2.6), max(b_, rx + 7 + len(r.text) * 2.0)
-        return any(a_ - 0.5 < x < b_ + 4.6 for x in up_x)
+                a_, b_ = min(a_, rx - 2.5), max(b_, rx + 5.7 + len(r.text) * 1.8)  # Ra 文字右端（横线在直径文字下方）
+        # 直径线穿过 [a_, b_]，或线左侧的竖写文字 [x − 4.5, x − 1] 与之重叠
+        return any(a_ - 0.2 < x < b_ + 4.5 for x in up_x)
 
     for d in frames:
         ex = d.extra
@@ -946,7 +947,7 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
         cands = [round(min(b0 - lim, tot - 7.0), 2)] if need_r else [0.0]  # 引线至少留在框格内 3.5 mm
         ra_ = next((r for r in plan.dims if r.kind == "roughness" and (r.extra or {}).get("on_frame") == d.ref[5:]
                     and "sheet_at" in (r.extra or {})), None)
-        ra_r = (ra_.extra["sheet_at"][0] + 7 + len(ra_.text) * 2.0) if ra_ is not None else b0
+        ra_r = (ra_.extra["sheet_at"][0] + 5.7 + len(ra_.text) * 1.8) if ra_ is not None else b0
         ra_l = (ra_.extra["sheet_at"][0] - 2.6) if ra_ is not None else a0
         for x in up_x:
             if min(a0, ra_l) - 0.5 < x < max(b0, ra_r) + 4.6:
@@ -3422,8 +3423,13 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     """轴类主视图轮廓上方的竖线位置（模型 z）：向上伸出的直径文字、键槽/环槽/螺纹尺寸界线、几何公差框格引线。
     上方的粗糙度符号（文字向右约 21 mm）要避开它们。"""
     Ltot = p.bbox.zmax - p.bbox.zmin
-    zs = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))
-          if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up"]
+    zs = []
+    for j in range(len(p.shaft_steps)):
+        if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up":
+            z_, side_ = shaft_dia_place(p, j, sc)[:2]
+            zs.append(z_)
+            # 竖写文字在线左/右约 4.8 mm：文字另一侧的边缘也是障碍（Ra 的 √ 短脚向左约 2.5 mm）
+            zs.append(z_ + (4.8 if side_ == "right" else -4.8) / sc)
     for f in p.shaft_features:
         if f["kind"] == "gear":
             continue
