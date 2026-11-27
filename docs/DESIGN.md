@@ -624,7 +624,7 @@ cad-mcp/
 │  ├─ standards.py        # 公制螺纹底孔、过孔、沉孔标准
 │  ├─ materials.py        # 材料与密度
 │  ├─ library.py + data/library.yaml   # 标准件/外购件库（带 CS_ 基准）
-│  ├─ rules.py            # 设计规则（R001–R013、S006–S010、G001–G006）
+│  ├─ rules.py            # 设计规则（R001–R014、S006–S010、G001–G006）
 │  ├─ detailing.py        # 出图规划 + 出图检查（D001–D008）
 │  ├─ render_svg.py       # 工程图 SVG 预览（mock 目标 / AI 目视自检）
 │  ├─ versioning.py       # SW ProgID/版本号映射、版本降级保护

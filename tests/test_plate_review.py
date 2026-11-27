@@ -157,3 +157,13 @@ def test_hole_in_pocket_floor_needs_at():
     assert ("R013", "T[0]", "error") in _rules([pk, {**t, "depth": 16}], t=20)  # 穿过型腔底但孔深按原表面量
     assert not any(r[0] == "R013" for r in _rules([pk, {**t, "at": 8, "depth": 6}], t=20))  # 从型腔底面起算
     assert not any(r[0] == "R013" for r in _rules([pk, {**t, "depth": "through"}], t=20))
+
+
+def test_hole_off_boss_needs_at():
+    b = {"feature": "boss", "name": "B", "height": 15, "profile": {"shape": "circle", "diameter": 30, "center": [0, 0]}}
+    t = lambda pos, **k: {"feature": "hole", "name": "T", "type": "tapped", "size": "M6", "depth": 8,  # noqa: E731
+                          "positions": [pos], **k}
+    assert ("R014", "T[0]", "error") in _rules([b, t([35, 25])], t=10)  # 板面上的孔从凸台顶起算：悬空
+    assert not any(r[0] == "R014" for r in _rules([b, t([35, 25], at=10)], t=10))
+    assert not any(r[0] == "R014" for r in _rules([b, t([0, 0])], t=10))  # 凸台顶上的孔
+    assert ("R014", "T[0]", "error") in _rules([b, t([15, 0])], t=10)  # 骑在凸台边上

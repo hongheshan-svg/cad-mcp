@@ -125,6 +125,37 @@ def check_part(p: ResolvedPart) -> list[Finding]:
                                   f"孔骑在型腔 {pk['name']} 的侧壁上（孔心距型腔边 {d:+.2f} mm，孔半径 {r:g}）"
                                   if abs(d) < r else f"孔离型腔 {pk['name']} 侧壁仅 {-d - r:.2f} mm < 1 mm",
                                   "孔整个放进型腔底面内，或离型腔边 ≥ 1 mm"))
+    # R014 有凸台时顶/底面孔的起算面：未写 at 的孔从零件最外表面（最高凸台顶）起算，
+    # 孔心处实际表面若是板面或较低的凸台顶，盲孔会悬空或深度不符；孔骑在凸台边上同样报
+    for face in ("top", "bottom"):
+        bs = [b for b in p.bosses if b["face"] == face and b.get("at") is None]
+        if not bs or p.thickness is None:
+            continue
+        sgn = 1 if face == "top" else -1
+        start = p.bbox.zmax if face == "top" else p.bbox.zmin
+        plate = p.bbox.zmin + p.thickness if face == "top" else p.bbox.zmax - p.thickness
+        for h in p.holes:
+            if h.face != face or h.at is not None or h.plate_box is not None:
+                continue
+            r = h.max_dia / 2
+            for inst in h.instances:
+                surf, edge = plate, None
+                for b in bs:
+                    d = dist_to_outline(inst.uv, list(b["profile"].outline))
+                    if abs(d) < r:
+                        edge = b["name"]
+                    elif d >= r:
+                        surf = max(surf, b["z0"] + b["height"]) if sgn > 0 else min(surf, b["z0"] - b["height"])
+                tgt = f"{h.name}[{inst.index}]"
+                if edge:
+                    out.append(_f("R014", "error", tgt, f"孔骑在凸台 {edge} 的边上（一部分在凸台顶、一部分在板面）",
+                                  "孔整个放到凸台顶面内或凸台外"))
+                elif abs(surf - start) > 1e-6 and not h.through:
+                    gap = abs(start - surf)
+                    what = "孔悬空，实际不存在" if h.depth <= gap + 1e-9 else f"实际只深 {h.depth - gap:g}，标注孔深与实际不符"
+                    out.append(_f("R014", "error", tgt,
+                                  f"孔所在处表面在 {surf:g}，孔深 {h.depth:g} 却从零件最外表面 {start:g} 起算，{what}",
+                                  f"孔改从所在表面起算：加 at: {surf:g}（同一组孔须在同一表面上，否则拆成两组）"))
     # R009 深孔：孔深/钻径 > 10 普通麻花钻难加工（排屑、偏斜）
     for h in p.holes:
         if h.slot:
