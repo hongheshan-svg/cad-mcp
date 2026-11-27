@@ -3907,8 +3907,10 @@ def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float
             oc = eo.get("text_x", eo["sheet_pos"][0])
             row.append((oc - ot / 2, oc + ot / 2))
         xs_all = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi]
-        for c in sorted((min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6), key=lambda c: abs(c - c0)):
-            if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3 and not any(c - tw / 2 - 0.5 < x < c + tw / 2 + 0.5 for x in xs_all) \
+        inside = [c for c in (min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6) if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3]
+        outside = [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间放不下：移到界线外
+        for c in sorted(inside, key=lambda c: abs(c - c0)) + sorted(outside, key=lambda c: abs(c - c0)):
+            if True and not any(c - tw / 2 - 0.5 < x < c + tw / 2 + 0.5 for x in xs_all) \
                     and not any(a - 0.5 < c + tw / 2 and c - tw / 2 < b + 0.5 for a, b in row):
                 d.extra = {**ex, "text_x": round(c, 2)}
                 break
@@ -3991,7 +3993,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if start > y0 + 1e-6:
             ex = d.extra or {}
             d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
-            vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), y0, start + tw + 1))
+        vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), y0 - 1, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
         tboxes.append((x0, start, x1, start + tw))
     _shaft_num_dodge_vlines(plan, vlines)

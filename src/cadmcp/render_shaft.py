@@ -417,6 +417,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 y = y_top + 14 - 7 * tr_
                 row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
                                        and (d2.extra or {}).get("track", 0) == tr_) + up_lines
+                for d2 in plan.dims:  # 更外层（track 小）尺寸的界线穿过本行
+                    if d2.view == "front" and d2.kind == "linear" and d2.at is not None and d2.ref != "overall_z" \
+                            and not d2.ref.startswith("step") and (d2.extra or {}).get("track", 0) < tr_:
+                        row_ += [(P(z_, 0)[0] - 0.3, P(z_, 0)[0] + 0.3) for z_ in d2.at]
                 for d2 in plan.dims:  # 环槽/退刀槽/倒角引出标注的斜引线：在本行高度穿过处
                     lb_ = (d2.extra or {}).get("label") or {}
                     if d2.view == "front" and d2.kind == "callout" and "elbow" in lb_:
