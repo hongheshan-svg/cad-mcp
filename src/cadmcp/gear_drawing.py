@@ -147,12 +147,31 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         # 基准 A：轴孔（左视图孔壁左上 150°，沿径向引出到腹板空白处；避开孔径引线与键槽尺寸）
         import math
         rb = bore.max_dia / 2
-        nx, ny = math.cos(math.radians(150)), math.sin(math.radians(150))
+        holes_ = [(ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc) for h in parts["others"] for i in h.instances]
+
+        def place(ang, reach):
+            nx, ny = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+            half = 4.5 * (abs(nx) + abs(ny))  # 字母方框沿径向的半宽
+            out_r = da / 2 * sc - rb * sc - 3.5 + half + 1.0  # 方框在齿顶圆外
+            if reach < out_r and rb * sc + reach + 3.5 + half + 0.5 > df / 2 * sc:  # 腹板放不下（小齿轮）：放到齿顶圆外
+                reach = out_r
+            bx, by = ex + (rb * sc + reach + 3.5) * nx, cy + (rb * sc + reach + 3.5) * ny
+            ok = all(math.hypot(max(abs(bx - hx) - 4.5, 0.0), max(abs(by - hy) - 4.5, 0.0)) > hr + 0.6
+                     for hx, hy, hr in holes_)
+            return ok, nx, ny, reach
+        # 左上 150° 起试（避开上方键槽、左下 225° 的孔径引线）：方框不压分布孔；放不下再加长引线（越过分布孔圈/齿顶圆）
+        found = None
+        for reach0 in (7.0, 10.0, 13.0, 16.0, 20.0, 25.0, 30.0, 1e9):
+            for ang in (150, 165, 135, 180, 195, 120, 30, 15, 0, 330, 300, 255):
+                r_ = min(reach0, da / 2 * sc - rb * sc - 3.5 + 4.5 * 1.42 + 1.0)
+                ok, nx, ny, reach = place(ang, r_)
+                if ok:
+                    found = (nx, ny, reach)
+                    break
+            if found:
+                break
+        nx, ny, reach = found or place(150, 7.0)[1:]
         at = (ex + rb * sc * nx, cy + rb * sc * ny)
-        half = 4.5 * (abs(nx) + abs(ny))  # 字母方框沿径向的半宽
-        reach = 7.0
-        if rb * sc + reach + 3.5 + half + 0.5 > df / 2 * sc:  # 腹板放不下（小齿轮）：方框放到齿顶圆外
-            reach = da / 2 * sc - rb * sc - 3.5 + half + 1.0
         dims.append(Dim("left", "datum", None, None, "A", "datum:A", None, {
             "normal": (round(nx, 4), round(ny, 4)), "sheet_at": (round(at[0], 2), round(at[1], 2)), "reach": round(reach, 2),
             "sheet_pos": (round(at[0] + (reach + 3) * nx, 2), round(at[1] + (reach + 3) * ny, 2))}))
