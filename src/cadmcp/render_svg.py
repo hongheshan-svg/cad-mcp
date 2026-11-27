@@ -906,9 +906,12 @@ def _iso_top_features(s, iso, part, ztop):
     outer = {"top": b.zmax, "bottom": b.zmin, "front": b.ymin, "back": b.ymax, "left": b.xmin, "right": b.xmax}
     for h in part.holes:
         inner = h.at is not None and abs(h.at - outer[h.face]) > 1e-6  # 孔在内侧台阶面上
+        up = inner and h.face == "top" and part.bosses  # 有凸台时板面（低于凸台顶）朝上，孔口可见
         for face, (opp, ax, val) in vis.items():
-            if not ((h.face == face and not inner) or (h.through and h.face == opp)):
+            if not ((h.face == face and (not inner or up)) or (h.through and h.face == opp)):
                 continue  # 内侧面上的孔口多被遮挡不画；通孔在对面外表面的出口照画
+            if up and h.face == face:
+                val = h.at
             if h.slot:  # 腰型孔：孔口轮廓（两半圆 + 两直边）
                 for i in h.instances:
                     p1, p2, rad = h.capsule(i)
@@ -956,6 +959,46 @@ def _iso_top_features(s, iso, part, ztop):
                 c = _clip_convex(a, b, mouth)
                 if c:
                     s.line(*c[0], *c[1], THICK)
+
+
+def _draw_boss_side(s, part, V):
+    """带凸台的板（主/侧视图外形）：板厚矩形 + 各凸台矩形（凸台与板相接的边与板面线重合，不另画）。"""
+    b = part.bbox
+    z0p = b.zmin if not any(bs["face"] == "bottom" for bs in part.bosses) else \
+        b.zmin + max(bs["height"] for bs in part.bosses if bs["face"] == "bottom")
+    u0, u1, v0, v1 = part.profile.bbox2d
+    boxes = [(u0, u1, v0, v1, z0p, z0p + part.thickness)]
+    for bs in part.bosses:
+        if bs["face"] not in ("top", "bottom"):
+            continue
+        a0, a1, c0, c1 = bs["profile"].bbox2d
+        za, zb = sorted((bs["z0"], bs["z0"] + (bs["height"] if bs["face"] == "top" else -bs["height"])))
+        boxes.append((a0, a1, c0, c1, za, zb))
+    for x0, x1, y0, y1, z0, z1 in boxes:
+        pts = [V(q) for q in ((x0, y0, z0), (x1, y1, z0), (x1, y1, z1), (x0, y0, z1))]
+        xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+        s.rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+def _iso_bosses(s, iso, part, zt):
+    """顶面凸台（轴测图）：白色填充凸台外廓遮住其后的板面线，再画顶面轮廓与可见侧棱；顶面上的孔口最后补画。
+    板的轮廓线在调用方之后画——凸台只在板顶面上，不会遮住板的前棱。"""
+    tops = [b for b in part.bosses if b["face"] == "top" and b.get("at") is None]
+    if not tops:
+        return
+    import copy
+    rest = copy.copy(part)
+    for b in sorted(tops, key=lambda b: -(b["profile"].bbox2d[0] + b["profile"].bbox2d[2])):  # 远的先画
+        pts = b["profile"].drawn()
+        z0, z1 = b["z0"], b["z0"] + b["height"]
+        s.face(_hull([iso(x, y, z0) for x, y in pts] + [iso(x, y, z1) for x, y in pts]), THICK)
+        s.poly([iso(x, y, z1) for x, y in pts], THICK)
+        if not _iso_prism_visible(s, iso, pts, z0, z1):
+            for x, y in pts:
+                s.line(*iso(x, y, z0), *iso(x, y, z1), THICK)
+    rest.holes = [h for h in part.holes if h.face == "top" and h.at is None]  # 凸台顶上的孔口（白色填充之后再画）
+    rest.pockets = []
+    _iso_top_features(s, iso, rest, part.bbox.zmax)
 
 
 def _clip_convex(a, b, poly):
@@ -1035,6 +1078,7 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
     if part is not None and part.profile is not None and part.base_type in ("extrude", "sheet_metal"):
         pts = part.profile.drawn()
         z0, z1 = 0.0, part.thickness
+        _iso_bosses(s, iso, part, z1)
         s.poly([iso(x, y, z1) for x, y in pts], THICK)
         if _iso_prism_visible(s, iso, pts, z0, z1):
             pass  # 凸轮廓：已按可见性画底边与竖棱（消隐）
@@ -1346,6 +1390,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     hid = pk["face"] != v.type and not pk.get("through")
                     s.poly([V((x, y, 0.0)) for x, y in pk["profile"].drawn()], THIN if hid else THICK,
                            dash=HIDDEN if hid else None)
+            for bs in part.bosses:  # 顶面凸台：俯视图粗实线；仰视图被板挡住不画
+                if bs["face"] == v.type:
+                    s.poly([V((x, y, 0.0)) for x, y in bs["profile"].drawn()])  # 多边形画（进压线检测）
         elif part is not None and part.base_type == "sheet_metal" and v.type in ("front", "back", "left", "right"):
             _draw_sheet_side(s, part, v.type, ha, P)
         elif part is not None and part.base_type == "shaft" and v.type in ("front", "back", "left", "right"):
@@ -1369,6 +1416,9 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 for (px_, py_), dx in (((ax_, ay_), 1), ((bx_, by_), -1)):
                     s.line(px_, py_, px_ + dx * 5, py_, 0.7)
                     s.text(px_ + dx * 2, py_ + 2, lb, 5, "middle")
+        elif part is not None and part.bosses and part.thickness and part.base_type == "extrude" \
+                and v.type in ("front", "back", "left", "right"):
+            _draw_boss_side(s, part, V)
         else:
             x0, y0 = P(ulo, wlo)
             x1, y1 = P(uhi, whi)

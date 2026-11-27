@@ -674,7 +674,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         if "top" in vtypes and p.base_type in ("extrude", "cast"):
             ha, va = VIEW_AXES["top"]
             origin = {ha: vrange(b, ha)[0], va: vrange(b, va)[0]}
-            for pk in p.pockets:
+            for pk in p.pockets + p.bosses:  # 凸台同样定位
                 if pk["face"] not in ("top", "bottom") or pk["profile"].shape not in ("rect", "circle"):
                     continue
                 pr = pk["profile"]
@@ -704,6 +704,19 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 pts_ = [(vc((x, y, z_), pha), vc((x, y, z_), pva)) for x, y in pr.drawn()]
                 at_ = max(pts_, key=lambda q: q[0] + q[1])  # 型腔轮廓右上角（有圆角时在弧中点）
             dims.append(Dim(pv, "callout", None, None, txt, pk["name"], at_))
+        for bs in p.bosses:  # 凸台：Φd / 宽×长 + 高（与型腔“深”对应），引线指在轮廓右上
+            pr = bs["profile"]
+            txt = (f"Φ{pr.data['diameter']:g}" if pr.shape == "circle" else
+                   f"{pr.bbox2d[1] - pr.bbox2d[0]:g}×{pr.bbox2d[3] - pr.bbox2d[2]:g}") + f" 高{bs['height']:g}"
+            if pr.shape == "rect" and pr.data.get("corner_radius"):
+                txt += f" 4×R{pr.data['corner_radius']:g}"
+            pv = hole_view(bs["face"], vtypes) or views[0].type
+            at_ = None
+            if pv in VIEW_AXES:
+                pha, pva = VIEW_AXES[pv]
+                pts_ = [(vc((x, y, b.zmax), pha), vc((x, y, b.zmax), pva)) for x, y in pr.drawn()]
+                at_ = max(pts_, key=lambda q: q[0] + q[1])
+            dims.append(Dim(pv, "callout", None, None, txt, bs["name"], at_))
         for f in p.finishes:
             txt = f"C{f['size']:g}" if f["type"] == "chamfer" else f"R{f['size']:g}"
             fv = "front" if "front" in vtypes else views[0].type
@@ -2572,6 +2585,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 xs, ys = [q[0] for q in loc["boundary"]], [q[1] for q in loc["boundary"]]
                 hard.append((min(xs) - 1, min(ys), max(xs) + 1, max(ys)))
     feat: list[tuple[float, float, float, float]] = []  # 孔、型腔投影（文字不压图形）
+    edges_: list[tuple[float, float, float, float]] = []  # 凸台轮廓小段：文字不压，引线可穿
     if part is not None:
         for h in part.holes:
             for v in vmap.values():
@@ -2595,6 +2609,18 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     ha_, va_ = VIEW_AXES[v.type]
                     pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
                     feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
+        for bs in part.bosses:  # 凸台：文字可放在凸台顶面内，只是不压轮廓线（轮廓按小段计）
+            v = vmap.get(bs["face"])
+            if v is None:
+                continue
+            ha_, va_ = VIEW_AXES[v.type]
+            pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in bs["profile"].drawn()]
+            for q1, q2 in zip(pts, pts[1:] + pts[:1]):
+                for k in range(max(1, math.ceil(math.dist(q1, q2) / 4))):  # 长边切成 ≤ 4 mm 的小段
+                    t0, t1 = k / max(1, math.ceil(math.dist(q1, q2) / 4)), (k + 1) / max(1, math.ceil(math.dist(q1, q2) / 4))
+                    a_ = (q1[0] + (q2[0] - q1[0]) * t0, q1[1] + (q2[1] - q1[1]) * t0)
+                    b_ = (q1[0] + (q2[0] - q1[0]) * t1, q1[1] + (q2[1] - q1[1]) * t1)
+                    edges_.append((min(a_[0], b_[0]) - 0.4, min(a_[1], b_[1]) - 0.4, max(a_[0], b_[0]) + 0.4, max(a_[1], b_[1]) + 0.4))
     if part is not None and part.bends and part.thickness:  # 钣金：各视图外轮廓内侧一个板厚处是折边壁线，文字不压
         for v in vmap.values():
             cx, cy = v.origin_on_sheet
@@ -2707,7 +2733,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                 ax, ay = _uv_sheet(v, bbox, at_)
             else:
                 ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
-            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr, ord_texts)
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr, ord_texts, edges_)
         _, ex, ey, dirn, box, at_, ax, ay = best
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
@@ -2721,7 +2747,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
 
 
 def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0,
-                texts: list | None = None):
+                texts: list | None = None, edges: list | None = None):
     """引出标注一个锚点的 8 方向 × 7 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。
     rr ≥ 5：锚点为孔心，引线起点取在孔轮廓上（沿引线方向偏 rr）；返回的 ax, ay 为该轮廓点。"""
     for L in (10, 16, 24, 34, 46, 60, 80):
@@ -2741,6 +2767,7 @@ def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below:
                 if a_ > 0:
                     cost += 120 + (600 if a_ < (box[2] - box[0]) * (box[3] - box[1]) - 1e-6 else 0)
             cost += sum(400 for fb in feat if _box_hit(box, fb) > 0)
+            cost += 1000 * any(_box_hit(box, eb) > 0 for eb in edges or [])  # 压凸台轮廓线
             cost += sum(300 for l1, l2 in leaders if _seg_cross((ax, ay), (ex, ey), l1, l2))
             cost += sum(1000 for l1, l2 in leaders if _seg_box(l1, l2, box))  # 文字不压先放的引线（同文字相压）
             sx_, sy_ = ax + 1.5 * math.cos(math.radians(ang)), ay + 1.5 * math.sin(math.radians(ang))  # 锚点本身可能落在别的框内

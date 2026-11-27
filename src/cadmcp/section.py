@@ -401,7 +401,11 @@ def _local_breaks(out: dict[str, list], sec: SectionPlan, view: str, zlo: float,
     h0, h1, d = sec.path[0]
     hi_ = AX[FRAME[view][0]]
     a = sec.wave_amp
-    w0, w1 = _wave(h0, d, view, zlo, zhi, a, 0.0), _wave(h1, d, view, zlo, zhi, a, math.pi)
+
+    def span(h):  # 波浪线只画在实体上：贴着该端的实体（板 + 凸台）的高度范围
+        zs = [q[2] for poly in out["solid"] if any(abs(q[hi_] - h) < 1e-6 for q in poly) for q in poly]
+        return (min(zs), max(zs)) if zs else (zlo, zhi)
+    w0, w1 = _wave(h0, d, view, *span(h0), a, 0.0), _wave(h1, d, view, *span(h1), a, math.pi)
 
     def h_at(w, z):  # 波浪线在高度 z 处的 H
         for q0, q1 in zip(w, w[1:]):

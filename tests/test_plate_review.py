@@ -167,3 +167,31 @@ def test_hole_off_boss_needs_at():
     assert not any(r[0] == "R014" for r in _rules([b, t([35, 25], at=10)], t=10))
     assert not any(r[0] == "R014" for r in _rules([b, t([0, 0])], t=10))  # 凸台顶上的孔
     assert ("R014", "T[0]", "error") in _rules([b, t([15, 0])], t=10)  # 骑在凸台边上
+
+
+def test_boss_drawn_and_dimensioned():
+    """凸台：俯视图画轮廓、主视图外形为板 + 凸台（不是整块包围盒）、标注“Φd 高h”并定位圆心。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
+    spec = {"name": "B", "part_no": "B-01", "title": "凸台板", "material": "Q235", "surface_treatment": "发黑",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 160, "height": 120}, "thickness": 10},
+            "features": [{"feature": "boss", "name": "BS", "height": 15,
+                          "profile": {"shape": "circle", "diameter": 30, "center": [10, 0]}}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model="B"), p)
+    texts = {d.text for d in plan.dims}
+    assert "Φ30 高15" in texts
+    assert {"90", "60"} <= {d.text for d in plan.dims if d.kind == "ordinate"}  # 圆心距左下角
+    svg, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    import re
+    sc = next(v for v in plan.views if v.type == "front").scale
+    sizes = set()
+    for pts in re.findall(r"<polygon points='([^']*)'", svg):
+        q = [tuple(map(float, xy.split(","))) for xy in pts.split()]
+        xs, ys = [a for a, _ in q], [b for _, b in q]
+        sizes.add((round(max(xs) - min(xs), 1), round(max(ys) - min(ys), 1)))
+    # 主视图外形：板 160×10 + 凸台 30×15（不是 160×25 的整块包围盒）
+    assert (round(160 * sc, 1), round(10 * sc, 1)) in sizes and (round(30 * sc, 1), round(15 * sc, 1)) in sizes
+    assert (round(160 * sc, 1), round(25 * sc, 1)) not in sizes
