@@ -1907,6 +1907,7 @@ def _gear_table_place(plan: "DrawingPlan") -> None:
         if not any(_box_hit(tb, b) > 0 for b in boxes):
             t["origin"] = (round(ox, 2), round(oy, 2))
             return
+    plan._xh_bad = True  # 无处可放：A4 时由 plan_shaft_drawing 换 A3 重排
 
 def _fit_iso_beside_column(plan: "DrawingPlan") -> None:
     """装配图轴测图伸进右侧栏（标题栏 + 技术要求 + 明细表）：轴测图是辅助视图，保持左上角单独缩小比例
