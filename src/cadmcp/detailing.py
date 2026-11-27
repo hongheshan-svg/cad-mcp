@@ -869,7 +869,8 @@ def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
     for v in plan.views:
         cx, cy = v.origin_on_sheet
         vw, vh = v.size_mm
-        obstacles.append((cx - vw / 2 - 6, cy - vh / 2 - 6, cx + vw / 2 + 14, cy + vh / 2 + 6))
+        # 上方留 12 mm：断面图/剖视图名称（A-A）写在视图上方
+        obstacles.append((cx - vw / 2 - 6, cy - vh / 2 - 6, cx + vw / 2 + 14, cy + vh / 2 + (12 if v.label else 6)))
     if hb:
         obstacles.append(tuple(hb))
 
@@ -3498,9 +3499,12 @@ def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 ym = (y_rim + y_floor) / 2
                 ex = {"sheet_pts": [(round(vx - hb, 2), round(ym, 2)), (round(vx + hb, 2), round(ym, 2))],
                       "sheet_pos": (round(vx, 2), round(vy + r + 5, 2)), "orient": "h"}
-            elif d.ref.endswith("_t"):
+            elif d.ref.endswith("_t"):  # 尺寸线默认在断面右侧；右侧出图框（断面贴着右框）时放左侧
+                xs = vx + r + 6
+                if xs + 6 > plan.sheet_size[0] - MARGIN - 2:
+                    xs = vx - r - 6
                 ex = {"sheet_pts": [(round(vx, 2), round(vy - r, 2)), (round(vx, 2), round(y_floor, 2))],
-                      "sheet_pos": (round(vx + r + 6, 2), round((vy - r + y_floor) / 2, 2)), "orient": "v",
+                      "sheet_pos": (round(xs, 2), round((vy - r + y_floor) / 2, 2)), "orient": "v",
                       "arc_end": ("max", None)}
             else:
                 continue

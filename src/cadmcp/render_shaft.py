@@ -601,9 +601,15 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             if d.ref.endswith("_w"):
                 _hdim(s, vx - hb, vx + hb, vy + r - t1, vy + r - t1, vy + r + 5, d.text)
             else:
-                _vdim(s, vx + r + 6, vy - r, vy + r - t1, d.text, text_left=False)
-                s.line(vx + hb, vy + r - t1, vx + r + 7.5, vy + r - t1, THIN)
-                s.line(vx, vy - r, vx + r + 7.5, vy - r, THIN)
+                xs = (d.extra or {}).get("sheet_pos", (vx + r + 6, 0))[0]
+                if xs > vx:
+                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=False)
+                    s.line(vx + hb, vy + r - t1, xs + 1.5, vy + r - t1, THIN)
+                    s.line(vx, vy - r, xs + 1.5, vy - r, THIN)
+                else:  # 左侧（规划层：右侧出图框）
+                    _vdim(s, xs, vy - r, vy + r - t1, d.text, text_left=True)
+                    s.line(vx - hb, vy + r - t1, xs - 1.5, vy + r - t1, THIN)
+                    s.line(vx, vy - r, xs - 1.5, vy - r, THIN)
             refs.append(d.ref)
 
 
