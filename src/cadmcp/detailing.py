@@ -318,6 +318,18 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: Resolve
     边上的点按符号类型错开（_SLOT），并避开孔口/型腔打断处（离空处 ≥2 mm）。"""
     n3 = FACE_N3[face]
     order = sorted((v for v in views if v.type in VIEW_AXES), key=lambda v: v.type != "front")
+
+    def edge_len(v):  # 面在该视图中积聚成的边线长（图纸 mm）；面不积聚成边线时 None
+        ha, va = VIEW_AXES[v.type]
+        comp = [(-1 if ax[0] == "-" else 1) * n3["xyz".index(ax[-1])] for ax in (ha, va)]
+        if comp == [0, 0]:
+            return None
+        (u0, u1), (w0, w1) = vrange(b, ha), vrange(b, va)
+        return ((u1 - u0) if comp[0] == 0 else (w1 - w0)) * v.scale
+    lens = [(edge_len(v), v) for v in order]
+    lens = [(L, v) for L, v in lens if L is not None]
+    if lens and lens[0][0] < 15 and max(L for L, _ in lens) >= 15:  # 首选视图里边线太短（薄板侧面）：换边线长的视图
+        order = [max(lens, key=lambda t: t[0])[1]] + [v for v in order if v is not max(lens, key=lambda t: t[0])[1]]
     for v in order:
         ha, va = VIEW_AXES[v.type]
         comp = []
