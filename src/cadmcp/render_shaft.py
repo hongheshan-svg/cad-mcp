@@ -415,6 +415,14 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 y = y_top + 14 - 7 * tr_
                 row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
                                        and (d2.extra or {}).get("track", 0) == tr_) + up_lines
+                for d2 in plan.dims:  # 环槽/退刀槽/倒角引出标注的斜引线：在本行高度穿过处
+                    lb_ = (d2.extra or {}).get("label") or {}
+                    if d2.view == "front" and d2.kind == "callout" and "elbow" in lb_:
+                        (x1_, y1_), (x2_, y2_) = lb_["anchor"], lb_["elbow"]
+                        for yy_ in (y + 0.8, y + 4.3):
+                            if min(y1_, y2_) <= yy_ <= max(y1_, y2_) and abs(y2_ - y1_) > 1e-6:
+                                xx_ = x1_ + (x2_ - x1_) * (yy_ - y1_) / (y2_ - y1_)
+                                row_.append((xx_ - 0.5, xx_ + 0.5))
                 _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_,
                       text_x=(d.extra or {}).get("text_x"))
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
