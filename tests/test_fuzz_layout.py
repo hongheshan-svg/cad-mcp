@@ -68,3 +68,23 @@ def test_fuzz_asm_layout_clean(js):
 def test_scale_label_keeps_decimal():
     from cadmcp.detailing import scale_label
     assert scale_label(0.4) == "1:2.5" and scale_label(0.25) == "1:4" and scale_label(2.5) == "2.5:1"
+
+
+def test_asm_iso_draws_revolve_parts_as_cylinders():
+    """装配轴测图：销按回转段画成圆柱（椭圆端面），不是方盒子；穿在板里的部分不画。"""
+    import tempfile
+
+    from cadmcp.detailing import plan_assembly_drawing
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import AssemblySpec
+    d = json.loads(ASM_SPECS[0])
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("F")
+    for p_ in d["parts"]:
+        svc.build(PartSpec.model_validate(p_))
+    svc.build(AssemblySpec.model_validate(d["asm"]))
+    a = svc._models()[d["asm"]["name"]].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model=d["asm"]["name"]), a)
+    svg, _ = render(plan, a)
+    big = [x for x in svg.split("<polygon")[1:] if "fill='white'" in x and x.split("'")[1].count(",") >= 30]
+    assert len(big) >= 4  # 两个销 × (头部/杆部轮廓 + 端面椭圆)

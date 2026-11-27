@@ -1063,6 +1063,9 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
             z += L
         return
     from .ir.resolve import Box
+    if asm is not None and any(_iso_axis(i) for i in asm.instances):
+        _draw_asm_iso(s, iso, asm)
+        return
     boxes = [i.world_bbox for i in asm.instances] if asm is not None else \
         ([Box(*b["box"]) for b in part.weld_bodies] if part is not None and part.weld_bodies else [box])
     if len(boxes) > 1:  # 焊接件杆件/板、装配零件包围盒 → 画家算法消隐（白色填充可见面，由远及近）
@@ -1071,6 +1074,103 @@ def _draw_iso(s, cx, cy, sc, box, part, asm):
         return
     for bb in boxes:
         _iso_box(s, iso, bb, THIN if asm is not None or len(boxes) > 1 else THICK)
+
+
+def _iso_axis(inst):
+    """回转件（有 revolve 数据）的世界轴向：返回 (轴下标 0/1/2, 局部→世界变换) ；轴不平行于坐标轴则 None。"""
+    rev = getattr(getattr(inst, "source", None), "revolve", None)
+    if not rev:
+        return None
+    from .ir.assembly_resolve import apply
+    o, e = apply(inst.transform, (0.0, 0.0, 0.0)), apply(inst.transform, (0.0, 0.0, 1.0))
+    d = [e[k] - o[k] for k in range(3)]
+    k = max(range(3), key=lambda k_: abs(d[k_]))
+    if abs(abs(d[k]) - 1) > 1e-6:
+        return None
+    return k
+
+
+def _hull(pts):
+    pts = sorted(set((round(x, 4), round(y, 4)) for x, y in pts))
+    if len(pts) < 3:
+        return pts
+
+    def half(ps):
+        h = []
+        for p in ps:
+            while len(h) >= 2 and (h[-1][0] - h[-2][0]) * (p[1] - h[-2][1]) - (h[-1][1] - h[-2][1]) * (p[0] - h[-2][0]) <= 0:
+                h.pop()
+            h.append(p)
+        return h
+    lo, up = half(pts), half(pts[::-1])
+    return lo[:-1] + up[:-1]
+
+
+def _draw_asm_iso(s, iso, asm):
+    """装配轴测图：回转件（销、轴、轴承、螺钉）画成圆柱段，其余零件画包围盒；全部按画家算法由远及近、白色填充消隐。
+    圆柱段在别的零件包围盒内（销在孔里、轴在轴承内圈里）的部分不画。"""
+    from .ir.assembly_resolve import apply
+    from .ir.resolve import Box
+    view = (-1.0, -1.0, 1.0)  # 观察者方向（_iso_xy）
+    cyl_insts = {i.id: _iso_axis(i) for i in asm.instances}
+    boxes = _disjoint_boxes([i.world_bbox for i in asm.instances if cyl_insts[i.id] is None])
+    cyls = []  # (轴下标, 轴线上的另两坐标, z0, z1, 外半径, 内半径)
+    for inst in asm.instances:
+        k = cyl_insts[inst.id]
+        if k is None:
+            continue
+        for z0, z1, do, di in inst.source.revolve:
+            a, b = apply(inst.transform, (0.0, 0.0, z0)), apply(inst.transform, (0.0, 0.0, z1))
+            o = [a[j] for j in range(3) if j != k]
+            cyls.append((k, o, min(a[k], b[k]), max(a[k], b[k]), do / 2, di / 2))
+
+    def cut(lo, hi, holes):  # 区间减去若干区间
+        segs = [(lo, hi)]
+        for h0, h1 in holes:
+            segs = [q for s0, s1 in segs for q in ((s0, min(s1, h0)), (max(s0, h1), s1)) if q[1] - q[0] > 1e-6]
+        return segs
+    items = [("box", bb) for bb in boxes]
+    for n, (k, o, lo, hi, r, ri) in enumerate(cyls):
+        holes = []
+        others = [j for j in range(3) if j != k]
+        for bb in boxes:  # 轴线穿过的包围盒（销在孔里）
+            mn, mx = (bb.xmin, bb.ymin, bb.zmin), (bb.xmax, bb.ymax, bb.zmax)
+            if all(mn[j] - 1e-6 <= o[t] <= mx[j] + 1e-6 for t, j in enumerate(others)):
+                holes.append((mn[k], mx[k]))
+        for m, (k2, o2, lo2, hi2, r2, ri2) in enumerate(cyls):  # 同轴更粗的圆柱（轴在轴承内圈里）
+            if m != n and k2 == k and math.dist(o, o2) < 1e-6 and (r2 > r + 1e-6 or (abs(r2 - r) < 1e-6 and m < n)):
+                holes.append((lo2, hi2))
+        for a0, a1 in cut(lo, hi, holes):
+            mn, mx = [0.0] * 3, [0.0] * 3
+            mn[k], mx[k] = a0, a1
+            for t, j in enumerate(others):
+                mn[j], mx[j] = o[t] - r, o[t] + r
+            items.append(("cyl", Box(mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]), (k, o, a0, a1, r, ri)))
+    order = _painter_order([it[1] for it in items])
+    by_box = {id(it[1]): it for it in items}
+    for bb in order:
+        it = by_box[id(bb)]
+        if it[0] == "box":
+            _iso_box_faces(s, iso, bb)
+            continue
+        k, o, a0, a1, r, ri = it[2]
+        others = [j for j in range(3) if j != k]
+
+        def ring(z, rr):
+            out = []
+            for q in range(36):
+                p3 = [0.0] * 3
+                p3[k] = z
+                p3[others[0]] = o[0] + rr * math.cos(2 * math.pi * q / 36)
+                p3[others[1]] = o[1] + rr * math.sin(2 * math.pi * q / 36)
+                out.append(iso(*p3))
+            return out
+        r0, r1 = ring(a0, r), ring(a1, r)
+        s.face(_hull(r0 + r1))
+        zc = a1 if view[k] > 0 else a0  # 朝向观察者的端面
+        s.face(ring(zc, r))
+        if ri > 1e-6:
+            s.poly(ring(zc, ri), THICK)
 
 
 def _box_minus(a, b):
