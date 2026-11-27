@@ -3978,6 +3978,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             if bx[3] < H - MARGIN - 2 and not hit_lines(bx) and not any(_box_hit(bx, ob) > 0 for ob in others + obst) \
                     and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst + others if ob[3] - ob[1] > 2):
                 o.extra = {**o.extra, "label": nl}
+            elif bx[3] >= H - MARGIN - 2:  # 上方没地方抬：记下缺口，由 plan_shaft_drawing 下移视图 / 换 A3 重排
+                plan._lift_need = max(getattr(plan, "_lift_need", 0.0), bx[3] - (H - MARGIN - 2) + 1)
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:
