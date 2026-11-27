@@ -266,8 +266,8 @@ class Groove(Strict):
     step: int
     position: Literal["start", "end"] | Num | None = Field(
         None, description="槽在轴段中的位置：start/end 或距轴段起点的距离；缺省 end（grinding 缺省靠轴肩一端）")
-    width: Num | None = Field(None, description="undercut 默认 2；grinding 默认查表")
-    depth: Num | None = Field(None, description="undercut 默认 0.5；grinding 默认查表")
+    width: Num | None = Field(None, description="undercut 默认 2；grinding 默认查表；circlip 与 depth 同时给出时不查 GB/T 894（非标/按挡圈样本）")
+    depth: Num | None = Field(None, description="undercut 默认 0.5；grinding 默认查表；circlip 见 width")
 
 
 class ShaftThread(Strict):

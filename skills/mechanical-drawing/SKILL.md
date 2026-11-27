@@ -26,7 +26,7 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 - 只写公差带代号即可，平台按 GB/T 1800.2 查表在图上附极限偏差（小一号上下叠写，如 Φ20k6 后 +0.015/+0.002；键槽宽 N9 同样）。
   支持 IT5–IT11、轴 d–p、孔 D–P 及 js/JS，0–500 mm；表外只注代号。不想要偏差时出图设 `fit_deviations: false`。
   - 键槽 `{"feature": "keyway", "step": 段号, "length": 长度}`：宽、深按 GB/T 1095 自动取，长度取 GB/T 1096 系列；默认居中，`offset` 指定起点。
-  - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取；退刀槽 `type: "undercut"`（默认 2×0.5）。
+  - 挡圈槽 `{"feature": "groove", "type": "circlip", "step": 段号, "position": "end"}` 按 GB/T 894 自动取（表中没有该轴径时报错并给最近轴径；用非标或样本挡圈时同时给 `width`/`depth`，不查表、标注不写标准号）；退刀槽 `type: "undercut"`（默认 2×0.5）。
     磨削的配合面（轴承位 Ra 0.8 以下）靠轴肩时加砂轮越程槽 `type: "grinding"`（GB/T 6403.5 按轴径查 b×h，缺省放在靠轴肩一端）：
     主视图画圆圈 + 罗马数字，自动出局部放大图（5:1 等）注槽宽、槽深。
   - 外螺纹 `{"feature": "thread", "step": 段号, "size": "M20"}`（细牙 `"M16x1.5"`）：该段直径须等于螺纹公称直径；

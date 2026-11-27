@@ -305,3 +305,18 @@ def test_s011_same_dia_adjacent_steps():
     rules = {(f["rule"], f["target"]) for f in check_part(resolve_part(PartSpec.model_validate(spec)))}
     assert ("S011", "step0/1") in rules
     assert ("S005", "step2/3") in rules and ("S011", "step2/3") not in rules
+
+
+def test_circlip_explicit_dims_skip_table():
+    spec = {"name": "S", "part_no": "S", "title": "轴", "material": "45#",
+            "base": {"type": "shaft", "steps": [{"length": 30, "diameter": 37}, {"length": 40, "diameter": 45}]},
+            "features": [{"feature": "groove", "name": "G0", "type": "circlip", "step": 0, "width": 1.6, "depth": 1.2}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    g = next(f for f in p.shaft_features if f["name"] == "G0")
+    assert g["callout"] == "挡圈槽 Φ34.6×1.6"
+    spec["features"][0].pop("width")
+    import pytest
+    from cadmcp.errors import CadError
+    with pytest.raises(CadError) as ei:
+        resolve_part(PartSpec.model_validate(spec))
+    assert "width/depth" in (ei.value.hint or "")

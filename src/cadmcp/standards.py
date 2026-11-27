@@ -106,8 +106,9 @@ def keyway(d: float) -> tuple[float, float, float]:
 def circlip_groove(d: float) -> tuple[float, float]:
     key = round(d)
     if abs(d - key) > 1e-6 or key not in CIRCLIP_GROOVE:
+        near = sorted(CIRCLIP_GROOVE, key=lambda k: abs(k - d))[:2]
         raise CadError(SPEC_INVALID, f"no GB/T 894 circlip groove for shaft Φ{d:g}",
-                       hint=f"可用轴径：{sorted(CIRCLIP_GROOVE)}")
+                       hint=f"表中最近的轴径：{sorted(near)}；或在 groove 里同时给出 width/depth（按所选挡圈的槽宽、槽深）")
     return CIRCLIP_GROOVE[key]
 
 

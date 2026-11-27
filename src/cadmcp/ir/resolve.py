@@ -822,7 +822,12 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
                                     "callout": f"键槽 {b:g}N9×{kl:g} 深{t1:g}",
                                     "section_dim": f"{d - t1:g}"})
             else:
-                if f.type == "circlip":
+                if f.type == "circlip" and f.width is not None and f.depth is not None:
+                    # 显式给槽宽/槽深（按所选挡圈样本或非标挡圈）：不查 GB/T 894，标注不写标准号
+                    m = ev(f.width)
+                    d2 = d - 2 * ev(f.depth)
+                    label = f"挡圈槽 Φ{d2:g}×{m:g}"
+                elif f.type == "circlip":
                     d2, m = standards.circlip_groove(d)
                     label = f"挡圈槽 Φ{d2:g}×{m:g}（GB/T 894-{d:g}）"
                 elif f.type == "grinding":
