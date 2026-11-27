@@ -613,3 +613,5 @@ Creo：`feat.round` edges 同样给点坐标。
 - 齿轮轴主视图齿轮段的分度线（细点画线）、齿根线（细实线）：非模型几何，原先原生图上没有；现在规划层给出 `plan.lines`
   （图纸坐标，穿过直径文字处断开，GB/T 4458.4），SW `view_line`（CENTER / SOLID、细）、Creo `tk.drw.line`（CTRLFONT / SOLIDFONT）画出。
   核对：线型、线宽是否生效；视图移动后线是否跟随（视图草图线随视图）。齿轮参数表压到标注时改放右侧栏之上或左上角（`gear_table.origin`）。
+
+- 键槽剖切位置 `cut_z` 现在也会给齿面 Ra（分度线延长线上的符号）让位：核对 SW/Creo 剖切线位置随 `cut_z`，断面图仍为键槽断面。

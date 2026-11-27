@@ -446,3 +446,15 @@ def test_vertical_cross_hole_pos_measured_to_axis():
     from cadmcp.adapters.solidworks import compile as SW
     op = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.args.get("ref") == "XH1_pos")
     assert op.args["pts"] == d.extra["pick_pts"]
+
+
+def test_keyway_cut_moves_off_gear_flank_ra():
+    """齿面 Ra 两侧都被更粗的轴段挡住、只能放右侧时：键槽剖切位置在平直段内让开 Ra 符号（cut_z，预览/SW/Creo 共用）。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S239", "part_no": "S-239", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 60, "diameter": 34.5}, {"length": 50, "diameter": 30, "tolerance": "m6"}, {"length": 10, "diameter": 22, "tolerance": "h7"}, {"length": 20, "diameter": 12, "tolerance": "h7"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 36, "offset": 2}, {"feature": "groove", "name": "G3", "type": "circlip", "step": 3}, {"feature": "gear", "name": "Z0", "step": 0, "module": 1.5, "teeth": 21}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    kw = next(f for f in p.shaft_features if f["kind"] == "keyway")
+    sec = next(v for v in plan.views if v.type == "section")
+    assert abs(sec.cut_z - (kw["z0"] + kw["z1"]) / 2) > 1
+    assert kw["z0"] + kw["width"] / 2 <= sec.cut_z <= kw["z1"] - kw["width"] / 2
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
