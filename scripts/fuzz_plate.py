@@ -50,6 +50,35 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
     spec = {"name": f"F{n}", "part_no": f"F-{n}", "title": "测试板", "material": "Q235",
             "base": {"type": "extrude", "profile": {"shape": "rect", "width": W, "height": H}, "thickness": T},
             "features": feats}
+    import os
+    if os.environ.get("EXTRA"):  # 扩展覆盖（独立随机流，不影响默认种子）：圆周阵列、腰形孔、边倒角/圆角、精度标注、自动精度、通透型腔
+        r2 = random.Random(int(sys.argv[1] if len(sys.argv) > 1 else 1) * 7919 + n)
+        if r2.random() < .3 and not boss:
+            feats.append({"feature": "hole", "name": "PC", "type": r2.choice(["clearance", "tapped"]), "size": r2.choice(["M5", "M6"]),
+                          "pattern": {"kind": "circular", "radius": round(0.3 * min(W, H)), "count": r2.choice([3, 4, 6]),
+                                      "start_angle": r2.choice([0, 45, 90])}})
+        if r2.random() < .25:
+            feats.append({"feature": "hole", "name": "SL", "type": "slot", "size": "M6", "slot_length": r2.choice([10, 16, 20]),
+                          "slot_angle": r2.choice([0, 90]),
+                          "positions": [[round(-W / 2 + 0.15 * W), round(H / 2 - 0.15 * H)]]})
+        if r2.random() < .3:
+            feats.append({"feature": r2.choice(["fillet", "chamfer"]), "name": "E1",
+                          "edges": r2.choice(["outer_vertical", "top_outer"]), "size": r2.choice([1, 2, 5])})
+        if r2.random() < .3:
+            spec["datums"] = [{"name": "A", "target": "face:bottom"}]
+            spec["tolerances"] = [{"type": r2.choice(["parallelism", "flatness"]), "value": 0.02, "target": "face:top",
+                                   "datums": []}]
+            if spec["tolerances"][0]["type"] == "parallelism":
+                spec["tolerances"][0]["datums"] = ["A"]
+            spec["roughness"] = [{"target": "face:top", "ra": 1.6}]
+        elif r2.random() < .3:
+            spec["auto_precision"] = True
+            for f in feats:
+                if f["feature"] == "hole" and f["type"] == "simple" and r2.random() < .6:
+                    f["tolerance"] = "H7"
+        for f in feats:
+            if f["feature"] == "pocket" and r2.random() < .3:
+                f["depth"] = "through"
     import os, json as _j
     if os.environ.get("DUMP") and str(n) in os.environ["DUMP"].split(","):
         print("SPEC", n, _j.dumps(spec, ensure_ascii=False))
@@ -83,5 +112,5 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
     except Exception as e:
         stats["crash"] += 1; bad.append((n, "crash", traceback.format_exc().splitlines()[-3:], None, spec))
 print(stats)
-for b in bad[:6]:
+for b in bad[:int(sys.argv[3]) if len(sys.argv) > 3 else 6]:
     import json; print(b[0], b[1], b[2], b[3]); print(json.dumps(b[4], ensure_ascii=False))

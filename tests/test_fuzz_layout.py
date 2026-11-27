@@ -517,3 +517,17 @@ def test_gear_flank_ra_leader_to_pitch_line():
     from cadmcp.adapters.creo import drawing as CD
     cops = CD.compile_drawing(plan, "m.prt", toolkit=True)
     assert sum(o.op == "tk.drw.line" and "引线指向分度线" in o.why for o in cops) == len(d.extra["leader_segs"])
+
+
+@pytest.mark.parametrize("js", ['{"name": "F20", "part_no": "F-20", "title": "测试板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 200, "height": 120}, "thickness": 30}, "features": [{"feature": "hole", "name": "H0", "type": "tapped", "size": "M5", "positions": [[-70, 0], [70, 0]], "depth": 12}, {"feature": "hole", "name": "H1", "type": "clearance", "size": "M5", "positions": [[-70, -30], [-70, 30], [70, -30], [70, 30]]}, {"feature": "pocket", "name": "P", "face": "top", "depth": 15, "profile": {"shape": "rect", "width": 50, "height": 30, "center": [0, 0], "corner_radius": 3}}], "datums": [{"name": "A", "target": "face:bottom"}], "tolerances": [{"type": "parallelism", "value": 0.02, "target": "face:top", "datums": ["A"]}], "roughness": [{"target": "face:top", "ra": 1.6}]}', '{"name": "F12", "part_no": "F-12", "title": "测试板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 80, "height": 200}, "thickness": 15}, "features": [{"feature": "hole", "name": "H0", "type": "countersink", "size": "M4", "positions": [[-20, -80], [-20, 80], [20, -80], [20, 80]]}], "datums": [{"name": "A", "target": "face:bottom"}], "tolerances": [{"type": "parallelism", "value": 0.02, "target": "face:top", "datums": ["A"]}], "roughness": [{"target": "face:top", "ra": 1.6}]}'])
+def test_plate_face_ra_slides_off_title_and_leader(js):
+    """板件顶面 Ra（面积聚成边线）压到剖视图标题或框格引线时，沿同一边线的实体段滑开；sheet_at 仍在边线上。"""
+    from cadmcp.detailing import _face_anchor
+    p = resolve_part(PartSpec.model_validate(json.loads(js)))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    d = next(d for d in plan.dims if d.ref == "ra:face:top")
+    v = next(v for v in plan.views if v.type == d.view)
+    y_edge = _face_anchor("top", [v], p.bbox, "roughness", p)[1][1]
+    assert abs(d.at[1] - y_edge) < 1e-9
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

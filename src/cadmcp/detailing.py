@@ -312,7 +312,8 @@ def _face_gaps(face: str, p: ResolvedPart | None, axis: str) -> list[tuple[float
     return out
 
 
-def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: ResolvedPart | None = None):
+def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: ResolvedPart | None = None,
+                 frac: float | None = None):
     """面在哪个视图里积聚成边线：返回 (视图, 边上一点(u,w), 视图内外法向)。
     边上的点按符号类型错开（_SLOT），并避开孔口/型腔打断处（离空处 ≥2 mm）。"""
     n3 = FACE_N3[face]
@@ -326,7 +327,7 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: Resolve
         if comp == [0, 0]:
             continue
         (u0, u1), (w0, w1) = vrange(b, ha), vrange(b, va)
-        f = _SLOT[kind]
+        f = _SLOT[kind] if frac is None else frac
         ti = 0 if comp[0] == 0 else 1  # 沿边方向
         lo, hi = (u0, u1) if ti == 0 else (w0, w1)
         gaps = _face_gaps(face, p, (ha, va)[ti])
@@ -786,7 +787,54 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         place_labels(plan, p.bbox, part=p)
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
+        _face_ra_slide(plan, p)
     return plan
+
+
+def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """外表面粗糙度符号（面积聚成边线处）压到别的标注（框格引线、视图标题、尺寸等）时，沿同一条边线的实体段
+    （避开孔口/型腔打断处，见 _face_anchor）滑动：候选比例逐个用预览出图检查，取冲突最少的（不比原位置好则不动）。
+    sheet_at 仍在边线上（CAD 选边用），sheet_pos 同步平移。"""
+    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:face:") and d.view in VIEW_AXES
+          and d.at is not None and "sheet_at" in (d.extra or {}) and not (d.extra or {}).get("on_frame")]
+    if not ds:
+        return
+    from .render_svg import render
+    vmap = {v.type: v for v in plan.views}
+
+    def bad(text=None) -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        allc = out["crossings"] + out["collisions"]
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc):
+            return 0
+        return len(allc)
+    for d in ds:
+        if bad(d.text) == 0:
+            continue
+        face = d.ref[len("ra:face:"):]
+        v = vmap[d.view]
+        at0, ex0 = d.at, dict(d.extra)
+        best = (bad(), at0, ex0)
+        if best[0] == 0:
+            continue
+        for k in range(1, 20):
+            a = _face_anchor(face, [v], p.bbox, "roughness", p, frac=k / 20)
+            if a is None or a[0] != d.view:
+                break
+            sx, sy = _uv_sheet(v, p.bbox, a[1])
+            dx_, dy_ = sx - ex0["sheet_at"][0], sy - ex0["sheet_at"][1]
+            d.at = a[1]
+            d.extra = {**ex0, "sheet_at": (round(sx, 2), round(sy, 2)),
+                       "sheet_pos": (round(ex0["sheet_pos"][0] + dx_, 2), round(ex0["sheet_pos"][1] + dy_, 2))}
+            n = bad()
+            if n < best[0]:
+                best = (n, d.at, dict(d.extra))
+                if n == 0:
+                    break
+        _, d.at, d.extra = best
 
 
 
