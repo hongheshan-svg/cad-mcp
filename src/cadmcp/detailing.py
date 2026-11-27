@@ -804,10 +804,21 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
 
 
 def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
-    """外表面粗糙度符号（面积聚成边线处）压到别的标注（框格引线、视图标题、尺寸等）时，沿同一条边线的实体段
+    """外表面上的粗糙度/基准/几何公差符号（面积聚成边线处）压到别的标注（框格引线、视图标题、尺寸等）时，沿同一条边线的实体段
     （避开孔口/型腔打断处，见 _face_anchor）滑动：候选比例逐个用预览出图检查，取冲突最少的（不比原位置好则不动）。
     sheet_at 仍在边线上（CAD 选边用），sheet_pos 同步平移。"""
-    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:face:") and d.view in VIEW_AXES
+    dtarget = {f"datum:{d_['name'] if isinstance(d_, dict) else d_.name}":
+               (d_["target"] if isinstance(d_, dict) else d_.target) for d_ in getattr(p, "datums", None) or []}
+
+    def face_of(d):
+        if d.kind == "roughness" and d.ref.startswith("ra:face:"):
+            return d.ref[len("ra:face:"):]
+        if d.kind == "datum" and dtarget.get(d.ref, "").startswith("face:"):
+            return dtarget[d.ref][5:]
+        if d.kind == "gtol" and "@face:" in d.ref and not (d.extra or {}).get("attach"):
+            return d.ref.split("@face:", 1)[1]
+        return None
+    ds = [d for d in plan.dims if face_of(d) and d.view in VIEW_AXES
           and d.at is not None and "sheet_at" in (d.extra or {}) and not (d.extra or {}).get("on_frame")]
     if not ds:
         return
@@ -824,14 +835,14 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
             return 0
         return len(allc)
     for d in ds:
-        face = d.ref[len("ra:face:"):]
+        face = face_of(d)
         v = vmap[d.view]
         at0, ex0 = d.at, dict(d.extra)
         best = (bad(), at0, ex0)
         if best[0] == 0:
             continue
         for k in range(1, 20):
-            a = _face_anchor(face, [v], p.bbox, "roughness", p, frac=k / 20)
+            a = _face_anchor(face, [v], p.bbox, d.kind, p, frac=k / 20)
             if a is None or a[0] != d.view:
                 break
             sx, sy = _uv_sheet(v, p.bbox, a[1])
