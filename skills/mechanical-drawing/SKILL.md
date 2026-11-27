@@ -185,7 +185,7 @@ description: 用 cad MCP 完成非标自动化设备零件/装配建模与出图
 
 ## 轴类结构审查（`cad_validate_design` 会报）
 - S006 轴承定位轴肩高 < max(0.07d, 2 mm)（warning）；S007 横孔开在 IT≤7 配合面（warning，配钻销孔在技术要求注明）；
-  S008 IT≤6 磨削面靠轴肩无越程槽/轴肩圆角（info）；S009 螺纹车到轴肩无退刀槽（warning）；S010 键槽段无配合公差（warning）。
+  S008 IT≤6 磨削面靠轴肩无越程槽/轴肩圆角（info）；S009 螺纹车到轴肩无退刀槽（warning）；S010 键槽段无配合公差（warning）；S011 相邻轴段同径同公差（warning，应合并成一段）。
   出图前把 warning 处理掉或在回复里说明理由。
 - 技术要求缺省写"未注几何公差按 GB/T 1184-K"（焊接件、钣金除外）；DrawingSpec `general_geometric_tolerance` 改等级或设 null 不写。
 - 板块类设 `auto_precision: true`：有配合孔（公差带 IT ≤ 7，如销孔 H7）且没写基准/公差时，底面 A、左面 B、前面 C，

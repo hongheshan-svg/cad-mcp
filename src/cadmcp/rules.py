@@ -331,8 +331,14 @@ def _check_shaft(p: ResolvedPart) -> list[Finding]:
     out += _check_shaft_design(p)
     for i, ((L, d), (L2, d2)) in enumerate(zip(p.shaft_steps, p.shaft_steps[1:])):
         tol = p.shaft_tolerances
-        if tol and (tol[i] or tol[i + 1]) and abs(d - d2) < 1e-6:
-            out.append(_f("S005", "info", f"step{i}/{i + 1}", "相邻轴段同径但公差不同，加工时需分界线", None))
+        if abs(d - d2) < 1e-6:
+            t1, t2 = (tol[i], tol[i + 1]) if tol else (None, None)
+            if (t1 or None) != (t2 or None):
+                out.append(_f("S005", "info", f"step{i}/{i + 1}", "相邻轴段同径但公差不同，加工时需分界线", None))
+            else:  # 同径同公差却分成两段：图上多一条无意义的轮廓线和重复的直径尺寸
+                out.append(_f("S011", "warning", f"step{i}/{i + 1}",
+                              f"相邻轴段 {i}、{i + 1} 同为 Φ{d:g} 且公差相同，应为一段",
+                              f"合并成长 {L + L2:g} 的一段（键槽等特征的 step/offset 相应调整）"))
     return out
 
 

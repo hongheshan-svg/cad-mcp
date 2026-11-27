@@ -39,6 +39,9 @@ for n in range(N):
     spec = {"name": f"S{n}", "part_no": f"S-{n}", "title": "测试轴", "material": "45#", "base": base, "features": feats}
     try:
         p = resolve_part(PartSpec.model_validate(spec))
+        from cadmcp import rules
+        if any(f["rule"] == "S011" for f in rules.check_part(p)):  # 同径同公差相邻段：应合并，不算排布样例
+            stats["invalid"] += 1; continue
         plan = plan_part_drawing(DrawingSpec(model=p.name), p)
         svg, out = render(plan, p)
         from cadmcp.detailing import view_overlaps

@@ -295,3 +295,13 @@ def test_side_face_holes_views_and_section():
             assert h0 <= 60 - 20 + 1 and sec.geometry["voids"]  # 盖住孔深 20 并剖出孔
     svg, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_s011_same_dia_adjacent_steps():
+    from cadmcp.rules import check_part
+    spec = {"name": "S", "part_no": "S", "title": "轴", "material": "45#",
+            "base": {"type": "shaft", "steps": [{"length": 10, "diameter": 12}, {"length": 50, "diameter": 12},
+                                                {"length": 40, "diameter": 20, "tolerance": "k6"}, {"length": 30, "diameter": 20}]}}
+    rules = {(f["rule"], f["target"]) for f in check_part(resolve_part(PartSpec.model_validate(spec)))}
+    assert ("S011", "step0/1") in rules
+    assert ("S005", "step2/3") in rules and ("S011", "step2/3") not in rules
