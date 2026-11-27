@@ -3480,6 +3480,22 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         cands = [x - tw / 2 - 1.5, x + tw / 2 + 1.5]
         ok = [c for c in cands if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8
               and not any(abs(c - x2) < tw / 2 + 1 for x2, ov2 in lines if (ov2 == "down") == below)]
+        if not ok:  # 界线之间偏不开：移到界线外（不压同行别的数字/界线、不压伸出的直径线）
+            row = []
+            for o in plan.dims:
+                eo = o.extra or {}
+                if o is d or o.kind != "linear" or o.axis != "z" or "sheet_pts" not in eo or o.ref == "overall_z" \
+                        or o.ref.startswith("step") != below:
+                    continue
+                oa, ob = sorted(q[0] for q in eo["sheet_pts"])
+                ot = text_width(o.text, 3.5)
+                oc = eo.get("text_x", (oa + ob) / 2)
+                row += [(oc - ot / 2, oc + ot / 2), (oa - 0.3, oa + 0.3), (ob - 0.3, ob + 0.3)]
+            row += [(x2 - 4.5, x2 + 4.5) for x2, ov2 in lines if (ov2 == "down") == below]
+            for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2):
+                if not any(lo < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi for lo, hi in row):
+                    ok = [c]
+                    break
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}

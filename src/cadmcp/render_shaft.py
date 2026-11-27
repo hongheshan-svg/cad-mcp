@@ -38,8 +38,10 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None):
             s.line(x0, y, x1 + 1.5 + tw, y, THIN)
             s.text(x1 + 1.5, y + 0.8, text, 3.5)
     else:
-        s.line(xa, y, xb, y, THIN)
-        s.text((xa + xb) / 2 if text_x is None else text_x, y + 0.8, text, 3.5, "middle")
+        tx_ = (xa + xb) / 2 if text_x is None else text_x
+        lo_, hi_ = min(xa, xb, tx_ - tw / 2), max(xa, xb, tx_ + tw / 2)  # 数字移到界线外时尺寸线延长到数字下
+        s.line(lo_, y, hi_, y, THIN)
+        s.text(tx_, y + 0.8, text, 3.5, "middle")
     _arrow(s, xa, y, -1, 0)
     _arrow(s, xb, y, 1, 0)
 
