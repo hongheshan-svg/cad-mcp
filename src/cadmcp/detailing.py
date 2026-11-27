@@ -218,7 +218,7 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
     # 装配：最小的图幅，要求比例不小于 1:5 且填充率达标（给明细表留位）
     candidates = []
     for sh in sheets:
-        s = next((s for s in SCALES if s <= 1 and _fits(sh, s, col_w, row_h)), None)
+        s = next((s for s in SCALES if s <= 1 and _fits(sh, s, col_w, row_h, notes_h)), None)
         if s is None:
             continue
         if any(s <= s0 for _, s0 in candidates):
@@ -231,10 +231,11 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
     return sheets[-1], SCALES[-1]
 
 
-def _layout(b: Box, spec: DrawingSpec, flat, sheet: str | None, min_feature: float = 0.0, kind: str = "part"):
+def _layout(b: Box, spec: DrawingSpec, flat, sheet: str | None, min_feature: float = 0.0, kind: str = "part",
+            col_h: float = 0.0):
     types, sizes, cells, col_w, row_h = _grid(b, spec, flat)
     # 展开图占右下格，正压在技术要求栏上：选图幅/比例时让出技术要求高度
-    sh, s = _choose(b, col_w, row_h, sheet, min_feature, kind, NOTES_H if "flat_pattern" in types else 0.0)
+    sh, s = _choose(b, col_w, row_h, sheet, min_feature, kind, max(col_h, NOTES_H if "flat_pattern" in types else 0.0))
     W, H = SHEETS[sh]
     views = []
     for i, t in enumerate(types):
@@ -570,7 +571,10 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     # 焊接件尺寸大、孔是焊后加工的少数特征：按装配图方式选图幅（比例 ≥1:5 的最小图幅）
     kind = "weldment" if p.base_type == "weldment_body" else "part"
     spec, view_infos = prune_default_views(spec, p, min_feat) if kind == "part" else (spec, [])
-    sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, 0.0 if kind == "weldment" else min_feat, kind)
+    # 焊接件：标题栏之上还有技术要求（约 5 条）与切割清单，视图伸进右侧栏时须让出
+    col_h = 77 + 7 * (len(p.cut_list) + 1) if kind == "weldment" else 0.0
+    sheet, scale, views = _layout(b, spec, p.flat_pattern, spec.sheet, 0.0 if kind == "weldment" else min_feat, kind,
+                                  col_h)
     vtypes = {v.type for v in views}
     dims: list[Dim] = []
     if spec.dimensions != "none":
@@ -1155,17 +1159,70 @@ def plan_weldment_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None
     from types import SimpleNamespace as NS
     shim = NS(bbox=p.bbox, instances=[NS(id=x["name"], world_bbox=Box(*x["box"])) for x in p.weld_bodies])
     rows = [{"item": r["item"], "part_no": r["spec"], "instances": list(r["bodies"]), "_r": r} for r in plan.cut_list]
-    rows, plan.balloons = layout_balloons(rows, shim, main, plan.sheet_size)
+    # 序号避开主视图总体尺寸数字（左侧竖直尺寸在 vx0−10，下方水平尺寸在 vy0−10 或坐标尺寸带外 vy0−22）
+    mcx, mcy = main.origin_on_sheet
+    mw, mh = main.size_mm
+    vx0, vy0 = mcx - mw / 2, mcy - mh / 2
+    tw_h, tw_v = text_width(f"{_extent(b, ha):g}", 3.5), text_width(f"{_extent(b, va):g}", 3.5)
+    avoid = [(vx0 - 15, mcy - tw_v / 2 - 1, vx0 - 9, mcy + tw_v / 2 + 1)]
+    avoid += [(mcx - tw_h / 2 - 1, vy0 - yy - 1, mcx + tw_h / 2 + 1, vy0 - yy + 5) for yy in (10, 22)]
+    rows, plan.balloons = layout_balloons(rows, shim, main, plan.sheet_size, avoid=avoid)
     for r in rows:
         r["_r"]["item"] = r["item"]
     plan.cut_list.sort(key=lambda r: r["item"])
+    _place_weld_symbols(plan, main)
     # 孔标注合并、切割清单与焊缝符号加入后重新排布引出标注，避开序号和焊缝符号
     reserved = [(b_["pos"][0] - 6, b_["pos"][1] - 6, b_["pos"][0] + 6, b_["pos"][1] + 6) for b_ in plan.balloons if "pos" in b_]
-    reserved += [(d.extra["sheet_pos"][0] - 2, d.extra["sheet_pos"][1] - 3, d.extra["sheet_pos"][0] + 32,
-                  d.extra["sheet_pos"][1] + 8) for d in plan.dims if d.kind == "weld"]
+    reserved += [weld_symbol_box(d.extra["sheet_at"], d.extra["sheet_pos"]) for d in plan.dims if d.kind == "weld"]
     place_labels(plan, p.bbox, reserved, part=p)
     precision_sheet(plan, p)
     return plan
+
+
+WELD_SYM_W = 36.0  # 焊缝符号基准线 26 + 尾部方法代号
+
+
+def weld_symbol_box(at, pos) -> tuple[float, float, float, float]:
+    """焊缝符号（基准线 + 文字 + 尾部）的图纸占位，与 render_svg._weld_symbol 一致。"""
+    return (pos[0] - 2, pos[1] - 4.8, pos[0] + WELD_SYM_W, pos[1] + 4.6)
+
+
+def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
+    """焊缝符号定位：在焊缝点四周的候选位置中选一个——不压序号圆、序号引线、别的焊缝符号；
+    其次避开主视图及其尺寸带（左/下 30 mm、右 16 mm），再其次离焊缝点近。"""
+    cx, cy = main.origin_on_sheet
+    vw, vh = main.size_mm
+    W, H = plan.sheet_size
+    view_box = (cx - vw / 2 - 30, cy - vh / 2 - 30, cx + vw / 2 + 16, cy + vh / 2 + 2)
+    others = []  # 各视图本体（含主视图；压上即硬冲突）
+    for v in plan.views:
+        ox, oy = v.origin_on_sheet
+        ow, oh = v.size_mm
+        others.append((ox - ow / 2 - 1, oy - oh / 2 - 1, ox + ow / 2 + 1, oy + oh / 2 + 1))
+    balls = [(b["pos"][0] - 6, b["pos"][1] - 6, b["pos"][0] + 6, b["pos"][1] + 6) for b in plan.balloons if "pos" in b]
+    leads = [(b["anchor"], b["pos"]) for b in plan.balloons if "pos" in b and "anchor" in b]
+    taken: list = []
+    for d in plan.dims:
+        if d.kind != "weld" or "sheet_at" not in (d.extra or {}):
+            continue
+        ax, ay = d.extra["sheet_at"]
+        best = None
+        for dx in (10, 16, 24, 34, -10 - WELD_SYM_W, -16 - WELD_SYM_W):
+            for dy in (12, 18, 26, 34, 42, -12, -18, -26, -34, -42):
+                pos = (ax + dx, ay + dy)
+                bx = weld_symbol_box((ax, ay), pos)
+                if bx[0] < MARGIN + 2 or bx[2] > W - MARGIN - 2 or bx[1] < MARGIN + 2 or bx[3] > H - MARGIN - 2:
+                    continue
+                hard = sum(_box_hit(bx, o) > 0 for o in balls + taken + others)
+                hard += sum(_seg_box(p1, p2, bx) for p1, p2 in leads)
+                hard += sum(_seg_box((ax, ay), pos, o) for o in balls + taken)
+                soft = _box_hit(bx, view_box) > 0
+                key = (hard, soft, abs(dx) + abs(dy))
+                if best is None or key < best[0]:
+                    best = (key, pos, bx)
+        if best is not None:
+            d.extra["sheet_pos"] = (round(best[1][0], 2), round(best[1][1], 2))
+            taken.append(best[2])
 
 
 def _as_body(p: ResolvedPart) -> ResolvedPart:
