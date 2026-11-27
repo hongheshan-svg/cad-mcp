@@ -1663,7 +1663,13 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
             ha_, va_ = VIEW_AXES[views[0].type]
             (ul, uh), (wl, wh) = vrange(a.bbox, ha_), vrange(a.bbox, va_)
             (X0, Y0), (X1, Y1) = _uv_sheet(views[0], a.bbox, (ul, wl)), _uv_sheet(views[0], a.bbox, (uh, wh))
-            avoid += [(X0 - 16, min(Y0, Y1), X0 - 4, max(Y0, Y1)), (min(X0, X1), Y0 - 16, max(X0, X1), Y0 - 4)]
+            # 尺寸线（细长：气泡不压，引线可穿）+ 数字框（引线也不穿）
+            ym_, xm_ = (Y0 + Y1) / 2, (X0 + X1) / 2
+            tv_ = text_width(f"{_extent(a.bbox, va_):g}", 3.5) / 2 + 1
+            th_ = text_width(f"{_extent(a.bbox, ha_):g}", 3.5) / 2 + 1
+            avoid += [(X0 - 10.5, min(Y0, Y1), X0 - 9.5, max(Y0, Y1)), (X0 - 16, ym_ - tv_, X0 - 9, ym_ + tv_),
+                      (min(X0, X1), Y0 - 10.5, max(X0, X1), Y0 - 9.5), (xm_ - th_, Y0 - 11, xm_ + th_, Y0 - 4)]
+        bom0_ = bom
         bom, balloons = layout_balloons(bom, a, views[0], SHEETS[sheet], avoid)
     if not spec.bom_table:
         bom = []
@@ -1686,6 +1692,22 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     plan.axes = asm_axes(a, views)
     overall_dim_sheet(plan, a)
     _push_overall_past_fits(plan)
+    moved = []  # 总体尺寸改注到视图右侧：尺寸界线/尺寸线的占位，序号气泡重排让开
+    for d in plan.dims:
+        ex = d.extra or {}
+        if ex.get("pushed") and ex.get("orient") == "v" and d.view == views[0].type:
+            (_, ay_), (_, by_) = ex["sheet_pts"]
+            px_ = ex["sheet_pos"][0]
+            vr_ = views[0].origin_on_sheet[0] + views[0].size_mm[0] / 2
+            if px_ > vr_:
+                lo_, hi_ = min(ay_, by_), max(ay_, by_)
+                moved += [(vr_, lo_ - 0.5, px_ + 2, lo_ + 0.5), (vr_, hi_ - 0.5, px_ + 2, hi_ + 0.5),
+                          (px_ - 5, lo_, px_ + 1, hi_)]
+    if moved and balloons:
+        bom2, balloons2 = layout_balloons(bom0_, a, views[0], SHEETS[sheet], avoid + moved)
+        plan.balloons = balloons2
+        if spec.bom_table:
+            plan.bom = bom2
     return plan
 
 
@@ -2268,15 +2290,15 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size, avoid: list 
         start0 = min(max(mid - span / 2 if side == "top" else mid + span / 2, lo_lim + (0 if side == "top" else span)),
                      hi_lim - (span if side == "top" else 0))
 
-        def place(start):
+        def place(start, out=0.0):
             out_ = []
             for k, p in enumerate(group):
                 if side == "top":
-                    pos = (start + k * BALLOON_GAP, min(cy + h / 2 + BALLOON_OFF, H - 12))
+                    pos = (start + k * BALLOON_GAP, min(cy + h / 2 + BALLOON_OFF + out, H - 12))
                 elif side == "right":
-                    pos = (min(cx + w / 2 + BALLOON_OFF, W - 12), start - k * BALLOON_GAP)
+                    pos = (min(cx + w / 2 + BALLOON_OFF + out, W - 12), start - k * BALLOON_GAP)
                 else:
-                    pos = (max(cx - w / 2 - BALLOON_OFF, 12), start - span + k * BALLOON_GAP)
+                    pos = (max(cx - w / 2 - BALLOON_OFF - out, 12), start - span + k * BALLOON_GAP)
                 out_.append((round(pos[0], 2), round(pos[1], 2)))
             return out_
 
@@ -2299,6 +2321,12 @@ def layout_balloons(bom: list[dict[str, Any]], a, view, sheet_size, avoid: list 
                 cand = place(st)
                 if clash(cand) < clash(poss):
                     start, poss = st, cand
+            for out in (12.0, 20.0):  # 平移不开（如贯穿整列的总体尺寸带）：整列再往外移一档
+                if not clash(poss):
+                    break
+                cand = place(start, out)
+                if clash(cand) < clash(poss):
+                    poss = cand
         for p, q in zip(group, poss):
             p["pos"] = q
             order.append(p)
