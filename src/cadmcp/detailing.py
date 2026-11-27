@@ -4306,11 +4306,29 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
         placed.append(tbox)
 
 
+def _section_t_left(plan: "DrawingPlan", p: ResolvedPart) -> bool:
+    """键槽断面图 d−t 尺寸是否统一放在断面左侧：默认右侧；任一张右侧出图框时整排改左（断面间距按一侧尺寸留，
+    一张左一张右会在两图之间相撞），前提是最左一张的左侧不出框。"""
+    W = plan.sheet_size[0]
+    secs = []
+    for v in plan.views:
+        f = next((k for k in p.shaft_features if k["name"] == v.target and k["kind"] == "keyway"), None) \
+            if v.type == "section" and v.target else None
+        if f is not None:
+            secs.append((v.origin_on_sheet[0], f["d"] / 2 * v.scale))
+    if not secs:
+        return False
+    need_left = any(x + r + 6 + 6 > W - MARGIN - 2 for x, r in secs)
+    can_left = all(x - r - 6 - 4.5 > 5 + 2 for x, r in secs)  # 图框线在 5 mm 处
+    return need_left and can_left
+
+
 def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     """移出断面图（键槽）上的尺寸：图纸坐标与 render_shaft 一致（键槽朝上，断面中心 = 视图 origin_on_sheet）。
     槽宽 = 两侧壁上的点（水平）；槽底到对侧轮廓 d−t = 圆周最低点 + 槽底线上的点（竖直），
     extra["arc_end"] = ("max", None) 表示第一个点在圆上、应量到圆的远端（CAD 端设圆弧条件“最大”）。
     extra["section"] = 断面标签（A-A），供 CAD 端在多张同类断面图中找到对应视图。"""
+    left_all = _section_t_left(plan, p)
     for v in plan.views:
         if v.type != "section" or not v.target:
             continue
@@ -4335,9 +4353,9 @@ def _shaft_section_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 ym = (y_rim + y_floor) / 2
                 ex = {"sheet_pts": [(round(vx - hb, 2), round(ym, 2)), (round(vx + hb, 2), round(ym, 2))],
                       "sheet_pos": (round(vx, 2), round(vy + r + 5, 2)), "orient": "h"}
-            elif d.ref.endswith("_t"):  # 尺寸线默认在断面右侧；右侧出图框（断面贴着右框）时放左侧
+            elif d.ref.endswith("_t"):  # 尺寸线默认在断面右侧；右侧出图框（断面贴着右框）时放左侧（整排一起，见 _section_t_left）
                 xs = vx + r + 6
-                if xs + 6 > plan.sheet_size[0] - MARGIN - 2:
+                if left_all or xs + 6 > plan.sheet_size[0] - MARGIN - 2:
                     xs = vx - r - 6
                 ex = {"sheet_pts": [(round(vx, 2), round(vy - r, 2)), (round(vx, 2), round(y_floor, 2))],
                       "sheet_pos": (round(xs, 2), round((vy - r + y_floor) / 2, 2)), "orient": "v",
