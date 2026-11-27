@@ -369,6 +369,10 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 skip(f"{d.kind} 符号（无图纸坐标）")
                 continue
             at, pos = _xy(ex["sheet_at"]), _xy(gtol_frame_pos(ex) if d.kind == "gtol" else ex["sheet_pos"])
+            if d.kind == "roughness" and ex.get("leader_segs"):  # 齿面 Ra：引线指向分度线（含实心箭头的填充线）
+                for sg in ex["leader_segs"]:
+                    ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in sg],
+                                                        "font": "SOLIDFONT", "width": 0.0}, "齿面粗糙度：引线指向分度线"))
             if d.kind == "roughness" and ex.get("ext_pts"):  # 齿面 Ra：分度线延长到符号尖端（细点画线）
                 ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in ex["ext_pts"]],
                                                     "font": "CTRLFONT", "width": 0.0}, "齿面粗糙度：分度线延长线"))
@@ -386,7 +390,10 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                     "type": d.ref.split(":")[1].split("@")[0], "value": value, "diameter": str(zone).startswith("Φ"),
                     "datums": [x for x in datums[:3] if x]}))
             elif d.kind == "roughness":
-                if ex.get("rot"):  # 标在尺寸线上（转 90°，无被选边线，自由放置）
+                if ex.get("leader_pts"):  # 立在引线折线上（引线另画）：自由放置
+                    ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": None, "pos": pos,
+                                                                  "ra": d.value, "removal": "required"}))
+                elif ex.get("rot"):  # 标在尺寸线上（转 90°，无被选边线，自由放置）
                     ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": None, "pos": pos,
                                                                   "ra": d.value, "removal": "required",
                                                                   "angle": float(ex["rot"])}))

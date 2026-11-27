@@ -478,6 +478,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 tx_, ty_ = d.extra["sheet_at"]
                 s.line(tx_, ty_ - 2.0, tx_, ty_, THIN)  # 尺寸线延长到符号尖端
                 render_gdt.roughness(s, tx_, ty_, (0, 1), d.text, rot=90)
+            elif d.kind == "roughness" and d.extra.get("leader_pts"):  # 齿面 Ra：带箭头引线指向分度线，符号立在折线上
+                (ax_, ay_), (bx_, by_), (cx_, cy_) = d.extra["leader_pts"]
+                s.line(ax_, ay_, bx_, by_, THIN)
+                s.line(bx_, by_, cx_, cy_, THIN)
+                _arrow(s, ax_, ay_, ax_ - bx_, ay_ - by_)
+                render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             elif d.kind == "roughness" and d.extra.get("on_frame"):  # 标在框格上方（GB/T 131）
                 render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             else:

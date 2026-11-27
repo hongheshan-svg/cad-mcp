@@ -687,6 +687,12 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ops.append(NativeOp("view_line", {"view": ln["view"], "points": [list(q) for q in ln["pts"]],
                                           "style": "CENTER" if ln["style"] == "center" else "SOLID", "weight": "thin",
                                           "ref": ln["ref"]}, "齿轮段分度线/齿根线（GB/T 4459.2）"))
+    for d in plan.dims:  # 齿面 Ra 引线（指向分度线，含实心箭头的填充线）：视图草图细实线
+        if d.kind == "roughness" and (d.extra or {}).get("leader_segs"):
+            for k, sg in enumerate(d.extra["leader_segs"]):
+                ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in sg], "style": "SOLID",
+                                                  "weight": "thin", "ref": f"{d.ref}:leader{k}"},
+                                    "齿面粗糙度：引线指向分度线（GB/T 131）"))
     for d in plan.dims:  # 齿面 Ra 的分度线延长线：细点画线（GB/T 4459.2）
         if d.kind == "roughness" and (d.extra or {}).get("ext_pts"):
             ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["ext_pts"]],
@@ -745,6 +751,8 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                 "选中被测要素边线 → InsertGtol → SetFrameSymbols2/SetFrameValues2"))
         else:
             rot_ = {"at": None, "leader": False, "angle": float(ex["rot"])} if ex.get("rot") else {}  # 标在尺寸线上
+            if ex.get("leader_pts"):  # 立在引线折线上：引线另画（视图草图线），符号自由放置
+                rot_ = {"at": None, "leader": False}
             ops.append(NativeOp("surface_finish", {**common, "ra": d.value,
                                                    "leader": tuple(ex.get("normal", (0, 1))) != (0, 1), **rot_},
                                 "选中边线 → IModelDocExtension.InsertSurfaceFinishSymbol3（去除材料，Ra 值）"))

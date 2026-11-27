@@ -489,3 +489,26 @@ def test_gear_dia_line_leaves_room_for_inside_flank_ra():
     assert "ext_z" not in d.extra and f["z0"] < d.at[0] < f["z1"]
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_gear_flank_ra_leader_to_pitch_line():
+    """短齿轮段夹在更粗的轴段之间（两端外延长线被挡、段内放不下）：齿面 Ra 改用带箭头引线指向齿段内分度线，
+    符号立在水平折线上（GB/T 131）；SW/Creo 按规划层线段画引线（含箭头填充线），符号自由放置。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S103", "part_no": "S-103", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 15, "diameter": 25, "tolerance": "h7"}, {"length": 20, "diameter": 30.0}, {"length": 60, "diameter": 40}, {"length": 60, "diameter": 45}, {"length": 10, "diameter": 40, "tolerance": "m6"}]}, "features": [{"feature": "groove", "name": "G0", "type": "undercut", "step": 0}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}, {"feature": "gear", "name": "Z1", "step": 1, "module": 1.5, "teeth": 18}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    f = next(f for f in p.shaft_features if f["kind"] == "gear")
+    d = next(d for d in plan.dims if d.ref.startswith("ra:flank:"))
+    (ax, ay), (bx, by), (cx, cy) = d.extra["leader_pts"]
+    fv = next(v for v in plan.views if v.type == "front")
+    assert abs(abs(ay - fv.origin_on_sheet[1]) - f["pd"] / 2 * plan.scale) < 0.02  # 箭头在分度线上
+    assert abs(by - cy) < 1e-9 and d.extra["sheet_at"][1] == by and "ext_pts" not in d.extra
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    from cadmcp.adapters.solidworks import compile as SW
+    ops = SW.compile_drawing(plan, "m.sldprt")
+    assert sum(o.op == "view_line" and ":leader" in o.args.get("ref", "") for o in ops) == len(d.extra["leader_segs"])
+    sf = next(o for o in ops if o.op == "surface_finish" and o.args["ref"] == d.ref)
+    assert sf.args["at"] is None and sf.args["leader"] is False
+    from cadmcp.adapters.creo import drawing as CD
+    cops = CD.compile_drawing(plan, "m.prt", toolkit=True)
+    assert sum(o.op == "tk.drw.line" and "引线指向分度线" in o.why for o in cops) == len(d.extra["leader_segs"])

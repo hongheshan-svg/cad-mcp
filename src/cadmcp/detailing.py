@@ -1703,8 +1703,10 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
             if f["kind"] == "gear":  # 齿面粗糙度注在分度线延长线上（齿段外，见 gear_flank_ra_z）
                 ra = p.gear["flank_ra"]
                 zt, zend = gear_flank_ra_z(p, f, f"Ra {ra:g}", scale)
+                forced = abs(zend - zt) > 1e-9 and not _flank_ext_cands(p, f, f"Ra {ra:g}", scale)  # 两侧都被挡、硬放右侧
                 dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:flank:{f['name']}",
-                                (zt, f["pd"] / 2), {"normal": (0, 1), **({"ext_z": zend} if abs(zend - zt) > 1e-9 else {})}))
+                                (zt, f["pd"] / 2), {"normal": (0, 1), **({"ext_z": zend} if abs(zend - zt) > 1e-9 else {}),
+                                                    **({"forced": True} if forced else {})}))
                 continue
             if f["kind"] == "thread":  # 未满整段：注螺纹长度（自轴段端面起）
                 if not f["full"]:
@@ -4321,6 +4323,77 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_top_num_clear(plan)  # 上方尺寸数字被竖线（外层界线、框格引线、伸出的直径线）穿过：界线之间挪到空处
     _shaft_ra_on_dim(plan)  # 标在孔径尺寸线上的 Ra：接在（已定位的）尺寸文字之后
     _shaft_gear_lines(plan, p)  # 齿轮段分度线/齿根线（非模型几何），在尺寸文字处断开
+    _gear_flank_leader(plan, p)  # 齿面 Ra 无处可放（两侧延长线被挡、段内放不下）：改用引线指向分度线
+
+
+def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """齿面 Ra 两侧分度线延长线都被更粗的轴段挡住、段内又放不下（只能硬放在右侧相邻段上）时，改为带箭头的引线
+    指向齿段内的分度线（GB/T 131：符号立在引线的水平折线上；GB/T 4459.2：注在分度线上）。
+    候选：箭头在齿段 1/4、1/2、3/4 处的上/下分度线，引线 60° 向右/左引到轮廓外的折线高度；逐个用预览出图检查
+    文字压线/压字的数目，取最少的（不比原位置好则不改）。结果 extra["leader_pts"] = [箭头, 折点, 折线端]、
+    sheet_at = 符号尖端（立在折线上），预览/SW/Creo 共用。"""
+    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:flank:") and (d.extra or {}).get("forced")]
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if not ds or fv is None:
+        return
+    from .render_svg import render
+
+    def bad() -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        return len(out["crossings"]) + len(out["collisions"])
+    sc, cy = fv.scale, fv.origin_on_sheet[1]
+    R = max(dd for _, dd in p.shaft_steps) / 2 * sc
+    y_top, y_bot = cy + R, cy - R
+    for d in ds:
+        f = next(g for g in p.shaft_features if g["kind"] == "gear" and d.ref == f"ra:flank:{g['name']}")
+        w = _flank_ra_w(d.text)
+        orig = dict(d.extra)
+        best = (bad(), orig)
+        if best[0] == 0:
+            continue
+        cands = []
+        for t in (0.5, 0.25, 0.75):
+            ax = shaft_sx(fv, None, f["z0"] + t * (f["z1"] - f["z0"]))
+            for side, ys in ((1, (y_top + 2.0, y_top + 4.0)), (-1, (y_bot - 9.5, y_bot - 12.0))):
+                ay = cy + side * f["pd"] / 2 * sc
+                for ye in ys:
+                    h = abs(ye - ay)
+                    for g in (1, -1):
+                        bx = ax + g * h * 0.577
+                        cx_ = bx + g * (w + 1.0)
+                        vx = bx + 2.5 if g > 0 else cx_ + 1.5
+                        cands.append({"leader_pts": [(round(ax, 2), round(ay, 2)), (round(bx, 2), round(ye, 2)),
+                                                     (round(cx_, 2), round(ye, 2))],
+                                      "sheet_at": (round(vx, 2), round(ye, 2)), "sheet_pos": (round(vx, 2), round(ye, 2))})
+        base = {k: v for k, v in orig.items() if k not in ("ext_z", "ext_pts", "sheet_at", "sheet_pos")}
+        for c in cands:
+            d.extra = {**base, **c}
+            n = bad()
+            if n < best[0]:
+                best = (n, dict(d.extra))
+                if n == 0:
+                    break
+        d.extra = best[1]
+        if "leader_pts" in d.extra:
+            d.extra = {**d.extra, "leader_segs": leader_segments(d.extra["leader_pts"])}
+
+
+def leader_segments(pts, arrow_len: float = 3.0, half_w: float = 0.5) -> list:
+    """引线折线 + 实心箭头（首点）的线段（图纸坐标）：箭头用尖端到底边的 5 条细线填满，
+    供没有箭头接口的原生端（SW 视图草图线、Creo 草绘线）照画。"""
+    import math
+    (ax, ay), (bx, by) = pts[0], pts[1]
+    L = math.hypot(bx - ax, by - ay) or 1.0
+    ux, uy = (bx - ax) / L, (by - ay) / L
+    segs = [[tuple(pts[k]), tuple(pts[k + 1])] for k in range(len(pts) - 1)]
+    cx, cy = ax + ux * arrow_len, ay + uy * arrow_len
+    for k in range(5):
+        t = -half_w + 2 * half_w * k / 4
+        segs.append([(round(ax, 2), round(ay, 2)), (round(cx - uy * t, 2), round(cy + ux * t, 2))])
+    return segs
 
 
 def _shaft_gear_lines(plan: "DrawingPlan", p: ResolvedPart) -> None:
