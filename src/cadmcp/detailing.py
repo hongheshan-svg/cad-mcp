@@ -3796,9 +3796,12 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
         tw = text_width(d.text, 3.5)
         c0, py = ex["sheet_pos"]
         xs = [x for sg in leads for y in (py + 0.5, py + 2, py + 3.8) if (x := x_at(sg, y)) is not None]
-        if not any(c0 - tw / 2 - 0.6 < x < c0 + tw / 2 + 0.6 for x in xs):
+        short = tw > xb - xa - 1 and "text_x" not in ex and not ex.get("track")
+        if short:  # 放不下的短尺寸：预览默认放右侧界线外，按该处判断
+            c0 = xb + 1.5 + tw / 2
+        if not short and not any(c0 - tw / 2 - 0.6 < x < c0 + tw / 2 + 0.6 for x in xs):
             continue
-        lo, hi = min(xs), max(xs)
+        lo, hi = (min(xs), max(xs)) if xs else (c0, c0)
         row = []  # 同一行别的数字与界线
         for o in plan.dims:
             eo = o.extra or {}
@@ -3815,6 +3818,8 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
         if cands:
             c = min(cands, key=lambda c_: (not xa < c_ < xb, abs(c_ - c0)))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
+        elif short:  # 两侧都被占（别的数字/引线）：放到轮廓与尺寸行之间的低一道
+            d.extra = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], round(py - 7, 2))}
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:

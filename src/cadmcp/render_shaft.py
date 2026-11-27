@@ -27,7 +27,7 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None):
     for x, yf in ((xa, y_from_a), (xb, y_from_b)):
         s.line(x, yf + (1 if y > yf else -1), x, y + (1.5 if y > yf else -1.5), THIN)
     tw = _text_w(text, 3.5)
-    if tw > abs(xb - xa) - 1:
+    if tw > abs(xb - xa) - 1 and text_x is None:
         x0, x1 = min(xa, xb), max(xa, xb)
         hit_r = any(a < x1 + 1.5 + tw + 1 and b > x1 + 0.5 for a, b in busy or [])
         hit_l = any(a < x0 - 0.5 and b > x0 - 1.5 - tw - 1 for a, b in busy or [])
