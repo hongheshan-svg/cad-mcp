@@ -154,5 +154,6 @@ def test_hole_in_pocket_floor_needs_at():
           "depth": 12}
     t = {"feature": "hole", "name": "T", "type": "tapped", "size": "M6", "depth": 10, "positions": [[0, 0]]}
     assert ("R013", "T[0]", "error") in _rules([pk, t], t=20)
+    assert ("R013", "T[0]", "error") in _rules([pk, {**t, "depth": 16}], t=20)  # 穿过型腔底但孔深按原表面量
     assert not any(r[0] == "R013" for r in _rules([pk, {**t, "at": 8, "depth": 6}], t=20))  # 从型腔底面起算
     assert not any(r[0] == "R013" for r in _rules([pk, {**t, "depth": "through"}], t=20))
