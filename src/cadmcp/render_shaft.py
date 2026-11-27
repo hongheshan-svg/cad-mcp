@@ -460,6 +460,11 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 if keep == "forbidden":
                     s.line(sx + 1.8, sy + 0.6, sx + 1.8, sy + 3.8, THIN)
             s.text(*lb["text_at"], d.text, 3)
+        elif d.kind == "callout" and d.at is not None and "elbow" in (d.extra or {}).get("label", {}):
+            lb = d.extra["label"]  # 规划层（shaft_dim_sheet）给定：引线折点、文字位置、出框则向左
+            s.line(*lb["anchor"], *lb["elbow"], THIN)
+            s.line(*lb["elbow"], *lb["end"], THIN)
+            s.text(*lb["text_at"], d.text, 3)
         elif d.kind == "callout" and d.at is not None:
             z, r = d.at
             px, py = P(z, r)

@@ -3370,11 +3370,17 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             z, r = d.at
             ax, ay = X(z), cy + r * sc
             ty = y_top + 4 + (4 if d.ref == "chamfer" else 14)
-            tx = ax - 4 - len(d.text) * 2 if d.ref == "chamfer" else ax + 6
-            w = len(d.text) * 2.4
-            d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(tx, 2), round(ty, 2)),
+            w = text_width(d.text, 3) + 1
+            tx = ax - 4 - w if d.ref == "chamfer" else ax + 6
+            dir_ = 1
+            if tx + w > plan.sheet_size[0] - MARGIN - 2:  # 右端伸出图框 → 改向左引出（引线竖直向上，不斜穿尺寸行）
+                tx, dir_ = ax - w, -1
+            elif tx < MARGIN + 2:
+                tx = ax + 6
+            d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)),
+                                                     "elbow": (round(tx + (w if dir_ < 0 else 0), 2), round(ty, 2)),
                                                      "text_at": (round(tx + 0.5, 2), round(ty + 0.8, 2)),
-                                                     "end": (round(tx + w, 2), round(ty, 2)), "dir": 1}}
+                                                     "end": (round(tx if dir_ < 0 else tx + w, 2), round(ty, 2)), "dir": dir_}}
     _xh_callout_flip(plan)
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
