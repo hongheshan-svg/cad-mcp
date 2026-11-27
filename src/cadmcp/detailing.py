@@ -929,7 +929,12 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
 
     def hits_dia(d, dx):
         a_, b_ = span(d, dx)
-        return any(a_ - 0.5 < x < b_ + 5.0 for x in up_x)
+        for r in plan.dims:  # 框格上方的 Ra（随框格平移）：√ 起点在框格左端附近，横线向右约 21 mm
+            er = r.extra or {}
+            if r.kind == "roughness" and er.get("on_frame") == d.ref[5:] and "sheet_at" in er:
+                rx = er["sheet_at"][0] - dx
+                a_, b_ = min(a_, rx - 2.6), max(b_, rx + 7 + len(r.text) * 2.0)
+        return any(a_ - 0.5 < x < b_ + 4.6 for x in up_x)
 
     for d in frames:
         ex = d.extra
@@ -939,10 +944,14 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
         if not need_r and not hits_dia(d, 0.0):
             continue
         cands = [round(min(b0 - lim, tot - 7.0), 2)] if need_r else [0.0]  # 引线至少留在框格内 3.5 mm
+        ra_ = next((r for r in plan.dims if r.kind == "roughness" and (r.extra or {}).get("on_frame") == d.ref[5:]
+                    and "sheet_at" in (r.extra or {})), None)
+        ra_r = (ra_.extra["sheet_at"][0] + 7 + len(ra_.text) * 2.0) if ra_ is not None else b0
+        ra_l = (ra_.extra["sheet_at"][0] - 2.6) if ra_ is not None else a0
         for x in up_x:
-            if a0 - 0.5 < x < b0 + 5.0:
-                cands += [round(b0 - (x - 5.0), 2), round(a0 - (x + 0.5), 2)]  # 框格移到直径文字左侧 / 直径线右侧
-        ok = [c for c in cands if -2.5 <= c <= tot - 4.5 and span(d, c)[1] <= lim and span(d, c)[0] >= 12
+            if min(a0, ra_l) - 0.5 < x < max(b0, ra_r) + 4.6:
+                cands += [round(max(b0, ra_r) - (x - 4.7), 2), round(min(a0, ra_l) - (x + 0.5), 2)]  # 移到直径文字左侧 / 直径线右侧
+        ok = [c for c in cands if -2.5 <= c <= tot - 4.0 and span(d, c)[1] <= lim and span(d, c)[0] >= 12
               and not clash_other(d, c) and not hits_dia(d, c)]
         if not ok:
             if need_r:
@@ -3779,7 +3788,7 @@ def shaft_dia_blocked(p: ResolvedPart, i: int, sc: float = 1.0) -> bool:
     return _shaft_dia_choice(p, i, sc)[2] < 0.2
 
 
-def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, str, float]:
+def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool = False) -> tuple[float, str, float]:
     """第 i 段直径尺寸线的轴向位置与文字侧（left | right，文字竖写在尺寸线左/右）：
     尺寸线离键槽/环槽越远越好；文字不压轴肩线、倒角线、键槽轮廓（文字厚约 4.5 mm 图纸）；优先文字在左、居中；
     避开断开处。"""
@@ -3815,7 +3824,7 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
 
     # 文字长于该段直径（公差文字）→ 会伸到轮廓外；此时尺寸线避开轴段中点（下方链式长度数字、上方键槽尺寸都在中点附近）
     d_i = p.shaft_steps[i][1]
-    long_txt = text_width(_shaft_dia_label(p, i), 3.5) > shaft_text_room(p, (z0 + z1) / 2, d_i) * sc - 2
+    long_txt = force_long or text_width(_shaft_dia_label(p, i), 3.5) > shaft_text_room(p, (z0 + z1) / 2, d_i) * sc - 2
     # 要避开的数字区：链式长度数字（段中点）、键槽长度数字（键槽中点，在轮廓上方）
     zones = [((z0 + z1) / 2, (text_width(f"{z1 - z0:g}", 3.5) / 2 + 2.0) / sc)]
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
@@ -3845,7 +3854,7 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
         return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
                 -abs(z - (z0 + z1) / 2))
-    if long_txt:  # 段中点放不下（键槽处文字不能跨键槽轮廓）：先找轮廓内放得下的位置（键槽两端到轴肩的整直径区）
+    if long_txt and not force_long:  # 段中点放不下（键槽处文字不能跨键槽轮廓）：先找轮廓内放得下的位置（键槽两端到轴肩的整直径区）
         tw_lab = text_width(_shaft_dia_label(p, i), 3.5)
         inside = []
         for z in cands:
@@ -3879,7 +3888,10 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
     z, sd = max(((z, sd) for z in cands for sd in ("left", "right")), key=key)
     span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
     g = gap(*span) * sc
-    if g < 0.2:  # 轮廓内放不下：文字伸到轮廓外，尺寸线取轴段中点附近（避开相邻粗段的轴肩线）
+    if g < 0.2:  # 轮廓内放不下（轴端螺孔虚线、键槽占满等）：文字伸到轮廓外，按伸出文字的规则选位置（避开数字区）
+        if not force_long:
+            z_, sd_, _ = _shaft_dia_choice(p, i, sc, force_long=True)
+            return z_, sd_, min(g, 0.0)
         z = min(cands, key=lambda z_: abs(z_ - (z0 + z1) / 2))
         sd = "left"
     return z, sd, g
