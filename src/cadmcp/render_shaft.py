@@ -617,7 +617,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
         s.line(vx, vy - r - 3, vx, vy + r + 3, THIN, CENTER)
         s.text(vx, vy + r + 12, v.label, 4, "middle")
         # 剖切位置符号（主视图上下两端短粗线 + 字母）
-        zc = (f["z0"] + f["z1"]) / 2
+        zc = v.cut_z if v.cut_z is not None else (f["z0"] + f["z1"]) / 2
         mx = P(zc, 0)[0]
         for yy, sign in ((y_top + 3, 1), (y_bot - 3, -1)):
             s.line(mx, yy, mx, yy + sign * 5, 0.7)

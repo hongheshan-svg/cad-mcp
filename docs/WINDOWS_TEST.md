@@ -597,3 +597,9 @@ Creo：`feat.round` edges 同样给点坐标。
   Creo：`tk.drw.surface_finish` 的 `at` 为 null、`angle` = 90 → `ProDtlsyminstdataAngleSet`——核对角度单位（度/弧度）与旋转基点。
   原生尺寸线不会自动延长到符号尖端（预览补了 2 mm 短线），记下实际观感。
   样例：`tests/test_fuzz_layout.py::test_bore_ra_on_dim_line`。
+- 轴承位等轴段基准（`datum` target `step:<i>`）：基准为轴线，三角形与该段直径尺寸线对齐挂在轮廓下方（GB/T 1182 中心要素），
+  `sheet_at` 的 x = 直径线 x。核对 SW/Creo 基准符号是否在直径尺寸线下端箭头处、原生是否识别为轴线基准（SW 附在尺寸上更好，记下现象）。
+- 轴键槽移出断面的剖切位置：`ViewPlan.cut_z`（模型 z，键槽平直段内）；该段有基准且剖切符号会碰到基准方框时挪离键槽中点。
+  SW `section_view` 的 `z`、Creo `tk.drw` 剖面 `z`（`shaft_section_z`）都读它（断面图互相推开后不再在剖切位置正下方）。
+  核对：原生剖切线位置与预览一致、断面形状正确。
+- 上方低一道尺寸行（孔深、横孔定位、放不下的短尺寸）在轮廓上方 10 mm（`TRACK_DY`）；`sheet_pos` 的 y 即该行，原生尺寸按它放。

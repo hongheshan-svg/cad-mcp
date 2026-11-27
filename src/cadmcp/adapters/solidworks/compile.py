@@ -582,7 +582,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
             continue
         if v.type == "section":
             f = next((x for x in model_features if x["name"] == v.target), None)
-            z = (f["z0"] + f["z1"]) / 2 if f else 0.0
+            z = v.cut_z if v.cut_z is not None else ((f["z0"] + f["z1"]) / 2 if f else 0.0)
             main = plan.views[0]  # 轴类主视图：轴线水平，左端 = z 0（与 render_shaft 一致）
             (mcx, mcy), (mw, mh) = main.origin_on_sheet, main.size_mm
             from ...detailing import shaft_sx

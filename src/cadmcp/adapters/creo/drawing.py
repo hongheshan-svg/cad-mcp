@@ -55,6 +55,8 @@ def section_view_name(label: str) -> str:
 
 def shaft_section_z(plan, v) -> float:
     """移出断面的轴向位置（IR Z，mm）：轴类主视图轴线水平、左端为 z=0（detailing 中断面图放在剖切位置正下方）。"""
+    if getattr(v, "cut_z", None) is not None:  # 规划层定的剖切位置（断面图互相推开后不再在剖切位置正下方）
+        return round(v.cut_z, 4)
     main = plan.views[0]
     return round((v.origin_on_sheet[0] - (main.origin_on_sheet[0] - main.size_mm[0] / 2)) / main.scale, 4)
 

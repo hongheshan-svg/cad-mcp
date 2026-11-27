@@ -143,6 +143,7 @@ SPECS = [
     '{"name": "S123", "part_no": "S-123", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 80, "diameter": 27}, {"length": 15, "diameter": 30, "tolerance": "f7"}, {"length": 60, "diameter": 35}, {"length": 30, "diameter": 45}, {"length": 15, "diameter": 42}, {"length": 60, "diameter": 34}], "cross_holes": [{"step": 3, "diameter": 6}], "bores": [{"diameter": 14, "length": 104}]}, "features": [{"feature": "groove", "name": "G3", "type": "undercut", "step": 3}], "auto_precision": true}',
     '{"name": "S135", "part_no": "S-135", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 10, "diameter": 42, "tolerance": "m6"}, {"length": 50, "diameter": 45}], "bores": [{"diameter": 21, "length": 24, "tolerance": "H7"}]}, "features": [{"feature": "groove", "name": "G0", "type": "undercut", "step": 0}], "auto_precision": true}',
     '{"name": "S64", "part_no": "S-64", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 10, "diameter": 27}, {"length": 80, "diameter": 37}, {"length": 50, "diameter": 47}, {"length": 50, "diameter": 55, "tolerance": "js6"}, {"length": 15, "diameter": 50}, {"length": 20, "diameter": 45, "tolerance": "k6"}], "bores": [{"diameter": 8, "length": 90}]}, "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 56}, {"feature": "keyway", "name": "K2", "step": 2, "length": 36}], "auto_precision": true}',
+    '{"name": "S154", "part_no": "S-154", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 25, "diameter": 36, "tolerance": "h7"}, {"length": 60, "diameter": 44, "tolerance": "h7"}, {"length": 25, "diameter": 47}, {"length": 40, "diameter": 55, "tolerance": "js6"}, {"length": 20, "diameter": 52, "tolerance": "js6"}, {"length": 20, "diameter": 44, "tolerance": "h7"}], "center_holes": {"type": "B"}}, "features": [{"feature": "keyway", "name": "K2", "step": 2, "length": 18}, {"feature": "groove", "name": "G5", "type": "undercut", "step": 5}], "auto_precision": true}',
 ]
 
 
@@ -352,3 +353,24 @@ def test_blind_bore_depth_not_collinear_with_top_row():
                 if a[0] == b[0] and a[1] < b[2] - 0.5 and b[1] < a[2] - 0.5]
     bd = next(d for d in plan.dims if d.ref.endswith("_depth"))
     assert bd.extra.get("track") == 1
+
+
+def test_shaft_datum_aligned_with_dia_line_and_cut_z():
+    """轴段基准与直径尺寸线对齐（基准为轴线）；剖切位置写入 ViewPlan.cut_z，SW/Creo 共用。"""
+    spec = {"name": "S", "part_no": "S", "title": "轴", "material": "45#",
+            "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 30, "tolerance": "k6"},
+                                                              {"length": 40, "diameter": 36},
+                                                              {"length": 30, "diameter": 30, "tolerance": "k6"}]},
+            "features": [{"feature": "keyway", "name": "K1", "step": 1, "length": 28}], "auto_precision": True}
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    dias = {d.ref: d.extra["sheet_pts"][0][0] for d in plan.dims if d.kind == "diameter" and d.ref.startswith("step")}
+    dts = [d for d in plan.dims if d.kind == "datum" and d.view == "front"]
+    assert dts
+    for d in dts:
+        i = int(next(x["target"] for x in p.datums if x["name"] == d.text)[5:])
+        assert abs(d.extra["sheet_at"][0] - dias[f"step{i}_dia"]) < 0.01
+    sec = [v for v in plan.views if v.type == "section"]
+    assert sec and sec[0].cut_z is not None
+    from cadmcp.adapters.creo.drawing import shaft_section_z
+    assert shaft_section_z(plan, sec[0]) == sec[0].cut_z

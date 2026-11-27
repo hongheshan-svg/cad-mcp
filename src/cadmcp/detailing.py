@@ -87,6 +87,7 @@ class ViewPlan:
     target: str = ""  # 断面图对应的特征
     full_section: dict | None = None  # 原位全剖（空心轴/套类主视图）：{boundary 图纸 mm 矩形, depth 模型 mm, cut_points 模型}
     local_sections: list = field(default_factory=list)  # 局部剖（轴类主视图竖直横孔）：[{boundary 图纸 mm, depth 模型 mm, zone 模型 (za, zb, y0, y1)}]
+    cut_z: float | None = None  # 轴键槽移出断面：剖切面的模型 z（键槽平直段内；预览/SW/Creo 共用，见 shaft_cut_z）
     breaks: list = field(default_factory=list)  # 断开画法：去掉的模型 z 区间 [(a, b)]（轴类主视图），每处在图上留 BREAK_GAP
     detail: dict | None = None  # 局部放大图：{zc, yc 模型 mm（放大区域中心）, rm 模型半径, circle (cx, cy, r) 主视图图纸 mm,
     #                             label_at 主视图罗马数字位置, leader [(x, y), (x, y)]}
@@ -396,7 +397,7 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
         frac = {"datum": 0.5, "roughness": 0.7, "gtol": 0.3}[kind]
         if kind == "gtol":
             frac = shaft_gtol_fracs(p, views[0].scale if views else 1.0).get(gkey, 0.3)
-        if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号与链式长度数字（见 shaft_datum_frac）
+        if kind == "datum":  # 基准为轴线：三角形与该段直径尺寸线对齐，画在轴下方（见 shaft_datum_frac）
             frac = shaft_datum_frac(p, i, views[0].scale if views else 1.0)
         elif kind == "roughness":  # 环槽等的引线从槽口斜向右上：符号（文字在右）避开，离槽越远越好
             grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "groove"
@@ -1572,9 +1573,9 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     letters = [c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in used]
     for i, f in enumerate(kws):
         label = f"{letters[i]}-{letters[i]}"
-        zc = (f["z0"] + f["z1"]) / 2
+        zc = shaft_cut_z(p, f, scale)
         views.append(ViewPlan("section", scale, (f["d"] * scale, f["d"] * scale), (shaft_sx(front, Ltot, zc), cy_sec),
-                              label=label, target=f["name"]))
+                              label=label, target=f["name"], cut_z=round(zc, 4)))
     # 相邻键槽近、断面图互相重叠：从左到右推开（中心距 ≥ 两半宽 + 16 mm 尺寸带），整串以原位置均值为中心
     secs0 = sorted((v for v in views if v.type == "section"), key=lambda v: v.origin_on_sheet[0])
     if len(secs0) > 1:
@@ -1843,7 +1844,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
-    plan._sec_z = [(f["z0"] + f["z1"]) / 2 for f in kws]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
+    plan._sec_z = [v.cut_z for v in views if v.type == "section" and v.cut_z is not None]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
     precision_sheet(plan, p)
     _shaft_gtol_frame_dx(plan, p)
     if spec.dimensions != "none":
@@ -3365,26 +3366,33 @@ def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | No
     return "down" if tw + 3 <= (R - d_out / 2) * sc + 15 - 1.5 else "up"
 
 
-def shaft_datum_frac(p: ResolvedPart, i: int, sc: float) -> float:
-    """轴段 i 下方基准符号在段内的位置比例：避开键槽剖切符号（剖切线在键槽中点）；
-    方框会落进链式长度尺寸行时，避开段中点的长度数字与两端尺寸界线。"""
-    z0, z1 = p.step_z(i)
-    d = p.shaft_steps[i][1]
-    cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
-    R_ = max(dd for _, dd in p.shaft_steps) / 2
-    # 轮廓下沿到链式长度尺寸线 (R − d/2)·sc + 15；三角形 2.6 + 引线 7 + 方框 6 + 数字 4.5 放不下时方框会落进该行
-    low = (R_ - d / 2) * sc + 15 < 2.6 + 7 + 6 + 4.5
-    hw_ = (text_width(f"({z1 - z0:g})", 3.5) / 2 + 3.5) / sc
+def shaft_cut_z(p: ResolvedPart, f: dict, sc: float) -> float:
+    """轴键槽移出断面的剖切位置（模型 z）：一般在键槽中点；该段有基准（三角形与直径尺寸线对齐挂在轮廓下方）且
+    剖切符号（短粗线 + 右侧字母）会碰到基准方框时，在键槽平直段内挪到最近的不碰处（断面形状不变）。"""
+    zc = (f["z0"] + f["z1"]) / 2
+    if not any(x["target"] == f"step:{f['step']}" for x in p.datums):
+        return zc
+    z = _cut_z_clear(f, shaft_dia_z(p, f["step"], sc), sc)
+    return zc if z is None else z
 
-    def dcost(t):
-        z = z0 + t * (z1 - z0)
-        c = -min([abs(z - c_) for c_ in cuts] or [1e9]) if cuts else 0.0
-        if low:
-            c += 100 * (abs(z - (z0 + z1) / 2) < hw_) + 100 * (min(z - z0, z1 - z) * sc < 4.0)
-        return c + 0.01 * abs(t - 0.5)
-    if cuts or low:
-        return min((0.5, 0.2, 0.8, 0.3, 0.7, 0.15, 0.85, 0.1, 0.9), key=dcost)
-    return 0.5
+
+def _cut_z_clear(f: dict, zd: float, sc: float) -> float | None:
+    """键槽平直段内离中点最近、剖切符号不碰 zd 处基准方框的剖切位置；没有则 None。"""
+    zc = (f["z0"] + f["z1"]) / 2
+    ok = lambda z: z <= zd - 7.6 / sc or z >= zd + 4.2 / sc  # noqa: E731  方框 ±3.3，字母在线右 1.5–3.6
+    if ok(zc):
+        return zc
+    a, b = f["z0"] + f["width"] / 2 + 1.0, f["z1"] - f["width"] / 2 - 1.0
+    cands = [a + k * (b - a) / 40 for k in range(41)] if b > a else []
+    good = [z for z in cands if ok(z)]
+    return min(good, key=lambda z: abs(z - zc)) if good else None
+
+
+def shaft_datum_frac(p: ResolvedPart, i: int, sc: float) -> float:
+    """轴段 i 下方基准符号在段内的位置比例：基准是轴线（轴承位公共轴线 A-B），三角形与该段直径尺寸线对齐
+    （GB/T 1182 中心要素：基准符号在尺寸线的延长线上），即直径尺寸线所在位置。"""
+    z0, z1 = p.step_z(i)
+    return (shaft_dia_z(p, i, sc) - z0) / (z1 - z0)
 
 
 def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | None:
@@ -3396,11 +3404,8 @@ def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | N
         return None
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
-    has_datum = False
-    if any(x["target"] == f"step:{j}" for x in p.datums):  # 该段下方有基准符号：离直径线近（方框 6 mm + 文字）才挡住
-        z0_, z1_ = p.step_z(j)
-        zd_ = z0_ + shaft_datum_frac(p, j, sc) * (z1_ - z0_)
-        has_datum = abs(zd_ - shaft_dia_z(p, j, sc)) * sc < 10
+    # 该段有基准：三角形与直径尺寸线对齐挂在下端，文字不能往下伸
+    has_datum = any(x["target"] == f"step:{j}" for x in p.datums)
     if tw + 3 <= room and not has_datum:
         return "down"
     z = shaft_dia_z(p, j, sc)
@@ -3673,7 +3678,7 @@ def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     """轴类主视图轮廓下方的占位（模型 z）：基准符号、键槽剖切符号、向下伸出的直径文字。"""
     zs = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))
           if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "down"]
-    zs += [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway"]
+    zs += [shaft_cut_z(p, f, sc) for f in p.shaft_features if f["kind"] == "keyway"]
     z = 0.0
     zs.append(z)
     for L, _ in p.shaft_steps:  # 各段分界：链式长度尺寸的尺寸界线向下引出
@@ -3682,7 +3687,7 @@ def shaft_bottom_obstacles(p: ResolvedPart, sc: float) -> list[float]:
     for x in p.datums:
         if x["target"].startswith("step:"):
             z0, z1 = p.step_z(int(x["target"][5:]))
-            zs += [z0 + t * (z1 - z0) for t in (0.2, 0.5, 0.8)]  # 基准位置随键槽避让在这三处之一
+            zs.append(shaft_dia_z(p, int(x["target"][5:]), sc))  # 基准与直径尺寸线对齐
     return zs
 
 
@@ -3839,6 +3844,9 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     brk = shaft_breaks(p)
     cands = [z0 + (z1 - z0) * k / 40 for k in range(2, 39)]
     cands = [z for z in cands if not any(a - 2 <= z <= b + 2 for a, b in brk)] or [unbreak_z(p, (z0 + z1) / 2)]
+    if any(x["target"] == f"step:{i}" for x in p.datums):  # 基准与直径尺寸线对齐：剖切符号在键槽平直段内挪不开方框时，尺寸线让开
+        kws_ = [f for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
+        cands = [z for z in cands if all(_cut_z_clear(f, z, sc) is not None for f in kws_)] or cands
     tw = 4.5 / sc  # 文字厚度（模型 mm）
 
     def gap(lo, hi):  # 区间 [lo, hi] 到障碍的最小净距（模型 mm；重叠为负）
