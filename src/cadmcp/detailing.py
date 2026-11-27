@@ -3738,6 +3738,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
     _shaft_short_num_frame(plan)
     _shaft_num_dodge_leaders(plan)
+    _shaft_leader_dodge_nums(plan)
     _shaft_dia_lift(plan, p)
 
 
@@ -3952,6 +3953,57 @@ def _label_row_spans(plan: "DrawingPlan", py: float) -> list[tuple[float, float]
         if o.view == "front" and "elbow" in lb and "end" in lb and py + 0.3 < lb["elbow"][1] + 4.0 and lb["elbow"][1] - 0.3 < py + 3.4:
             out.append((min(lb["elbow"][0], lb["end"][0]), max(lb["elbow"][0], lb["end"][0])))
     return out
+
+
+def _shaft_leader_dodge_nums(plan: "DrawingPlan") -> None:
+    """数字让不开时改动引线：环槽/退刀槽/倒角引出标注的斜引线仍穿过主视图上方的尺寸数字（多为紧靠槽的定位尺寸），
+    折点沿原方向外移 4/8/12 mm（引线更斜）或反向，取引线不穿数字、文字不压数字/别的标注、不出图框的第一个。"""
+    W = plan.sheet_size[0]
+    nums = []
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view != "front" or o.kind != "linear" or eo.get("orient") != "h" or "sheet_pts" not in eo or "sheet_pos" not in eo \
+                or o.ref == "overall_z" or o.ref.startswith("step"):
+            continue
+        xa, xb = sorted(q[0] for q in eo["sheet_pts"])
+        tw = text_width(o.text, 3.5)
+        py = eo["sheet_pos"][1]
+        if "text_x" in eo:
+            c = eo["text_x"]
+        elif tw > xb - xa - 1:
+            c = xb + 1.5 + tw / 2  # 放不下：预览默认写右侧界线外
+        else:
+            c = (xa + xb) / 2
+        nums.append((c - tw / 2 - 0.5, py + 0.3, c + tw / 2 + 0.5, py + 3.8))
+    labs = [o for o in plan.dims if o.view == "front" and o.kind == "callout" and not o.ref.startswith("xh:")
+            and "elbow" in ((o.extra or {}).get("label") or {}) and "anchor" in o.extra["label"]]
+
+    def lbox(lb):
+        return (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 0.3, max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 4.2)
+    for o in labs:
+        lb = o.extra["label"]
+        if not any(_seg_box(lb["anchor"], lb["elbow"], b) for b in nums):
+            continue
+        ax = lb["anchor"][0]
+        ex, y = lb["elbow"]
+        w = abs(lb["end"][0] - ex)
+        dir0 = 1 if lb["end"][0] >= ex else -1
+        off0 = ex - ax
+        others = [q for q in labs if q is not o]
+        for dir_, off in [(dir0, off0 + dir0 * k) for k in (4, 8, 12)] + [(-dir0, -off0 - dir0 * k) for k in (0, 4, 8)]:
+            ne = ax + off
+            nl = {**lb, "elbow": (round(ne, 2), y), "end": (round(ne + dir_ * w, 2), y),
+                  "text_at": (round((ne if dir_ > 0 else ne - w) + 0.5, 2), lb["text_at"][1]), "dir": dir_}
+            bx = lbox(nl)
+            if bx[0] < 7 or bx[2] > W - 7:
+                continue
+            if any(_seg_box(nl["anchor"], nl["elbow"], b) for b in nums) or any(_box_hit(bx, b) > 0 for b in nums):
+                continue
+            if any(_box_hit(bx, lbox(q.extra["label"])) > 0 or _seg_box(q.extra["label"]["anchor"], q.extra["label"]["elbow"], bx)
+                   or _seg_box(nl["anchor"], nl["elbow"], lbox(q.extra["label"])) for q in others):
+                continue
+            o.extra = {**o.extra, "label": nl}
+            break
 
 
 def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
