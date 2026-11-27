@@ -3382,9 +3382,30 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                                                      "elbow": (round(tx + (w if dir_ < 0 else 0), 2), round(ty, 2)),
                                                      "text_at": (round(tx + 0.5, 2), round(ty + 0.8, 2)),
                                                      "end": (round(tx if dir_ < 0 else tx + w, 2), round(ty, 2)), "dir": dir_}}
+    _shaft_label_rows(plan, p)
     _xh_callout_flip(plan)
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
+
+
+def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """环槽/退刀槽/倒角引线标注同在主视图上方一行：相邻两个文字相压时，左边那个上移一行（5.5 mm）。"""
+    names = {"chamfer"} | {f["name"] for f in p.shaft_features}
+    ds = sorted((d for d in plan.dims if d.kind == "callout" and d.ref in names and "elbow" in (d.extra or {}).get("label", {})),
+                key=lambda d: -d.extra["label"]["anchor"][0])  # 从右往左：上移的是左边那个，其引线在右边文字的左侧
+    placed: list = []
+    for d in ds:
+        lb = d.extra["label"]
+        x0, x1 = sorted((lb["elbow"][0], lb["end"][0]))
+        dy = 0.0
+        while any(x0 < b[2] + 1 and b[0] - 1 < x1 and lb["elbow"][1] + dy < b[3] and b[1] < lb["elbow"][1] + dy + 4.5
+                  for b in placed) and dy < 30:
+            dy += 5.5
+        if dy:
+            lb = {**lb, "elbow": (lb["elbow"][0], round(lb["elbow"][1] + dy, 2)), "end": (lb["end"][0], round(lb["end"][1] + dy, 2)),
+                  "text_at": (lb["text_at"][0], round(lb["text_at"][1] + dy, 2))}
+            d.extra = {**d.extra, "label": lb}
+        placed.append((x0, lb["elbow"][1], x1, lb["elbow"][1] + 4.5))
 
 
 def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bot: float, sc: float) -> None:
