@@ -4217,7 +4217,7 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
         ex = d.extra or {}
         if d.view == "front" and d.kind == "linear" and ex.get("orient") == "h" and ex.get("sheet_pos"):
             px, py = ex["sheet_pos"]
-            hw = text_width(d.text, 3.5) / 2 + 0.5
+            hw = text_width(d.text, 3.5) / 2 + 1.0  # 引线离数字至少 1 mm（贴着擦过读起来像穿字）
             boxes.append((px - hw, py, px + hw, py + 4.5))
         elif p is not None and d.view == "front" and d.kind == "diameter" and d.ref.startswith("step") \
                 and (fv := next((v for v in plan.views if v.type == "front"), None)) is not None:
@@ -4253,28 +4253,52 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
                    or bx[0] <= a[0] <= bx[2] and bx[1] <= a[1] <= bx[3] or bx[0] <= b[0] <= bx[2] and bx[1] <= b[1] <= bx[3])
     xs = sorted((d for d in plan.dims if d.kind == "callout" and d.ref.startswith("xh:") and (d.extra or {}).get("label")),
                 key=lambda d: d.extra["label"]["anchor"][0])
+    lows_ = [(d.extra or {})["sheet_pos"][1] for d in plan.dims if d.view == "front" and d.kind == "linear"
+             and isinstance((d.extra or {}).get("sheet_pos"), (tuple, list)) and front is not None
+             and (d.extra or {})["sheet_pos"][1] < front.origin_on_sheet[1]]
+    low_y = min(lows_) if lows_ else None  # 主视图下方最低一道尺寸
+    vboxes = []
+    for v in plan.views:
+        if v.type in ("section", "detail"):
+            bx_ = _view_box(v)
+            if bx_:
+                vboxes.append((bx_[0] - 2, bx_[1] - 2, bx_[2] + 2, bx_[3] + 18))  # 上方留标题与槽宽尺寸
     lines_: list = []
     for d in xs:
         lb = d.extra["label"]
         (ax, ay), (ex0, ty0) = lb["anchor"], lb["elbow"]
         w = lb["end"][0] - ex0
         best = None
-        cands = [(sg, dy, f) for f in (1.0, 0.577) for dy in (0, 7, 14) for sg in (1, -1)]  # 45° / 60° 引线
-        for k, (sg, dy, f) in enumerate(cands):
-            ty = ty0 + dy
-            ex_ = ax + sg * (ty - ay) * f
+        cands = [(sg, dy, f, 1) for f in (1.0, 0.577) for dy in (0, 7, 14) for sg in (1, -1)]  # 45° / 60° 引线
+        h_ = next((h for h in (p.cross_holes if p is not None else []) if h["name"] == d.ref[3:]), None)
+        if h_ is not None and h_["dir"] != "vertical" and low_y is not None:  # 向下引到主视图下方尺寸带之外
+            cands += [(sg, dy, f, -1) for f in (1.0, 0.577) for dy in (0, 7) for sg in (1, -1)]
+        for k, (sg, dy, f, up) in enumerate(cands):
+            ax, ay = lb["anchor"]
+            if up < 0:  # 箭头改在孔圆周右下/左下 45°
+                rh_ = h_["hole"] / 2 * front.scale
+                hx_, hy_ = ax - rh_ * 0.7071, ay - rh_ * 0.7071
+                ax, ay = hx_ + sg * rh_ * 0.7071, hy_ - rh_ * 0.7071
+                ty = low_y - 8 - dy
+                ex_ = ax + sg * (ay - ty) * f
+            else:
+                ty = ty0 + dy
+                ex_ = ax + sg * (ty - ay) * f
             tb = (ex_ + 0.5, ty, ex_ + w, ty) if sg > 0 else (ex_ - w + 0.5, ty, ex_, ty)
             tbox = (tb[0], ty, tb[2], ty + 4.5)
             over = sum(1 for x0, y0, x1, y1 in placed if tbox[0] < x1 and x0 < tbox[2] and tbox[1] < y1 and y0 < tbox[3])
             segs_ = [((ax, ay), (ex_, ty)), ((ex_, ty), (ex_ + sg * w, ty))]
             xing = sum(1 for p1, p2 in segs_ for q1, q2 in lines_ if _seg_cross(p1, p2, q1, q2))
-            out_ = tbox[0] < 6 or tbox[2] > plan.sheet_size[0] - 6 or ty + 4.5 > plan.sheet_size[1] - 6  # 出图框
-            cost = 100 * out_ + 10 * (hits((ax, ay), (ex_, ty), boxes + placed) + over) + 5 * xing + k
+            out_ = tbox[0] < 6 or tbox[2] > plan.sheet_size[0] - 6 or ty + 4.5 > plan.sheet_size[1] - 6 or ty < 6  # 出图框
+            over += sum(1 for vb in vboxes if _box_hit(tbox, vb) > 0)  # 压到断面图/放大图（含标题）
+            pen = 100 * out_ + 10 * (hits((ax, ay), (ex_, ty), boxes + placed + vboxes) + over) + 5 * xing
+            cost = pen + 0.2 * k  # 候选序号只在同等干净时定先后（向上优先）
             if best is None or cost < best[0]:
-                best = (cost, sg, ty, ex_, tbox, cost - k >= 10)  # 末项：出框 / 穿字 / 压字（不计候选序号）
+                best = (cost, sg, ty, ex_, tbox, pen >= 10, (ax, ay))  # 末项前：出框 / 穿字 / 压字（不计候选序号）
         if best[5]:  # 找不到不穿字、不出框的位置：记下，由 plan_shaft_drawing 换大图幅再排
             plan._xh_bad = True
-        _, sg, ty, ex_, tbox, _ = best
+        _, sg, ty, ex_, tbox, _, (ax, ay) = best
+        lb = {**lb, "anchor": (round(ax, 2), round(ay, 2))}
         end = ex_ + sg * w
         lines_ += [((ax, ay), (ex_, ty)), ((ex_, ty), (end, ty))]
         d.extra["label"] = {**lb, "elbow": (round(ex_, 2), round(ty, 2)), "end": (round(end, 2), round(ty, 2)),

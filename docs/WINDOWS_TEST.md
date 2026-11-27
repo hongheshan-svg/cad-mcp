@@ -573,3 +573,5 @@ Creo：`feat.round` edges 同样给点坐标。
 - SolidWorks：`IDisplayDimension.ShowParenthesis = True`（失败记 readback `dim_paren_failed`）。核对显示为带括号的数值。
 - Creo：尺寸文字写 `(@D)`（保留实测值加括号）。核对 `ProDimensionTextWstringsSet` 接受 `@D` 且显示为 `(40)` 形式。
 - 样例：`tests/test_plate_review.py::test_shaft_open_ring_reference_dim`。
+- 横孔引线标注（`xh:`）：上方穿字或出框时可改为**向下**引出——箭头在孔圆周右下/左下 45°，水平线在主视图最低一道尺寸之下 8 mm。
+  规划层改写 `label.anchor`（箭头点）；核对 SW/Creo 引线注释的箭头是否落在孔圆周、文字位置是否按 `text_at`。
