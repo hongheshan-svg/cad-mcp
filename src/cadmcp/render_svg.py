@@ -1146,12 +1146,39 @@ def _draw_asm_iso(s, iso, asm):
             for t, j in enumerate(others):
                 mn[j], mx[j] = o[t] - r, o[t] + r
             items.append(("cyl", Box(mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]), (k, o, a0, a1, r, ri)))
+    mouths = []  # 非回转零件上的孔口（座孔、螺纹孔、过孔）：(轴下标, 世界坐标, 半径)
+    for inst in asm.instances:
+        if cyl_insts[inst.id] is not None:
+            continue
+        for f in getattr(inst.source, "fits", []) or []:
+            if f.get("role") not in ("hole", "tap", "bore"):
+                continue
+            for q in ("p0", "p1"):
+                w = apply(inst.transform, tuple(f[q]))
+                w2 = apply(inst.transform, tuple(f["p1" if q == "p0" else "p0"]))
+                k = max(range(3), key=lambda j: abs(w2[j] - w[j]))
+                mouths.append((k, w, f["d"] / 2))
     order = _painter_order([it[1] for it in items])
     by_box = {id(it[1]): it for it in items}
     for bb in order:
         it = by_box[id(bb)]
         if it[0] == "box":
             _iso_box_faces(s, iso, bb)
+            lo_, hi_ = (bb.xmin, bb.ymin, bb.zmin), (bb.xmax, bb.ymax, bb.zmax)
+            face = (lo_[0], lo_[1], hi_[2])  # 可见面：−X、−Y、+Z
+            for k, w, r in mouths:
+                if abs(w[k] - face[k]) > 1e-6:
+                    continue
+                oth = [j for j in range(3) if j != k]
+                if not all(lo_[j] + r - 1e-6 <= w[j] <= hi_[j] - r + 1e-6 for j in oth):
+                    continue
+                pts = []
+                for q in range(36):
+                    p3 = list(w)
+                    p3[oth[0]] += r * math.cos(2 * math.pi * q / 36)
+                    p3[oth[1]] += r * math.sin(2 * math.pi * q / 36)
+                    pts.append(iso(*p3))
+                s.poly(pts, THICK)
             continue
         k, o, a0, a1, r, ri = it[2]
         others = [j for j in range(3) if j != k]
