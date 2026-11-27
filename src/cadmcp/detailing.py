@@ -3842,6 +3842,14 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
     orders = [sorted(idx, key=lambda k: (info[k]["zf"] is None, zkey(k))), sorted(idx, key=zkey),
               sorted(idx, key=lambda k: (info[k]["zf"] is not None, zkey(k)))]
     cost, st = min((run(o) for o in orders), key=lambda t: t[0]) if info else (0, {})
+    if 1 < len(info) <= 3 and cost >= 20:  # 框格少而贪心仍有穿框/压 Ra 预留位：穷举（≤ 28³ 种），可用第四行
+        import itertools
+        opts = [[(z, r, pf) for z, pf in it["cands"] for r in (0, 1, 2, 3)] for it in info]
+        for combo in itertools.product(*opts):
+            t = dict(enumerate(combo))
+            c = total(t)
+            if c < cost - 1e-9:
+                cost, st = c, t
     res = {info[k]["key"]: (st[k][0], st[k][1]) for k in st}
     _LAYOUT_CACHE[key] = (p, res, cost)
     return res
