@@ -109,7 +109,7 @@ C++ 端换算为 Creo 坐标：`T_creo = Q · T · Qᵀ`，Q 为 IR→Creo 的�
 - `src/cadmcp/adapters/creo/toolkit.py`：`ToolkitClient(host, port)`：`call(cmd, **args)`，超时、id 递增、ok=false 抛 `ToolkitError(code, msg)`。
 - 装配：`creo/compile.py` 的 `compile_assembly_tk(spec, asm, files, library_root)` → `tk.asm.*` + `tk.model.*`。
 - 建模：`creo/compile.py` 的 `compile_part_tk(spec, resolved)` → `NativeOp("tk.<cmd>", args)`；CREOSON 只做打开/参数/保存。
-- 出图：`creo/drawing.py` 现有 `ext.cadmcp_*` 粗粒度命令改为逐项 `tk.drw.*`（坐标来自规划层：`Dim.extra["label"]`、`sheet_pts`、`sheet_pos`、`sheet_at`，`hole_table_box` 等）。
+- 出图：`creo/drawing.py` 现有 `ext.cadmcp_*` 粗粒度命令改为逐项 `tk.drw.*`（坐标来自规划层：`Dim.extra["label"]`、`sheet_pts`、`sheet_pos`、`sheet_at`，`hole_table_box` 等；尺寸文字放置点用 `detailing.dim_text_pos`——有 `text_x` 时 x 取 `text_x`）。
 - 测试用 `tests/fake_toolkit.py`：本地线程起一个假服务，按本文 schema 校验 args（缺必填/多余键报 BAD_ARGS）。
 
 ## 5. 编译与部署（Windows）

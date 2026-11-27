@@ -575,3 +575,7 @@ Creo：`feat.round` edges 同样给点坐标。
 - 样例：`tests/test_plate_review.py::test_shaft_open_ring_reference_dim`。
 - 横孔引线标注（`xh:`）：上方穿字或出框时可改为**向下**引出——箭头在孔圆周右下/左下 45°，水平线在主视图最低一道尺寸之下 8 mm。
   规划层改写 `label.anchor`（箭头点）；核对 SW/Creo 引线注释的箭头是否落在孔圆周、文字位置是否按 `text_at`。
+- 尺寸文字位置（`extra["text_x"]`）：规划层避让挪过的数字、写不进两界线之间的短尺寸数字（写到界线外哪一侧）
+  现在都在规划层定好。SW `AddDimension2` 与 Creo TOOLKIT 的放置点 x 取 `text_x`、y 取 `sheet_pos` 的尺寸线行
+  （`detailing.dim_text_pos`）。核对：短尺寸（如键槽到轴肩 3.5）数字是否与预览同侧、尺寸线是否延长到数字下；
+  SW 若把文字拉回两箭头之间，记下版本与现象。Creo 扩展路径（`ext.cadmcp_show_dims`）收到的 `extra` 含 `text_x`，扩展须同样使用。

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from ...detailing import dim_text_pos
 from ...errors import CAPABILITY_UNSUPPORTED, CadError
 
 from ...ir.assembly_resolve import euler_xyz, identity, matmul, ref_frame, same_frame
@@ -671,7 +672,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                 view = f"section:{ex['section']}" if ex.get("section") else d.view  # 移出断面图按标签区分
                 ops.append(NativeOp("shaft_dimension", {"view": view, "kind": d.kind, "text": d.text,
                                                         "at": d.at, "ref": d.ref, "pts": ex.get("sheet_pts"),
-                                                        "pos": ex.get("sheet_pos"), "orient": ex.get("orient"),
+                                                        "pos": dim_text_pos(ex), "orient": ex.get("orient"),
                                                         **({"arc_end": list(ex["arc_end"])} if ex.get("arc_end") else {})},
                                     "选两条边线 AddDimension2；直径用文字覆盖带公差带"))
     for d in plan.dims:

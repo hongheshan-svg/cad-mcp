@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from ...detailing import BOM_COLS, bom_display
+from ...detailing import BOM_COLS, bom_display, dim_text_pos
 from ..native import NativeOp
 
 # 规划视图类型 → Creo 模型命名视图（可由配置 view_map 覆盖）
@@ -332,7 +332,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
         if d.kind in ("linear", "diameter", "ordinate") and ex.get("sheet_pts"):
             p1, p2 = ex.get("pick_pts") or ex["sheet_pts"]  # pick_pts：原生选边点（与预览尺寸界线起点不同时）
             args = {"drawing": D, "view": vw, "kind": "ordinate" if d.kind == "ordinate" else "linear",
-                    "p1": _xy(p1), "p2": _xy(p2), "at": _xy(ex["sheet_pos"]), "orient": ex.get("orient") or "aligned"}
+                    "p1": _xy(p1), "p2": _xy(p2), "at": _xy(dim_text_pos(ex)), "orient": ex.get("orient") or "aligned"}
             if ex.get("reference"):  # 参考尺寸（封闭链开口环）：保留实测值、加括号
                 args["text"] = "(@D)"
             elif d.kind == "diameter" or d.view == "section" or not _plain_number(d.text):  # Φ20k6 等：文字覆盖；纯数值保留 Creo 实测值

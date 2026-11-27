@@ -878,6 +878,16 @@ def notes_origin(plan: "DrawingPlan") -> tuple[float, float]:
     return (notes_x(plan), 5 + 56 + 11)
 
 
+def dim_text_pos(ex: dict | None):
+    """尺寸文字的放置点（图纸 mm）：规划层挪过数字（extra["text_x"]，避让/写到界线外）时 x 用 text_x，
+    y 仍是尺寸线所在行；否则就是 sheet_pos。CAD 端 AddDimension2 / Creo 尺寸放置点用它，与预览一致。"""
+    ex = ex or {}
+    sp = ex.get("sheet_pos")
+    if isinstance(sp, (tuple, list)) and len(sp) == 2 and ex.get("text_x") is not None:
+        return (ex["text_x"], sp[1])
+    return sp
+
+
 def general_roughness_at(plan: "DrawingPlan") -> tuple[float, float]:
     """"其余"表面结构符号的位置（图纸 mm，左端/基线），SVG 与 CAD 共用。
     默认在技术要求（或右侧栏孔表）上方；与视图（含尺寸带）或孔表重叠时依次改放：同高度靠图框右边 → 默认 x 向上逐格 →
@@ -3773,6 +3783,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_leader_dodge_nums(plan)
     _shaft_dia_lift(plan, p)
     _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
+    _shaft_short_text_side(plan, p)  # 余下放不下的短尺寸数字：在规划层定侧（预览与 CAD 共用 text_x）
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -3993,6 +4004,69 @@ def _label_row_spans(plan: "DrawingPlan", py: float) -> list[tuple[float, float]
                 x = shaft_sx(fv, None, zc)
                 out.append((x - 0.6, x + 4.4))
     return out
+
+
+def _shaft_short_text_side(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """主视图水平尺寸数字写不进两界线之间、前面各步又没定位置（无 text_x）时，在规划层定下写在哪一侧，
+    写进 extra["text_x"]：默认右侧界线外；右侧落在同一行别的数字/界线/引出标注/伸出的直径线上而左侧空时改左；
+    右侧出图框时改左。预览与 CAD 都只读 text_x（原先只在预览渲染时决定，CAD 端不知道）。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is None:
+        return
+    sc = fv.scale
+    x_max = plan.sheet_size[0] - 5
+    X = lambda z: shaft_sx(fv, None, z)  # noqa: E731
+    up_lines = []
+    for j in range(len(p.shaft_steps)):
+        if shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j)) == "up":
+            x_ = X(shaft_dia_z(p, j, sc))
+            up_lines.append((x_ - 4.5, x_ + 4.5))
+    fr = [d for d in plan.dims if d.view == "front" and d.kind == "linear" and d.at is not None]
+
+    def spans(d, same_row):  # 同 render_shaft._row_text_spans
+        out = []
+        for d2 in fr:
+            if d2 is d or not same_row(d2):
+                continue
+            a, b = sorted((X(d2.at[0]), X(d2.at[1])))
+            tw = text_width(d2.text, 3.5)
+            out.append(((a + b) / 2 - tw / 2, (a + b) / 2 + tw / 2) if tw <= b - a - 1 else (a, b))
+            out += [(a - 0.3, a + 0.3), (b - 0.3, b + 0.3)]
+        return out
+    for d in fr:
+        eo = d.extra or {}
+        if d.ref == "overall_z" or "text_x" in eo or "sheet_pos" not in eo:
+            continue
+        xa, xb = sorted((X(d.at[0]), X(d.at[1])))
+        tw = text_width(d.text, 3.5)
+        if tw <= xb - xa - 1:
+            continue
+        y = eo["sheet_pos"][1]
+        if d.ref.startswith("step"):
+            busy = spans(d, lambda d2: d2.ref.startswith("step"))
+        else:
+            tr_ = eo.get("track", 0)
+            busy = spans(d, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
+                         and (d2.extra or {}).get("track", 0) == tr_) + up_lines
+            for d2 in fr:  # 更外层（track 小）尺寸的界线穿过本行
+                if d2.ref != "overall_z" and not d2.ref.startswith("step") and (d2.extra or {}).get("track", 0) < tr_:
+                    busy += [(X(z_) - 0.3, X(z_) + 0.3) for z_ in d2.at]
+            for d2 in plan.dims:  # 引出标注水平线/文字、斜引线在本行高度
+                lb_ = (d2.extra or {}).get("label") or {}
+                if d2.view == "front" and d2.kind == "callout" and "elbow" in lb_:
+                    (x1_, y1_), (x2_, y2_) = lb_["anchor"], lb_["elbow"]
+                    (lx1_, ly_), (lx2_, _) = lb_["elbow"], lb_.get("end", lb_["elbow"])
+                    if y + 0.3 < ly_ + 4.0 and ly_ - 0.3 < y + 3.4:
+                        busy.append((min(lx1_, lx2_), max(lx1_, lx2_)))
+                    for yy_ in (y + 0.8, y + 4.3):
+                        if min(y1_, y2_) <= yy_ <= max(y1_, y2_) and abs(y2_ - y1_) > 1e-6:
+                            xx_ = x1_ + (x2_ - x1_) * (yy_ - y1_) / (y2_ - y1_)
+                            busy.append((xx_ - 0.5, xx_ + 0.5))
+        hit_r = any(a < xb + 1.5 + tw + 1 and b > xb + 0.5 for a, b in busy)
+        hit_l = any(a < xa - 0.5 and b > xa - 1.5 - tw - 1 for a, b in busy)
+        out_r = xb + 1.5 + tw > x_max - 0.5
+        tx = xa - 1.5 - tw / 2 if (hit_r and not hit_l or out_r) else xb + 1.5 + tw / 2
+        d.extra = {**eo, "text_x": round(tx, 2)}
 
 
 def _shaft_leader_dodge_nums(plan: "DrawingPlan") -> None:

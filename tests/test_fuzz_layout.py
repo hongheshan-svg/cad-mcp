@@ -232,3 +232,20 @@ def test_short_shaft_tight_groove_enlarges():
     p2 = resolve_part(PartSpec.model_validate(json.loads('{"name": "S18", "part_no": "S-18", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 47, "tolerance": "f7"}, {"length": 10, "diameter": 50, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G1", "type": "circlip", "step": 1}]}')))
     plan2 = plan_part_drawing(DrawingSpec(model=p2.name, sheet="A2"), p2)  # 指定大图幅：不因此放大
     assert plan2.scale == 1.0
+
+
+def test_short_dim_text_side_reaches_cad():
+    """放不下的短尺寸数字：规划层定下 text_x（预览与 CAD 共用），SW AddDimension2 / Creo 放置点的 x 取 text_x。"""
+    from cadmcp.adapters.creo import drawing as CD
+    from cadmcp.adapters.solidworks import compile as SW
+    spec = json.loads('{"name": "S25", "part_no": "S-25", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 20, "diameter": 55}, {"length": 80, "diameter": 52, "tolerance": "k6"}, {"length": 50, "diameter": 49, "tolerance": "m6"}, {"length": 50, "diameter": 46}, {"length": 25, "diameter": 36, "tolerance": "f7"}, {"length": 20, "diameter": 31}]}, "features": [{"feature": "keyway", "name": "K3", "step": 3, "length": 36}, {"feature": "keyway", "name": "K4", "step": 4, "length": 18}]}')
+    p = resolve_part(PartSpec.model_validate(spec))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    d = next(d for d in plan.dims if d.ref == "K4_pos")  # 3.5：键槽到轴肩，写不进两界线之间
+    xa, xb = sorted(q[0] for q in d.extra["sheet_pts"])
+    tx = d.extra["text_x"]
+    assert tx > xb or tx < xa  # 写在界线外
+    sw = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.op == "shaft_dimension" and o.args["ref"] == "K4_pos")
+    assert sw.args["pos"][0] == tx and sw.args["pos"][1] == d.extra["sheet_pos"][1]
+    cr = [o for o in CD.tk_detail_ops(plan) if o.args.get("p1")]  # Creo TOOLKIT 逐项路径
+    assert any(o.args["at"] == CD._xy((tx, d.extra["sheet_pos"][1])) for o in cr)
