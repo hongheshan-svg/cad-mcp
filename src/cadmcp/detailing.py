@@ -3408,13 +3408,23 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
     steps_ = bore_steps(p)
 
     shoulders = [p.step_z(j)[1] for j in range(len(p.shaft_steps) - 1)]  # 外圆轴肩线（链式尺寸界线从这里引出）
+    fspans = []  # 孔里写不下、文字伸出外轮廓时：尺寸线尽量不从几何公差框格（及其上方 Ra）的横向范围穿过
+    if with_outer and p.geotols and text_width(_dia_text(b["d"], b["tol"], True), 3.5) > b["d"] * sc - 2:
+        from .render_gdt import _widths
+        lay = shaft_gtol_layout(p, sc)
+        for g in p.geotols:
+            zl = lay.get(f"{g['type']}@{g['target']}")
+            if zl is not None:
+                w_ = sum(_widths([g["symbol"], g["zone"], *g["datums"]])) / sc
+                fspans.append((zl[0] - 3.5 / sc - 0.5 / sc, zl[0] - 3.5 / sc + w_ + 4.5 / sc))
 
     def key(z):
         clear = min([abs(z - c) * sc for c in outer + others] or [1e9])
         text_ok = all(not (z - 4.7 / sc <= x <= z + 0.3 / sc) for x in steps_ + outer + others)  # 文字竖写在线左侧
         text_ok = text_ok and all(abs(z - x) * sc >= 3.0 for x in shoulders)  # 线（及内孔基准符号）不与轴肩线重合
         want = 7.0 if (z1 - z0) * sc >= 16 else 4.0  # 短孔（沉孔）只求不压线
-        return (text_ok, min(clear, want), min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
+        free_ = not any(a_ < z < b_ for a_, b_ in fspans)
+        return (text_ok, free_, min(clear, want), min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
     return max(cands, key=key)
 
 
