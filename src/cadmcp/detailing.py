@@ -3585,13 +3585,17 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if tw > xb - xa - 1:
             continue  # 放不下的数字已移到界线外
         xc = (xa + xb) / 2
-        hit = [x for x, ov in lines if (ov == "down") == below and abs(x - xc) < tw / 2 + 1]
+        # 直径线连同其左侧竖写文字的占位 (x − 4.8, x + 0.6)
+        band = lambda x_: (x_ - 4.8, x_ + 0.6)  # noqa: E731
+        hit = [x for x, ov in lines if (ov == "down") == below
+               and band(x)[0] - 0.5 < xc + tw / 2 and xc - tw / 2 < band(x)[1] + 0.5]
         if not hit:
             continue
         x = hit[0]
-        cands = [x - tw / 2 - 1.5, x + tw / 2 + 1.5]
+        cands = [band(x)[0] - tw / 2 - 1, band(x)[1] + tw / 2 + 1]
         ok = [c for c in cands if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8
-              and not any(abs(c - x2) < tw / 2 + 1 for x2, ov2 in lines if (ov2 == "down") == below)]
+              and not any(band(x2)[0] - 0.5 < c + tw / 2 and c - tw / 2 < band(x2)[1] + 0.5
+                          for x2, ov2 in lines if (ov2 == "down") == below)]
         if not ok:  # 界线之间偏不开：移到界线外（不压同行别的数字/界线、不压伸出的直径线）
             row = []
             for o in plan.dims:
