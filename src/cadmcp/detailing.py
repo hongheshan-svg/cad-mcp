@@ -1720,6 +1720,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     notes, tb = _notes_and_title(spec, p, sheet, scale, today)
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="shaft", revisions=list(spec.revisions))
+    plan._sec_z = [(f["z0"] + f["z1"]) / 2 for f in kws]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
     precision_sheet(plan, p)
     if spec.dimensions != "none":
         shaft_dim_sheet(plan, p)
@@ -3978,6 +3979,13 @@ def _label_row_spans(plan: "DrawingPlan", py: float) -> list[tuple[float, float]
         lb = (o.extra or {}).get("label") or {}
         if o.view == "front" and "elbow" in lb and "end" in lb and py + 0.3 < lb["elbow"][1] + 4.0 and lb["elbow"][1] - 0.3 < py + 3.4:
             out.append((min(lb["elbow"][0], lb["end"][0]), max(lb["elbow"][0], lb["end"][0])))
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is not None:  # 剖切符号（轮廓上方 3–8 mm 的短粗线，字母在右侧 1.5 mm，见 render_shaft）
+        y_top = fv.origin_on_sheet[1] + fv.size_mm[1] / 2
+        for zc in getattr(plan, "_sec_z", []):
+            if py + 0.3 < y_top + 8.5 and y_top + 2.5 < py + 3.4:
+                x = shaft_sx(fv, None, zc)
+                out.append((x - 0.6, x + 4.4))
     return out
 
 
@@ -4181,6 +4189,17 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             if "anchor" in lb:
                 leads.append((tuple(lb["anchor"]), (ex, ey)))
     W, H = plan.sheet_size
+    prof = []  # 各轴段轮廓（伸出的直径文字不能压到相邻较粗轴段的轮廓线）
+    for j, (_, dj) in enumerate(p.shaft_steps):
+        za, zb = p.step_z(j)
+        xa_, xb_ = shaft_sx(fv, None, za), shaft_sx(fv, None, zb)
+        prof.append((min(xa_, xb_), cy - dj / 2 * sc - 0.6, max(xa_, xb_), cy + dj / 2 * sc + 0.6))
+    for o in plan.dims:  # 水平尺寸的界线（竖直细线，从轮廓到尺寸线）
+        eo = o.extra or {}
+        if o.view == "front" and eo.get("orient") == "h" and "sheet_pts" in eo and "sheet_pos" in eo:
+            py_ = eo["sheet_pos"][1]
+            for qx, qy in eo["sheet_pts"]:
+                prof.append((qx - 0.2, min(qy, py_) - 1.5, qx + 0.2, max(qy, py_) + 1.5))
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
     tboxes = []  # 向上伸出的直径文字框
@@ -4195,7 +4214,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             start = y0
             for _ in range(12):
                 tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
-                hit = [b for b in obst if _box_hit(tb_, b) > 0]
+                hit = [b for b in obst + prof if _box_hit(tb_, b) > 0]
                 hit += [(0, min(a_[1], e_[1]) - 0.5, 0, 0) for a_, e_ in leads if _seg_box(a_, e_, tb_)]
                 if not hit:
                     break
@@ -4212,7 +4231,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         tw = y1 - y0
         start = y0
         for _ in range(12):
-            hit = [b for b in obst if b[0] < x1 + 0.3 and x0 - 0.3 < b[2] and b[1] < start + tw + 0.3 and start - 0.3 < b[3]]
+            hit = [b for b in obst + prof if b[0] < x1 + 0.3 and x0 - 0.3 < b[2] and b[1] < start + tw + 0.3 and start - 0.3 < b[3]]
             tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
             hit += [(0, 0, 0, max(a_[1], e_[1]) + 0.5) for a_, e_ in leads if _seg_box(a_, e_, tb_)]  # 斜引线穿文字
             if not hit:
