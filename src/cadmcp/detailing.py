@@ -3759,11 +3759,25 @@ def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
             placed.append((x0, lb["elbow"][1], x1, lb["elbow"][1] + 4.5))
         return out
 
+    nums = []  # 主视图上方尺寸数字（放得进界线之间的，居中）：引线穿过它们也计
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view == "front" and o.kind == "linear" and eo.get("orient") == "h" and "sheet_pts" in eo and "sheet_pos" in eo \
+                and o.ref != "overall_z" and not o.ref.startswith("step"):
+            xa_, xb_ = sorted(q[0] for q in eo["sheet_pts"])
+            tw_ = text_width(o.text, 3.5)
+            if tw_ <= xb_ - xa_ - 1:
+                c_ = eo.get("text_x", (xa_ + xb_) / 2)
+                nums.append((c_ - tw_ / 2, eo["sheet_pos"][1] + 0.5, c_ + tw_ / 2, eo["sheet_pos"][1] + 3.8))
+
     def crossings(res):
         boxes = {k: (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 0.3, max(lb["elbow"][0], lb["end"][0]),
                      lb["elbow"][1] + 4.2) for k, lb in res.items()}
         return sum(1 for k, lb in res.items() for k2, bx in boxes.items()
                    if k2 != k and _seg_box(lb["anchor"], lb["elbow"], bx))
+
+    def num_x(res):
+        return sum(1 for lb in res.values() for bx in nums if _seg_box(lb["anchor"], lb["elbow"], bx))
     W = plan.sheet_size[0]
     orig = {id(d): d.extra["label"] for d in ds}
 
@@ -3781,7 +3795,7 @@ def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
         return out if lo > MARGIN + 2 and hi < W - MARGIN - 2 else None
 
     def total(res):
-        return (crossings(res), sum(res[k]["elbow"][1] - orig[k]["elbow"][1] for k in res))
+        return (crossings(res), num_x(res), sum(res[k]["elbow"][1] - orig[k]["elbow"][1] for k in res))
     best, best_key = None, None
     n_ = len(ds)
     for mask in (range(1 << n_) if n_ <= 6 else (0,)):
@@ -3804,7 +3818,7 @@ def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
             key = (*total(res), bin(mask).count("1"))
             if best_key is None or key < best_key:
                 best, best_key = res, key
-        if best_key[0] == 0 and best_key[1] == 0:
+        if best_key[0] == 0 and best_key[1] == 0 and best_key[2] == 0:
             break
     for d in ds:
         d.extra = {**d.extra, "label": best[id(d)]}
@@ -4144,6 +4158,9 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                   "text_at": ((ex_ if dir_ > 0 else ex_ - w) + 0.5, lb["text_at"][1]), "dir": dir_}
             bx = lbox(nl)
             others = [lbox(q.extra["label"]) for q in labels if q is not o]
+            oleads = [(q.extra["label"]["anchor"], q.extra["label"]["elbow"]) for q in labels if q is not o]
+            if any(_seg_box(a_, e_, bx) for a_, e_ in oleads):  # 别的标注的引线穿过新位置
+                continue
             if bx[0] > MARGIN + 2 and bx[2] < W - MARGIN - 2 and not hit_lines(bx) \
                     and not any(_box_hit(bx, ob) > 0 for ob in others) \
                     and not any(_box_hit((bx[0], bx[1] + 0.6, bx[2], bx[3]), ob) > 0 for ob in obst_o if ob[1] > y - 5) \
