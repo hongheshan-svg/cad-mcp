@@ -50,5 +50,5 @@ for n in range(N):
     except Exception:
         stats["crash"] += 1; bad.append((n, "crash", traceback.format_exc().splitlines()[-3:], None, spec))
 print(stats); print(errs.most_common(5))
-for b in bad[:12]:
+for b in bad[:int(sys.argv[3]) if len(sys.argv) > 3 else 12]:
     print(b[0], b[1], b[2], b[3]); print(json.dumps(b[4], ensure_ascii=False))

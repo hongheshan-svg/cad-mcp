@@ -1293,6 +1293,9 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         room_ = shaft_text_room(p, (z_[0] + z_[1]) / 2, d_) * scale - 2
         if text_width(_shaft_dia_label(p, j_), 3.5) > room_ >= text_width(_shaft_dia_label(p, j_, False), 3.5):
             p._dia_code_only.add(j_)
+    for j_ in range(len(p.shaft_steps)):  # 轮廓内找不到位置（键槽占满）、文字须伸出轮廓：伸出越短越好 → 只注代号
+        if shaft_dia_blocked(p, j_, scale):
+            p._dia_code_only.add(j_)
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
     cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8 - extra_top
@@ -3234,6 +3237,20 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0) -> tuple[float, 
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
         return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
                 -abs(z - (z0 + z1) / 2))
+    if long_txt:  # 段中点放不下（键槽处文字不能跨键槽轮廓）：先找轮廓内放得下的位置（键槽两端到轴肩的整直径区）
+        tw_lab = text_width(_shaft_dia_label(p, i), 3.5)
+        inside = []
+        for z in cands:
+            if tw_lab > shaft_text_room(p, z, d_i) * sc - 2:
+                continue
+            for sd in ("left", "right"):
+                span = (z - tw, z - 0.2 / sc) if sd == "left" else (z + 0.2 / sc, z + tw + 0.5 / sc)
+                g_ = gap(*span) * sc
+                if g_ >= 0.3:
+                    inside.append((min(g_, 1.0), sd == "left", -abs(z - (z0 + z1) / 2), z, sd, g_))
+        if inside:
+            best_in = max(inside)
+            return best_in[3], best_in[4], best_in[5]
     if long_txt:  # 文字在轮廓外：尺寸线离开中点数字区（离不开的短段照常取中）
         z, sd = min(((z, sd) for z in cands for sd in ("left", "right")), key=key)
         if not key((z, sd))[0] and not key((z, sd))[1]:
@@ -3360,6 +3377,39 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                                                      "end": (round(tx + w, 2), round(ty, 2)), "dir": 1}}
     _xh_callout_flip(plan)
     _shaft_section_dim_sheet(plan, p)
+    _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
+
+
+def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bot: float, sc: float) -> None:
+    """伸出轮廓的直径尺寸线（竖直）正好穿过上方键槽/环槽尺寸行或下方链式尺寸行的数字时，
+    该数字在自己的尺寸线上偏到直径线一侧（GB/T 4458.4 允许数字不居中），写入 extra["text_x"]。"""
+    lines = []  # (x, 方向)
+    for j, (_, d_) in enumerate(p.shaft_steps):
+        ov = shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j))
+        if ov:
+            lines.append((X(shaft_dia_z(p, j, sc)), ov))
+    if not lines:
+        return
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.kind != "linear" or d.axis != "z" or "sheet_pts" not in ex or d.ref == "overall_z":
+            continue
+        below = d.ref.startswith("step")
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        tw = text_width(d.text, 3.5)
+        if tw > xb - xa - 1:
+            continue  # 放不下的数字已移到界线外
+        xc = (xa + xb) / 2
+        hit = [x for x, ov in lines if (ov == "down") == below and abs(x - xc) < tw / 2 + 1]
+        if not hit:
+            continue
+        x = hit[0]
+        cands = [x - tw / 2 - 1.5, x + tw / 2 + 1.5]
+        ok = [c for c in cands if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8
+              and not any(abs(c - x2) < tw / 2 + 1 for x2, ov2 in lines if (ov2 == "down") == below)]
+        if ok:
+            c = min(ok, key=lambda c_: abs(c_ - xc))
+            d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:

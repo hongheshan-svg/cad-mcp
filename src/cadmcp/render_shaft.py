@@ -20,7 +20,7 @@ def _arrow(s, x, y, dx, dy, size=2.2):
     s.parts.append("<polygon points='" + " ".join(f"{a:.2f},{s.y(b):.2f}" for a, b in pts) + "' fill='#111'/>")
 
 
-def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None):
+def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None, text_x=None):
     """水平尺寸：两条尺寸界线 + 双箭头尺寸线 + 居中文字。文字比两界线间距宽时移到界线之外（默认右侧；
     右侧落在同一行别的尺寸 busy=[(x0, x1)] 上时改到左侧），尺寸线延长到文字下。"""
     from .render_svg import _text_w
@@ -39,7 +39,7 @@ def _hdim(s, xa, xb, y_from_a, y_from_b, y, text, busy=None):
             s.text(x1 + 1.5, y + 0.8, text, 3.5)
     else:
         s.line(xa, y, xb, y, THIN)
-        s.text((xa + xb) / 2, y + 0.8, text, 3.5, "middle")
+        s.text((xa + xb) / 2 if text_x is None else text_x, y + 0.8, text, 3.5, "middle")
     _arrow(s, xa, y, -1, 0)
     _arrow(s, xb, y, 1, 0)
 
@@ -399,13 +399,15 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             elif d.ref.startswith("step"):
                 y = y_bot - 15
                 _hdim(s, xa, xb, cy - radius_at(za + 1e-6) * sc, cy - radius_at(zb - 1e-6) * sc, y, d.text,
-                      busy=_row_text_spans(plan, d, P, lambda d2: d2.ref.startswith("step")))
+                      busy=_row_text_spans(plan, d, P, lambda d2: d2.ref.startswith("step")),
+                      text_x=(d.extra or {}).get("text_x"))
             else:  # 键槽、环槽定位：画在主视图上方
                 tr_ = (d.extra or {}).get("track", 0)
                 y = y_top + 14 - 7 * tr_
                 row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
                                        and (d2.extra or {}).get("track", 0) == tr_)
-                _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_)
+                _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_,
+                      text_x=(d.extra or {}).get("text_x"))
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):
             from .detailing import bore_dia_overflow, bore_dia_place
             k = int(d.ref[4:].split("_")[0])
