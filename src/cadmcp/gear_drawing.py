@@ -114,7 +114,10 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "end": (round(elbow[0] - tw - 1, 2), round(elbow[1], 2)),
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
         if kw is not None and bore is not None:
-            hk = hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev)
+            hk = hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev,
+                                 rings=(bore.max_dia / 2 * sc, df / 2 * sc, da / 2 * sc),
+                                 circles=tuple((ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc)
+                                               for h in parts["others"] for i in h.instances))
             dims += hk
             if g.get("blank_runout") and spec.dimensions != "none":
                 # 轮毂键槽对称度（对基准 A 轴孔，GB/T 1184 8 级按键宽）：箭头从右侧与槽宽尺寸线对齐，框格在齿顶圆右侧
@@ -146,9 +149,13 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         rb = bore.max_dia / 2
         nx, ny = math.cos(math.radians(150)), math.sin(math.radians(150))
         at = (ex + rb * sc * nx, cy + rb * sc * ny)
+        half = 4.5 * (abs(nx) + abs(ny))  # 字母方框沿径向的半宽
+        reach = 7.0
+        if rb * sc + reach + 3.5 + half + 0.5 > df / 2 * sc:  # 腹板放不下（小齿轮）：方框放到齿顶圆外
+            reach = da / 2 * sc - rb * sc - 3.5 + half + 1.0
         dims.append(Dim("left", "datum", None, None, "A", "datum:A", None, {
-            "normal": (round(nx, 4), round(ny, 4)), "sheet_at": (round(at[0], 2), round(at[1], 2)),
-            "sheet_pos": (round(at[0] + 10 * nx, 2), round(at[1] + 10 * ny, 2))}))
+            "normal": (round(nx, 4), round(ny, 4)), "sheet_at": (round(at[0], 2), round(at[1], 2)), "reach": round(reach, 2),
+            "sheet_pos": (round(at[0] + (reach + 3) * nx, 2), round(at[1] + (reach + 3) * ny, 2))}))
         cells = ["↗", f"{tr:g}", "A"]
         # 齿顶圆径向圆跳动：箭头垂直指向主视图上齿顶线
         tip = (xl + b * sc * 0.3, cy + da / 2 * sc)

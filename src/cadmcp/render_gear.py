@@ -110,7 +110,7 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
         elif d.kind == "roughness" and "sheet_at" in ex_:
             render_gdt.draw(s, "roughness", *ex_["sheet_at"], ex_, d.text)
         elif d.kind == "datum" and "sheet_at" in ex_:
-            render_gdt.datum(s, *ex_["sheet_at"], tuple(ex_["normal"]), d.text)
+            render_gdt.datum(s, *ex_["sheet_at"], tuple(ex_["normal"]), d.text, ex_.get("reach", 7.0))
         elif d.kind == "gtol" and ex_.get("elbow_h"):
             from .detailing import draw_elbow_fcf
             draw_elbow_fcf(s, ex_)

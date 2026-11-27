@@ -28,6 +28,7 @@ class _Svg:
         self.leaders: list[tuple[float, float, float, float]] = []  # 细实线（引线/尺寸线/界线），查穿字
         self.thins: list[tuple[float, float, float, float]] = []  # 线宽 = THIN 的实线（尺寸线、尺寸界线、短引线）
         self.outlines: list[tuple[float, float, float, float]] = []  # 粗实线（可见轮廓），查压字
+        self.circles: list[tuple[float, float, float]] = []  # 实线圆（轮廓圆、孔、细实线齿根圆等），查压字
         self.text_bg = False  # True：文字下垫白底（剖面线遇尺寸数字断开，GB/T 4457.5）
 
     def collisions(self) -> list[tuple[str, str]]:
@@ -52,10 +53,18 @@ class _Svg:
             bx0, by0, bx1, by1 = x0 + pad, y0 + pad, x1 - pad, y1 - pad
             if bx1 <= bx0 or by1 <= by0:
                 continue
-            for (ax, ay, cx, cy) in self.leaders + self.outlines + self.thins:
-                if _seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1):
-                    out.append(s_)
-                    break
+            hit = any(_seg_hits_box(ax, ay, cx, cy, bx0, by0, bx1, by1)
+                      for (ax, ay, cx, cy) in self.leaders + self.outlines + self.thins)
+            if not hit:
+                for (cx, cy, r) in self.circles:  # 圆周穿过文字框：圆心到框的最近距离 < r < 最远距离
+                    dx = max(bx0 - cx, 0.0, cx - bx1)
+                    dy = max(by0 - cy, 0.0, cy - by1)
+                    far = max(abs(bx0 - cx), abs(bx1 - cx)) ** 2 + max(abs(by0 - cy), abs(by1 - cy)) ** 2
+                    if dx * dx + dy * dy < r * r < far:
+                        hit = True
+                        break
+            if hit:
+                out.append(s_)
         return out
 
     def y(self, y: float) -> float:
@@ -90,6 +99,8 @@ class _Svg:
         self.poly([(x, y), (x + w, y), (x + w, y + h), (x, y + h)], sw)
 
     def circle(self, cx, cy, r, w=THICK, dash=None):
+        if not dash and w >= THIN:
+            self.circles.append((cx, cy, r))
         da = f" stroke-dasharray='{dash}'" if dash else ""
         self.parts.append(f"<circle cx='{cx:.2f}' cy='{self.y(cy):.2f}' r='{r:.2f}' fill='none' "
                           f"stroke='{STROKE}' stroke-width='{w}'{da}/>")

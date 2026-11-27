@@ -800,7 +800,55 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         precision_sheet(plan, p)
         overall_dim_sheet(plan, p)
         _face_ra_slide(plan, p)
+        _hole_ra_retry(plan, p)
     return plan
+
+
+def _hole_ra_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """孔的表面结构（孔左/右侧引出）仍压到别的孔、标注时：左右两侧 × 引出长度逐个用预览出图检查，取冲突最少的
+    （不比原位置好则不动）。sheet_at 在孔壁象限点上，sheet_pos 为引出端。"""
+    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:hole:") and d.at is not None
+          and d.view in VIEW_AXES and not (d.extra or {}).get("in_section")
+          and tuple((d.extra or {}).get("normal", ())) in ((-1, 0), (1, 0)) and "sheet_at" in (d.extra or {})]
+    if not ds:
+        return
+    from .render_svg import render
+    vmap = {v.type: v for v in plan.views}
+
+    def bad() -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        return len(out["crossings"]) + len(out["collisions"])
+    for d in ds:
+        h = next((h for h in p.holes if h.name == d.ref[len("ra:hole:"):]), None)
+        if h is None:
+            continue
+        v = vmap[d.view]
+        at0, ex0 = d.at, dict(d.extra)
+        best = (bad(), at0, ex0)
+        if best[0] == 0:
+            continue
+        nx0 = ex0["normal"][0]
+        left = at0 if nx0 < 0 else (at0[0] - h.max_dia, at0[1])
+        rs = h.max_dia / 2 * v.scale
+        for nx, at_ in ((-1, left), (1, (left[0] + h.max_dia, left[1]))):
+            r0 = ra_reach(nx, d.text, rs)
+            for k in range(8):
+                reach = r0 + 3 * k
+                ax, ay = _uv_sheet(v, p.bbox, at_)
+                d.at = at_
+                d.extra = {**ex0, "normal": (nx, 0), "reach": reach, "sheet_at": (round(ax, 2), round(ay, 2)),
+                           "sheet_pos": (round(ax + nx * reach, 2), round(ay, 2))}
+                n = bad()
+                if n < best[0]:
+                    best = (n, d.at, dict(d.extra))
+                if n == 0:
+                    break
+            if best[0] == 0:
+                break
+        _, d.at, d.extra = best
 
 
 def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -1898,7 +1946,9 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         for b in hub_kws:
             k = b["kw"]
             hk = hub_keyway_dims("left", ex_, ey_, scale, b["d"] / 2, k["width"],
-                                 k["top"], k["name"], lambda t: t if spec.fit_deviations else t.split("(")[0])
+                                 k["top"], k["name"], lambda t: t if spec.fit_deviations else t.split("(")[0],
+                                 rings=tuple(d_ / 2 * scale for _, d_ in p.shaft_steps)
+                                 + tuple(b_["d"] / 2 * scale for b_ in p.shaft_bores))
             dims += hk
             for g in dims:  # 轮毂键槽对称度：箭头从右侧与槽宽尺寸线对齐，框格在端视图外圆右侧
                 if g.kind == "gtol" and (g.extra or {}).get("keyway") == k["name"]:
@@ -2796,8 +2846,8 @@ def _seg_box(p1, p2, b) -> bool:
 
 def ra_reach(nx: float, text: str, hole_r: float | None = None) -> float:
     """侧向表面结构符号的引出长度：向左引出时符号（√ + 向右的 Ra 横线）整体须落在轮廓外，引线加长；
-    孔左侧（hole_r = 孔在图上的半径）小孔时 Ra 横线高出孔顶，不必加长。"""
-    if nx >= 0 or hole_r is not None and hole_r < 7:
+    孔左侧（hole_r = 孔在图上的半径）小孔时 Ra 值文字（底边约在尖端上方 4.6 mm）高出孔顶，不必加长。"""
+    if nx >= 0 or hole_r is not None and hole_r < 4.2:
         return 8.0
     return 8.0 + 2 * 4.2 * 0.58 + len(text) * 2.0 + 3
 
@@ -2936,12 +2986,16 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     ha_, va_ = VIEW_AXES[v.type]
                     pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pk["profile"].outline]
                     feat.append((min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts)))
-        for bs in part.bosses:  # 凸台：文字可放在凸台顶面内，只是不压轮廓线（轮廓按小段计）
-            v = vmap.get(bs["face"])
+        outl = [(bs["face"], bs["profile"]) for bs in part.bosses]  # 凸台：文字可放在凸台顶面内，只是不压轮廓线（轮廓按小段计）
+        prof = getattr(part, "profile", None)
+        if prof is not None and prof.shape != "rect" and not part.shaft_steps:  # 圆盘/异形底座外轮廓（矩形与视图框重合，已算视图）
+            outl += [("top", prof), ("bottom", prof)]
+        for face_, pr_ in outl:
+            v = vmap.get(face_)
             if v is None:
                 continue
             ha_, va_ = VIEW_AXES[v.type]
-            pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in bs["profile"].drawn()]
+            pts = [_uv_sheet(v, bbox, (vc((x, y, 0), ha_), vc((x, y, 0), va_))) for x, y in pr_.drawn()]
             for q1, q2 in zip(pts, pts[1:] + pts[:1]):
                 for k in range(max(1, math.ceil(math.dist(q1, q2) / 4))):  # 长边切成 ≤ 4 mm 的小段
                     t0, t1 = k / max(1, math.ceil(math.dist(q1, q2) / 4)), (k + 1) / max(1, math.ceil(math.dist(q1, q2) / 4))
@@ -3379,28 +3433,52 @@ def _flange_hole_dims(p: ResolvedPart, lv: "ViewPlan", D: float) -> list[Dim]:
     return out
 
 
-def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev) -> list[Dim]:
+def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev,
+                    rings: tuple[float, ...] = (), circles: tuple[tuple[float, float, float], ...] = ()) -> list[Dim]:
     """端视图上的轮毂键槽尺寸（GB/T 1095）：槽宽 b（JS9）与 d + t2（上偏差按 b）。键槽在端视图上方。
-    ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。"""
+    ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。
+    rings = 端视图上同心实线圆的图上半径（齿根圆、齿顶圆、外圆…）：文字压圆时槽宽文字上移、槽深尺寸线外移。"""
     from .standards import tol_text
+
+    cs = [(ex, cy, r) for r in rings] + list(circles)  # circles = 端视图上其他实线圆（分布孔等）(x, y, r)
+
+    def on_ring(b):
+        for x0, y0, r in cs:
+            dx = max(b[0] - x0, 0.0, x0 - b[2])
+            dy = max(b[1] - y0, 0.0, y0 - b[3])
+            far = max(abs(b[0] - x0), abs(b[2] - x0)) ** 2 + max(abs(b[1] - y0), abs(b[3] - y0)) ** 2
+            if (dx * dx + dy * dy) ** 0.5 - 0.6 < r < far ** 0.5 + 0.6:
+                return True
+        return False
     yk = cy + top * sc
     tw_ = dev(tol_text(w, "JS9"))
     tx = ex - w / 2 * sc - 1.5 - text_width(tw_, 3.5) / 2  # 文字放在左尺寸界线之外，不压中心线与界线
+    yt = yk + 8
+    for k in range(60):  # 槽宽文字压同心圆：逐 1 mm 上移（尺寸线随之，界线加长）
+        if not on_ring((tx - text_width(tw_, 3.5) / 2, yk + 8 + k - 0.7, tx + text_width(tw_, 3.5) / 2, yk + 8 + k + 2.8)):
+            yt = yk + 8 + k
+            break
     yw = (yk + cy + (rb * rb - w * w / 4) ** 0.5 * sc) / 2  # 键槽侧壁中点
     out = [Dim(view, "linear", "x", w, tw_, f"{name}_w", None, {
         "sheet_pts": [(round(ex - w / 2 * sc, 2), round(yk, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
         "pick_pts": [(round(ex - w / 2 * sc, 2), round(yw, 2)), (round(ex + w / 2 * sc, 2), round(yw, 2))],
-        "sheet_pos": (round(tx, 2), round(yk + 8, 2)), "orient": "h"})]
+        "sheet_pos": (round(tx, 2), round(yt, 2)), "orient": "h"})]
     t = 0.1 if w <= 6 else 0.2  # GB/T 1095 轮毂槽深 t2 上偏差
     tt = dev(f"{top + rb:g}(+{t:g}/0)")
     half = text_width(tt, 3.5) / 2
     ty = max(cy + (top - rb) / 2 * sc, cy + half + 1.5)  # 文字不压水平中心线
     if ty + half > yk - 1:  # 也不压槽底的尺寸界线：放不下就移到尺寸界线之外（上方），尺寸线延长
         ty = yk + 1.5 + half
+    xt = ex + rb * sc + 8
+    for k in range(80):  # 槽深文字压同心圆：尺寸线逐 1 mm 外移
+        x_ = ex + rb * sc + 8 + k
+        if not on_ring((x_ - 2.8, ty - half, x_ + 0.35, ty + half)) and all(abs(x_ - ex - r) > 1.5 for r in rings):  # 也不贴着同心圆切过
+            xt = x_
+            break
     out.append(Dim(view, "linear", "y", top + rb, tt, f"{name}_t", None, {
         "sheet_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex + w / 2 * sc, 2), round(yk, 2))],
         "pick_pts": [(round(ex, 2), round(cy - rb * sc, 2)), (round(ex, 2), round(yk, 2))],  # 孔底象限点、槽底中点
-        "sheet_pos": (round(ex + rb * sc + 8, 2), round(ty, 2)), "orient": "v"}))
+        "sheet_pos": (round(xt, 2), round(ty, 2)), "orient": "v"}))
     return out
 
 
@@ -3546,16 +3624,20 @@ def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) 
                 w_ = sum(_widths([g["symbol"], g["zone"], *g["datums"]])) / sc
                 fspans.append((zl[0] - 3.5 / sc - 0.5 / sc, zl[0] - 3.5 / sc + w_ + 4.5 / sc))
 
+    # 外轴肩线只画到孔壁、不进孔内：孔上无基准符号时尺寸线离它 1 mm 即可（有基准符号时 3 mm）
+    sh_gap = 3.0 if any(x["target"] == f"bore:{k}" for x in p.datums) else 1.0
+
     def key(z):
         clear = min([abs(z - c) * sc for c in outer + others] or [1e9])
         text_ok = all(not (z - 4.7 / sc <= x <= z + 0.3 / sc) for x in steps_ + outer + others)  # 文字竖写在线左侧
-        text_ok = text_ok and all(abs(z - x) * sc >= 3.0 for x in shoulders)  # 线（及内孔基准符号）不与轴肩线重合
+        text_ok = text_ok and all(abs(z - x) * sc >= sh_gap for x in shoulders)  # 线（及内孔基准符号）不与轴肩线重合
         want = 7.0 if (z1 - z0) * sc >= 16 else 4.0  # 短孔（沉孔）只求不压线
         free_ = not any(a_ < z < b_ for a_, b_ in fspans)
-        # 横孔（孔圆、引线从孔圆右上引出）：线与左侧竖写文字都不压
-        xh_ok = all(not (h["z"] - h["hole"] / 2 - 1.0 / sc < z + 0.3 / sc and z - 4.7 / sc < h["z"] + h["hole"] / 2 + 3.0 / sc)
+        # 横孔（孔圆；引线由引出标注排布另避）：线与左侧竖写文字都不压孔圆
+        xh_ok = all(not (h["z"] - h["hole"] / 2 - 1.0 / sc < z + 0.3 / sc and z - 4.7 / sc < h["z"] + h["hole"] / 2 + 0.8 / sc)
                     for h in p.cross_holes)
-        return (text_ok, min(clear, want), xh_ok, free_, min(z - z0, z1 - z) * sc >= 3, -abs(z - (z0 + z1) / 2))
+        return (text_ok, clear >= min(4.0, want), xh_ok, min(clear, want), free_, min(z - z0, z1 - z) * sc >= 3,
+                -abs(z - (z0 + z1) / 2))  # 离外径线 ≥ 4 mm 即可时先避横孔
     return max(cands, key=key)
 
 
@@ -4228,6 +4310,15 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     if not any(x["target"] == f"step:{i}" for x in p.datums):
         zones += [((f["z0"] + f["z1"]) / 2 + 1.5 / sc, 3.0 / sc) for f in p.shaft_features
                   if f["kind"] == "keyway" and f["step"] == i]
+    lt = text_width(_shaft_dia_label(p, i), 3.5) / sc / 2  # 竖写直径文字半长（以轴线为中，模型 mm）
+    for f in p.shaft_features:  # 局部放大图的细实线圆（主视图上，圈住环槽/挤的挡圈槽）：竖写文字不压圆周
+        if f["kind"] == "groove" and (f["type"] == "grinding" or circlip_crowded(f, sc)):
+            _, rm_ = detail_geom(f, sc)
+            if f["d"] / 2 - rm_ < lt + 0.5 / sc:
+                zc_ = (f["z0"] + f["z1"]) / 2
+                zones.append((zc_, rm_ + tw))
+                w_ = max(0.0, rm_ ** 2 - max(0.0, f["d"] / 2 - lt) ** 2) ** 0.5  # 圆周与文字竖带相交的轴向范围
+                obst.append((zc_ - w_ - 0.3 / sc, zc_ + w_ + 0.3 / sc))
     fspans = []  # 框格横向范围（模型 z）：伸出的直径线尽量不从框格里穿过（框格平移有限，见 _shaft_gtol_frame_dx）
     if p.geotols:  # 几何公差框格的竖引线（从框格行下到轮廓 / 轴肩水平引线）：伸出轮廓的竖写文字别压上去
         zones += [(zl, 1.0 / sc) for zl, _ in shaft_gtol_layout(p, sc).values() if z0 - 5 / sc <= zl <= z1 + 5 / sc]

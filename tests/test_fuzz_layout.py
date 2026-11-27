@@ -164,6 +164,8 @@ SPECS = [
     '{"name": "F103", "part_no": "F-103", "title": "测试板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 200, "height": 80}, "thickness": 30}, "features": [{"feature": "hole", "name": "H0", "type": "tapped", "size": "M10", "positions": [[-80, -20], [-80, 20], [80, -20], [80, 20]], "depth": "through"}, {"feature": "hole", "name": "H1", "type": "simple", "size": 10, "positions": [[79, 0]], "tolerance": "H7"}, {"feature": "hole", "name": "PC", "type": "tapped", "size": "M5", "pattern": {"kind": "circular", "radius": 24, "count": 4, "start_angle": 45}}, {"feature": "hole", "name": "SL", "type": "slot", "size": "M6", "slot_length": 10, "slot_angle": 0, "positions": [[-70, 28]]}, {"feature": "fillet", "name": "E1", "edges": "top_outer", "size": 5}], "auto_precision": true}',
     '{"name": "D0", "part_no": "D-0", "title": "齿轮", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 48.0}, "thickness": 15}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 20, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "pocket", "name": "KW", "face": "top", "depth": "through", "profile": {"shape": "rect", "width": 6, "height": 4.8, "center": [0, 10.4]}}], "gear": {"module": 1.5, "teeth": 30}, "datums": [{"name": "A", "target": "hole:Bore"}], "tolerances": [{"type": "circular_runout", "value": 0.02, "target": "face:top", "datums": ["A"]}], "roughness": [{"target": "hole:Bore", "ra": 1.6}, {"target": "face:top", "ra": 3.2}]}',
     '{"name": "D137", "part_no": "D-137", "title": "齿轮", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 33.0}, "thickness": 20}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 20, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "pocket", "name": "KW", "face": "top", "depth": "through", "profile": {"shape": "rect", "width": 6, "height": 4.8, "center": [0, 10.4]}}], "gear": {"module": 1.5, "teeth": 20}}',
+    '{"name": "D1", "part_no": "D-1", "title": "端盖", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 80}, "thickness": 8}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 35, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "hole", "name": "PC", "type": "clearance", "size": "M8", "pattern": {"kind": "circular", "radius": 31, "count": 8, "start_angle": 30}}], "auto_precision": true}',
+    '{"name": "D29", "part_no": "D-29", "title": "齿轮", "material": "45#", "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 105.0}, "thickness": 30}, "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 25, "positions": [[0, 0]], "tolerance": "H7"}, {"feature": "pocket", "name": "KW", "face": "top", "depth": "through", "profile": {"shape": "rect", "width": 8, "height": 5.3, "center": [0, 13.15]}}, {"feature": "hole", "name": "PC", "type": "clearance", "size": "M5", "pattern": {"kind": "circular", "radius": 28, "count": 6, "start_angle": 45}}], "gear": {"module": 2.5, "teeth": 40}}',
 ]
 
 
@@ -539,3 +541,18 @@ def test_plate_face_ra_slides_off_title_and_leader(js):
     assert abs(d.at[1] - y_edge) < 1e-9
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_crossings_include_circles():
+    """压字检查包含实线圆：圆周穿过文字框算压字；文字整个在圆内/圆外不算；点画线圆（分度圆、节圆）不算。"""
+    from cadmcp.render_svg import _Svg
+    s = _Svg(100, 100)
+    s.text(10, 50, "Φ20", 3.5)
+    s.circle(10, 40, 11.0)  # 圆周穿过文字
+    assert s.crossings() == ["Φ20"]
+    s = _Svg(100, 100)
+    s.text(10, 50, "Φ20", 3.5)
+    s.circle(12, 51, 30.0)  # 文字整个在圆内
+    s.circle(80, 80, 5.0)  # 远处
+    s.circle(10, 40, 11.0, dash="4,1,1,1")  # 点画线圆
+    assert s.crossings() == []
