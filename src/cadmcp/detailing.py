@@ -1448,6 +1448,27 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if d.ref.startswith("XH") and any(o is not d and min(d.at) < max(o.at) - 1e-6 and min(o.at) < max(d.at) - 1e-6
                                           and not (o.extra or {}).get("track") for o in top):
             d.extra = {**(d.extra or {}), "track": 1}
+
+    def _tspan(o):  # 同一行尺寸数字的轴向占位（模型 z）：放得下居中，放不下按整段
+        a_, b_ = sorted(o.at)
+        tw_ = text_width(o.text, 3.5) / scale
+        return ((a_ + b_) / 2 - tw_ / 2, (a_ + b_) / 2 + tw_ / 2) if tw_ <= b_ - a_ - 1 / scale else (a_, b_)
+    for d in top:  # 很短的定位尺寸：数字须移到界线外，而左右两侧都被同行数字占着 → 放到低一道
+        a, b = sorted(d.at)
+        tw = text_width(d.text, 3.5) / scale
+        if (d.extra or {}).get("track") or tw <= b - a - 1 / scale:
+            continue
+        row = [_tspan(o) for o in top if o is not d and not (o.extra or {}).get("track")]
+        row += [(z_ - 0.3 / scale, z_ + 0.3 / scale) for o in top if o is not d and not (o.extra or {}).get("track")
+                for z_ in o.at]  # 尺寸界线
+        row += [(shaft_dia_z(p, j_, scale) - 4.5 / scale, shaft_dia_z(p, j_, scale) + 4.5 / scale)
+                for j_ in range(len(p.shaft_steps))
+                if shaft_dia_overflow(p, j_, scale, _shaft_dia_label(p, j_)) == "up"]  # 向上伸出的直径线
+        hit_r = any(lo < b + (1.5 + tw + 1) / scale and hi > b + 0.5 / scale for lo, hi in row)
+        hit_l = any(lo < a - 0.5 / scale and hi > a - (1.5 + tw + 1) / scale for lo, hi in row)
+        low = [o for o in top if (o.extra or {}).get("track") == 1]
+        if hit_r and hit_l and not any(min(o.at) < b + (2 + tw) / scale and a - (2 + tw) / scale < max(o.at) for o in low):
+            d.extra = {**(d.extra or {}), "track": 1}
     if spec.dimensions != "none":
         dims += _precision_dims(p, views, {"front"}, True)
         nrow = max((r for _, r in shaft_gtol_layout(p, scale).values()), default=0)

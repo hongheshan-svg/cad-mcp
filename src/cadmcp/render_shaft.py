@@ -49,11 +49,12 @@ def _row_text_spans(plan, d, P, same_row) -> list[tuple[float, float]]:
     from .render_svg import _text_w
     out = []
     for d2 in plan.dims:
-        if d2 is d or d2.kind != "linear" or d2.at is None or not same_row(d2):
+        if d2 is d or d2.view != d.view or d2.kind != "linear" or d2.at is None or not same_row(d2):
             continue
         a, b = sorted((P(d2.at[0], 0)[0], P(d2.at[1], 0)[0]))
         tw = _text_w(d2.text, 3.5)
         out.append(((a + b) / 2 - tw / 2, (a + b) / 2 + tw / 2) if tw <= b - a - 1 else (a, b))
+        out += [(a - 0.3, a + 0.3), (b - 0.3, b + 0.3)]  # 尺寸界线
     return out
 
 
@@ -387,6 +388,12 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 return r
         return 0.0
 
+    from .detailing import _shaft_dia_label, shaft_dia_overflow, shaft_dia_z
+    up_lines = []  # 向上伸出轮廓的直径尺寸线（及其竖写文字）：上方尺寸行的数字不放在这里
+    for j_ in range(len(part.shaft_steps)):
+        if shaft_dia_overflow(part, j_, sc, _shaft_dia_label(part, j_)) == "up":
+            x_ = P(shaft_dia_z(part, j_, sc), 0)[0]
+            up_lines.append((x_ - 4.5, x_ + 4.5))
     for d in plan.dims:
         if d.view != "front":
             continue
@@ -405,7 +412,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                 tr_ = (d.extra or {}).get("track", 0)
                 y = y_top + 14 - 7 * tr_
                 row_ = _row_text_spans(plan, d, P, lambda d2: d2.ref != "overall_z" and not d2.ref.startswith("step")
-                                       and (d2.extra or {}).get("track", 0) == tr_)
+                                       and (d2.extra or {}).get("track", 0) == tr_) + up_lines
                 _hdim(s, xa, xb, cy + radius_at(za) * sc, cy + radius_at(zb) * sc, y, d.text, busy=row_,
                       text_x=(d.extra or {}).get("text_x"))
         elif d.kind == "diameter" and d.at is not None and d.ref.startswith("bore"):

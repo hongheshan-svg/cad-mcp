@@ -44,8 +44,6 @@ def test_fuzz_layout_clean(js):
     _, out = render(plan, p)
     from cadmcp.detailing import view_overlaps
     assert view_overlaps(plan) == []
-    if json.loads(js)["name"] == "S58":  # 三个键槽断面挤在一起：推开后不重叠；剩短段数字相压另案
-        return
     assert out["crossings"] == [] and out["collisions"] == []
 
 
