@@ -4041,6 +4041,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         obst_o = [ob for ob in obst if not (abs(ob[0] - own[0]) < 0.01 and abs(ob[1] - own[1]) < 0.01)]  # 不含自身原位置
         cands_ = [(ax - dx_ if right else ax + dx_, -1 if right else 1) for dx_ in (6, 10, 16)]  # 反向书写
         cands_ += [(b + 2.5, 1) for a, b, top in lines if a - 0.3 < lbox(lb)[2] and lbox(lb)[0] < b + 0.3]  # 平移到直径线右侧
+        ay_ = lb["anchor"][1]
+        cands_ = [(e_, d_) for e_, d_ in cands_ if abs(e_ - ax) <= 1.2 * (y - ay_)]  # 引线不能太平（穿过一串尺寸/剖切符号）
         for ex_, dir_ in cands_:
             nl = {**lb, "elbow": (ex_, y), "end": (ex_ + dir_ * w, y),
                   "text_at": ((ex_ if dir_ > 0 else ex_ - w) + 0.5, lb["text_at"][1]), "dir": dir_}
