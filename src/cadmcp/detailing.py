@@ -3944,6 +3944,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
     W, H = plan.sheet_size
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
+    tboxes = []  # 向上伸出的直径文字框
     for d in plan.dims:
         if d.view != "front" or d.kind != "diameter" or not d.ref.startswith("step"):
             continue
@@ -3986,6 +3987,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
             vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), y0, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
+        tboxes.append((x0, start, x1, start + tw))
     _shaft_num_dodge_vlines(plan, vlines)
     # 延长的直径线（及文字）穿过上方引出标注（环槽/退刀槽/倒角）文字：该标注反向书写（引线斜向另一侧）
     xl = {}
@@ -4011,16 +4013,19 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         w = abs(lb["end"][0] - lb["elbow"][0])
         y = lb["elbow"][1]
         right = lb["end"][0] >= lb["elbow"][0]
-        for dx_ in (6, 10, 16):
-            ex_ = ax - dx_ if right else ax + dx_
-            nl = {**lb, "elbow": (ex_, y), "end": (ex_ - w if right else ex_ + w, y),
-                  "text_at": ((ex_ - w if right else ex_) + 0.5, lb["text_at"][1]), "dir": -1 if right else 1}
+        own = (min(lb["elbow"][0], lb["end"][0]), y - 0.6)
+        obst_o = [ob for ob in obst if not (abs(ob[0] - own[0]) < 0.01 and abs(ob[1] - own[1]) < 0.01)]  # 不含自身原位置
+        cands_ = [(ax - dx_ if right else ax + dx_, -1 if right else 1) for dx_ in (6, 10, 16)]  # 反向书写
+        cands_ += [(b + 2.5, 1) for a, b, top in lines if a - 0.3 < lbox(lb)[2] and lbox(lb)[0] < b + 0.3]  # 平移到直径线右侧
+        for ex_, dir_ in cands_:
+            nl = {**lb, "elbow": (ex_, y), "end": (ex_ + dir_ * w, y),
+                  "text_at": ((ex_ if dir_ > 0 else ex_ - w) + 0.5, lb["text_at"][1]), "dir": dir_}
             bx = lbox(nl)
             others = [lbox(q.extra["label"]) for q in labels if q is not o]
             if bx[0] > MARGIN + 2 and bx[2] < W - MARGIN - 2 and not hit_lines(bx) \
                     and not any(_box_hit(bx, ob) > 0 for ob in others) \
-                    and not any(_box_hit(bx, ob) > 0 for ob in obst if ob[1] > y - 5) \
-                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst + others if ob[3] - ob[1] > 2):
+                    and not any(_box_hit(bx, ob) > 0 for ob in obst_o if ob[1] > y - 5) \
+                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst_o + others + tboxes if ob[3] - ob[1] > 2):
                 o.extra = {**o.extra, "label": nl}
                 break
         else:  # 反向也不行：整条标注抬到这些直径线顶端之上（引线变长）
@@ -4030,8 +4035,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                   "text_at": (lb["text_at"][0], round(lb["text_at"][1] + dy_, 2))}
             bx = lbox(nl)
             others = [lbox(q.extra["label"]) for q in labels if q is not o]
-            if bx[3] < H - MARGIN - 2 and not hit_lines(bx) and not any(_box_hit(bx, ob) > 0 for ob in others + obst) \
-                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst + others if ob[3] - ob[1] > 2):
+            if bx[3] < H - MARGIN - 2 and not hit_lines(bx) and not any(_box_hit(bx, ob) > 0 for ob in others + obst_o) \
+                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst_o + others + tboxes if ob[3] - ob[1] > 2):
                 o.extra = {**o.extra, "label": nl}
             elif bx[3] >= H - MARGIN - 2:  # 上方没地方抬：记下缺口，由 plan_shaft_drawing 下移视图 / 换 A3 重排
                 plan._lift_need = max(getattr(plan, "_lift_need", 0.0), bx[3] - (H - MARGIN - 2) + 1)
