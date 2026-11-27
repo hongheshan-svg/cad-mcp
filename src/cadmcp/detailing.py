@@ -1241,9 +1241,17 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
             continue
         ax, ay = d.extra["sheet_at"]
         best = None
-        for dx in (10, 16, 24, 34, 46, -10 - WELD_SYM_W, -16 - WELD_SYM_W, -26 - WELD_SYM_W):
-            for dy in (12, 18, 26, 34, 42, 52, 62, -12, -18, -26, -34, -42, -52):
-                pos = (ax + dx, ay + dy)
+        cands = [(ax + dx, ay + dy) for dx in (10, 16, 24, 34, 46, -10 - WELD_SYM_W, -16 - WELD_SYM_W, -26 - WELD_SYM_W)
+                 for dy in (12, 18, 26, 34, 42, 52, 62, -12, -18, -26, -34, -42, -52)]
+        # 大视图里焊缝点四周都是构件：引到主视图外（上/下/左/右，逐行外推）
+        t_, b_, l_, r_ = cy + vh / 2, cy - vh / 2, cx - vw / 2, cx + vw / 2
+        for k in range(4):
+            for dx in (10, -10 - WELD_SYM_W, 24, -24 - WELD_SYM_W):
+                cands += [(ax + dx, t_ + 8 + 9 * k), (ax + dx, b_ - 34 - 9 * k)]
+            for dy in (8, -8, 18, -18):
+                cands += [(r_ + 22 + 12 * k, ay + dy), (l_ - 34 - WELD_SYM_W - 12 * k, ay + dy)]
+        for pos in cands:
+                dx, dy = pos[0] - ax, pos[1] - ay
                 bx = weld_symbol_box((ax, ay), pos)
                 if bx[0] < MARGIN + 2 or bx[2] > W - MARGIN - 2 or bx[1] < MARGIN + 2 or bx[3] > H - MARGIN - 2:
                     continue
@@ -1251,6 +1259,10 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
                 hard += sum(_seg_box(p1, p2, bx) for p1, p2 in leads)
                 hard += sum(_seg_box((ax, ay), pos, o) for o in balls + taken)
                 hard += sum(_seg_box(p1, p2, bx) for p1, p2 in wleads)  # 已放焊缝符号的引线不穿本符号
+                L_ = math.hypot(dx, dy) or 1.0  # 引线不穿本符号左端上下的焊脚文字（K3）
+                q_ = (pos[0] - dx / L_ * 1.2, pos[1] - dy / L_ * 1.2)
+                hard += sum(_seg_box((ax, ay), q_, tb) for tb in ((pos[0] + 0.3, pos[1] + 0.6, pos[0] + 6, pos[1] + 4.4),
+                                                                (pos[0] + 0.3, pos[1] - 4.4, pos[0] + 6, pos[1] - 0.6)))
                 soft = _box_hit(bx, view_box) > 0
                 key = (hard, soft, abs(dx) + abs(dy))
                 if best is None or key < best[0]:
