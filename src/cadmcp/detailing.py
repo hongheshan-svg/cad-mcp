@@ -3436,6 +3436,9 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
         zs += [f["z0"], f["z1"], p.step_z(f["step"])[0]]
         if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1:
             zs.append(Ltot)
+    for b in p.shaft_bores:  # 盲孔深度尺寸（孔口端面 → 孔底）的尺寸界线
+        if not b["through"]:
+            zs += [b["z0"], b["z1"]]
     for h in p.cross_holes:  # 横孔定位尺寸的两条尺寸界线（轴端段从轴端面量，其余从轴段起点）；标注引线 45° 斜出轮廓
         last = h["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1
         zs += [h["z"], Ltot if last else p.step_z(h["step"])[0]]
