@@ -5104,6 +5104,34 @@ def _shaft_gtol_leader_dodge(plan: "DrawingPlan", p: ResolvedPart) -> None:
             continue
         nx = min(ok, key=lambda x_: abs(x_ - ax))
         ex.update({"sheet_at": (round(nx, 2), ay), "sheet_pos": (round(nx, 2), py), "frame_dx": round(dx + nx - ax, 2)})
+    for d in plan.dims:  # 轴肩端面框格：竖段（x_leader → 框格行）穿过伸出的直径文字时，沿水平引线在小端一侧挪动，框格不动
+        ex = d.extra or {}
+        e = ex.get("elbow")
+        if d.view != "front" or d.kind != "gtol" or not e or "sheet_pos" not in ex or "cells" not in ex:
+            continue
+        lx, ey, xf = e["x_leader"], e["y"], e["x_face"]
+        py = ex["sheet_pos"][1]
+        hit = lambda x_: any(a < x_ < b and y0 < py and ey < y1 for a, b, y0, y1 in boxes)  # noqa: E731
+        if not hit(lx):
+            continue
+        sg = 1 if lx > xf else -1
+        i = int(ex.get("shoulder", -1))
+        if i < 0:
+            continue
+        da, db = p.shaft_steps[i][1], p.shaft_steps[i + 1][1]
+        Ls = p.shaft_steps[i if da < db else i + 1][0] * sc
+        w = sum(_widths(ex["cells"]))
+        dx = ex.get("frame_dx", 0.0)
+        f0 = lx - 3.5 - dx
+        others = [(o.extra.get("elbow") or {}).get("x_leader", o.extra["sheet_at"][0]) for o in plan.dims
+                  if o is not d and o.view == "front" and o.kind == "gtol" and "sheet_at" in (o.extra or {})]
+        cands = [xf + sg * (3.0 + k * 0.25) for k in range(int(max(0.0, Ls - 5.0) / 0.25) + 1)]
+        ok = [x_ for x_ in cands if f0 + 1.5 <= x_ <= f0 + w - 1.5 and not hit(x_) and all(abs(x_ - o_) >= 2.0 for o_ in others)]
+        if not ok:
+            continue
+        nx = min(ok, key=lambda x_: abs(x_ - lx))
+        d.extra = {**ex, "elbow": {**e, "x_leader": round(nx, 2)}, "sheet_pos": (round(nx, 2), py),
+                   "frame_dx": round(dx + nx - lx, 2)}
 
 
 def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
