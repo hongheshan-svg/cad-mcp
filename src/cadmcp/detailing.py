@@ -3539,7 +3539,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                                                      "text_at": (round(tx + 0.5, 2), round(ty + 0.8, 2)),
                                                      "end": (round(tx if dir_ < 0 else tx + w, 2), round(ty, 2)), "dir": dir_}}
     _shaft_label_rows(plan, p)
-    _xh_callout_flip(plan)
+    _xh_callout_flip(plan, p)
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
 
@@ -3618,7 +3618,7 @@ def _seg_cross(p1, p2, q1, q2) -> bool:
     return o(p1, p2, q1) * o(p1, p2, q2) < 0 and o(q1, q2, p1) * o(q1, q2, p2) < 0
 
 
-def _xh_callout_flip(plan: "DrawingPlan") -> None:
+def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None:
     """横孔引线布置：候选 右上 45° / 左上 45° / 再高一行（右、左），取第一个引线不穿尺寸数字、文字不压别的引线标注的。"""
     boxes = []
     for d in plan.dims:
@@ -3636,6 +3636,16 @@ def _xh_callout_flip(plan: "DrawingPlan") -> None:
         if v.type == "detail" and "label_at" in dt:
             lx, ly = dt["label_at"]
             boxes.append((lx - 0.5, ly - 1, lx + text_width(v.label, 3.5) + 0.5, ly + 4))
+    front = next((v for v in plan.views if v.type == "front"), None)
+    if p is not None and front is not None and p.shaft_steps:  # 键槽剖切位置符号（短粗线 + 字母），同 render_shaft
+        R_ = max(d_ for _, d_ in p.shaft_steps) / 2 * front.scale
+        yt_, yb_ = front.origin_on_sheet[1] + R_, front.origin_on_sheet[1] - R_
+        for v in plan.views:
+            f_ = next((k for k in p.shaft_features if k["name"] == v.target), None) if v.type == "section" else None
+            if f_ is None:
+                continue
+            mx = shaft_sx(front, None, (f_["z0"] + f_["z1"]) / 2)
+            boxes += [(mx - 0.6, yt_ + 3, mx + 4, yt_ + 8.5), (mx - 0.6, yb_ - 8.5, mx + 4, yb_ - 3)]
     placed = [(lb["text_at"][0], lb["elbow"][1], lb["text_at"][0] + text_width(d.text, 3.5), lb["elbow"][1] + 4.5)
               for d in plan.dims if d.kind == "callout" and not d.ref.startswith("xh:") and d.view == "front"
               and (lb := (d.extra or {}).get("label"))]
