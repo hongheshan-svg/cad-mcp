@@ -3835,8 +3835,17 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     zones = [((z0 + z1) / 2, (text_width(f"{z1 - z0:g}", 3.5) / 2 + 2.0) / sc)]
     zones += [((f["z0"] + f["z1"]) / 2, (text_width(f"{f['z1'] - f['z0']:g}", 3.5) / 2 + 2.0) / sc)
               for f in p.shaft_features if f["step"] == i and f["kind"] == "keyway"]
+    zones.append((Ltot / 2, (text_width(f"{Ltot:g}", 3.5) / 2 + 2.0) / sc))  # 总长数字（向下伸出移到尺寸行之下时会穿过）
+    fspans = []  # 框格横向范围（模型 z）：伸出的直径线尽量不从框格里穿过（框格平移有限，见 _shaft_gtol_frame_dx）
     if p.geotols:  # 几何公差框格的竖引线（从框格行下到轮廓 / 轴肩水平引线）：伸出轮廓的竖写文字别压上去
         zones += [(zl, 1.0 / sc) for zl, _ in shaft_gtol_layout(p, sc).values() if z0 - 5 / sc <= zl <= z1 + 5 / sc]
+        from .render_gdt import _widths
+        lay = shaft_gtol_layout(p, sc)
+        for g in p.geotols:
+            zl = lay.get(f"{g['type']}@{g['target']}")
+            if zl is not None:
+                w = sum(_widths([g["symbol"], g["zone"], *g["datums"]])) / sc
+                fspans.append((zl[0] - 3.5 / sc, zl[0] - 3.5 / sc + w))
 
     # 环槽定位尺寸（轴肩 → 槽）：伸出的直径线会竖穿其数字；线落在两界线之间时，一侧要留得下数字
     gpos = []
@@ -3854,8 +3863,9 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
         if long_txt:
             lo_, hi_ = span
             edge_ = min(max(a - hi_, lo_ - b) for a, b in [(z0, z0), (z1, z1)] + busy) * sc
+            in_frame = any(a - 0.5 / sc < z < b + 4.5 / sc for a, b in fspans)
             return (num_blocked(z, lo_, hi_) or any(not (hi_ < zc - zr or lo_ > zc + zr) for zc, zr in zones),
-                    edge_ < 2.5, abs(z - (z0 + z1) / 2), side == "right")
+                    edge_ < 2.5, in_frame, abs(z - (z0 + z1) / 2), side == "right")
         line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
         return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
