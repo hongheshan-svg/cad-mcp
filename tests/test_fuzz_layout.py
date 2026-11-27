@@ -472,3 +472,17 @@ def test_gear_flank_ra_on_pitch_line_inside_when_ext_blocked():
     assert f["z0"] < d.at[0] < f["z1"] and abs(d.at[1] - f["pd"] / 2) < 1e-9
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_gear_dia_line_leaves_room_for_inside_flank_ra():
+    """齿轮段夹在更粗的轴段之间（两端外延长线都不通）：直径尺寸线让出齿段左部，齿面 Ra 标在段内分度线上。"""
+    from cadmcp.detailing import flank_inside_reserve, shaft_dia_z
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S4", "part_no": "S-4", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0.5, "steps": [{"length": 50, "diameter": 45}, {"length": 40, "diameter": 50}, {"length": 30, "diameter": 60}]}, "features": [{"feature": "gear", "name": "Z1", "step": 1, "module": 2, "teeth": 23}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    f = next(f for f in p.shaft_features if f["kind"] == "gear")
+    a, b = flank_inside_reserve(p, f["step"], plan.scale)
+    assert not a <= shaft_dia_z(p, f["step"], plan.scale) <= b
+    d = next(d for d in plan.dims if d.ref.startswith("ra:flank:"))
+    assert "ext_z" not in d.extra and f["z0"] < d.at[0] < f["z1"]
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

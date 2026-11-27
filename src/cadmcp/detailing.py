@@ -3441,11 +3441,8 @@ def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | No
     return "down" if tw + 3 <= (R - d_out / 2) * sc + 15 - 1.5 else "up"
 
 
-def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[float, float]:
-    """齿面粗糙度（GB/T 4459.2：注在分度线延长线上）的符号尖端 z 与延长线起点（齿段端面 z）。
-    符号立在分度线之上（高约 8.4 mm、文字向右约 len·2 + 7 mm）。候选：齿段右端外（尖端离端面 3 mm）、
-    左端外（整个符号在齿段左侧）；符号覆盖范围内的轴段须比分度圆细 1.5 mm 以上（延长线与轮廓分得清），
-    伸到轴左端外时左端不能有引出标注；可用的取上方竖线（尺寸界线、伸出的直径线、框格引线）穿得少的，平局取右。都不行仍放右端。"""
+def _flank_ext_cands(p: ResolvedPart, f: dict, text: str, sc: float) -> list:
+    """齿面 Ra 在分度线延长线上（齿段两端外）的可用位置：[(尖端 z, 延长线起点 z, 侧 0=右/1=左, 外移档)]。"""
     w = _flank_ra_w(text)
 
     def clear(za, zb):
@@ -3466,6 +3463,32 @@ def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[flo
             cands.append((zr_, f["z1"], 0, k))
         if clear(zl_ - 2.6 / sc, f["z0"] - 1e-6) and zl_ - 2.6 / sc >= -30 / sc and not (zl_ - 2.6 / sc < 0 and start_busy):
             cands.append((zl_, f["z0"], 1, k))
+    return cands
+
+
+def flank_inside_reserve(p: ResolvedPart, i: int, sc: float) -> tuple[float, float] | None:
+    """第 i 段是齿轮段且两端外的延长线都不通时，齿面 Ra 要标在齿段内分度线上（靠左）：返回给它留出的轴向范围，
+    本段直径尺寸线不放进来（见 _shaft_dia_choice）；段太短留不出时 None。"""
+    f = next((g for g in p.shaft_features if g["kind"] == "gear" and g["step"] == i), None)
+    if f is None or p.gear is None:
+        return None
+    text = f"Ra {p.gear['flank_ra']:g}"
+    if _flank_ext_cands(p, f, text, sc):
+        return None
+    a = f["z0"]
+    b = f["z0"] + 0.15 * (f["z1"] - f["z0"]) + (_flank_ra_w(text) + 2.5) / sc
+    return (a, b) if f["z1"] - b >= 6 / sc else None
+
+
+def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[float, float]:
+    """齿面粗糙度（GB/T 4459.2：注在分度线延长线上）的符号尖端 z 与延长线起点（齿段端面 z）。
+    符号立在分度线之上（高约 8.4 mm、文字向右约 len·2 + 7 mm）。候选：齿段右端外（尖端离端面 3 mm）、
+    左端外（整个符号在齿段左侧）；符号覆盖范围内的轴段须比分度圆细 1.5 mm 以上（延长线与轮廓分得清），
+    伸到轴左端外时左端不能有引出标注；可用的取上方竖线（尺寸界线、伸出的直径线、框格引线）穿得少的，平局取右。都不行仍放右端。"""
+    w = _flank_ra_w(text)
+    zr = f["z1"] + 3 / sc
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    cands = _flank_ext_cands(p, f, text, sc)
     cands = [(*c, 0.0) for c in cands]
     if not cands:  # 两侧都被更粗的轴段挡住：右侧（含沿延长线外移）延长线贴着轮廓，分不清，加罚分
         cands = [(zr + 2 * k / sc, f["z1"], 0, k, 1.5) for k in range(16) if zr + (2 * k + w) / sc <= Ltot + 30 / sc] \
@@ -4055,6 +4078,9 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
                 w = sum(_widths([g["symbol"], g["zone"], *g["datums"]])) / sc
                 fspans.append((zl[0] - 3.5 / sc, zl[0] - 3.5 / sc + w))
 
+    fres = flank_inside_reserve(p, i, sc)  # 齿面 Ra 要标在齿段内（靠左）：直径线让开
+    if fres:
+        zones.append(((fres[0] + fres[1]) / 2, (fres[1] - fres[0]) / 2))
     # 环槽定位尺寸（轴肩 → 槽）：伸出的直径线会竖穿其数字；线落在两界线之间时，一侧要留得下数字
     gpos = []
     for f in p.shaft_features:
@@ -4076,8 +4102,8 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
                     edge_ < 2.5, in_frame, abs(z - (z0 + z1) / 2), side == "right")
         line_clear = min([max(a - z, z - b) for a, b in busy] or [1e9])
         # 空心段：优先放在孔径较小（实壁较厚）处，把孔口/沉孔段留给内孔尺寸
-        return (min(gap(*span) * sc, 1.0), min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left",
-                -abs(z - (z0 + z1) / 2))
+        return (min(gap(*span) * sc, 1.0), not (fres and fres[0] - 0.5 / sc < span[1] and span[0] < fres[1]),
+                min(line_clear * sc, 3.0), -round(bore_radius_at(p, z), 3), side == "left", -abs(z - (z0 + z1) / 2))
     if long_txt and not force_long:  # 段中点放不下（键槽处文字不能跨键槽轮廓）：先找轮廓内放得下的位置（键槽两端到轴肩的整直径区）
         tw_lab = text_width(_shaft_dia_label(p, i), 3.5)
         inside = []
