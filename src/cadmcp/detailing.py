@@ -1545,6 +1545,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     tight = any(f.get("offset", 0) > 0 and f["offset"] < text_width(f"{f['offset']:g}", 3.5) + 1.5
                 for f in p.shaft_features if f["kind"] == "groove")
     tight = tight or shaft_gtol_crowded(p, 1.0)  # 框格在 1:1 下排不开（短轴段上多个框格）：同样先试 2:1
+    tight = tight or shaft_short_seat_crowded(p, 1.0)  # 短轴承位上框格引线 + 伸出的直径文字挤不开
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale,
                            enlarge=tight and (spec.sheet in (None, "auto", "A4", "A3")))
     if len(row_h) == 1 and any(circlip_crowded(f, scale) for f in p.shaft_features):
@@ -3664,6 +3665,18 @@ def shaft_gtol_crowded(p: ResolvedPart, sc: float) -> bool:
     return _LAYOUT_CACHE.get(key, (None, None, 0.0))[2] >= 20
 
 
+def shaft_short_seat_crowded(p: ResolvedPart, sc: float) -> bool:
+    """带几何公差的轴段在图上短于 15 mm、且直径文字（极限偏差写全）伸出轮廓：直径线、左侧竖写文字（约 4.8 mm）、
+    框格竖引线（再要 2 mm 间距）与相邻轴肩框格引线挤在一段里分不清 → 短轴上应放大画。"""
+    for g in p.geotols:
+        if not g["target"].startswith("step:"):
+            continue
+        i = int(g["target"][5:])
+        if p.shaft_steps[i][0] * sc < 15 and shaft_dia_overflow(p, i, sc, _shaft_dia_label(p, i)):
+            return True
+    return False
+
+
 def shaft_gtol_fracs(p: ResolvedPart, sc: float) -> dict[str, float]:
     """轴段框格引线在段内的比例（由 shaft_gtol_layout 换算；轴肩框格不在其中）。"""
     out = {}
@@ -4069,6 +4082,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_num_dodge_leaders(plan)
     _shaft_leader_dodge_nums(plan)
     _shaft_dia_lift(plan, p)
+    _shaft_gtol_leader_dodge(plan, p)  # 短轴段：框格竖引线在框格宽度内平移，让开向上伸出的直径文字
     _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
     _shaft_short_text_side(plan, p)  # 余下放不下的短尺寸数字：在规划层定侧（预览与 CAD 共用 text_x）
     _shaft_num_dodge_datum(plan)  # 基准方框落进下方链式尺寸行（短轴段放不开）：数字偏到方框一侧或界线外
@@ -4655,6 +4669,57 @@ def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float
                 break
 
 
+def _shaft_gtol_leader_dodge(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """轴段框格（引线竖直落到轮廓上）的竖引线穿过向上伸出的直径文字/直径线时（短轴承位：直径文字、圆柱度引线挤在一段里），
+    引线在本轴段与框格宽度内平移到最近的空处，框格不动（frame_dx 同步加平移量，见 gtol_frame_pos），写回 sheet_at/sheet_pos。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is None:
+        return
+    from .render_gdt import _widths
+    sc = fv.scale
+    boxes = []  # (x0, x1, y0, y1)：伸出轮廓的直径文字与直径线
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "front" or d.kind != "diameter" or ex.get("over_at") is None or "sheet_pts" not in ex:
+            continue
+        x = ex["sheet_pts"][0][0]
+        tw = text_width(d.text, 3.5)
+        oa = ex["over_at"]
+        right = d.ref.startswith("step") and shaft_dia_place(p, int(d.ref[4:].split("_")[0]), sc)[1] == "right"
+        boxes.append((x + 0.4, x + 4.8, oa - 0.5, oa + tw + 0.5) if right else (x - 4.8, x - 0.4, oa - 0.5, oa + tw + 0.5))
+        boxes.append((x - 1.5, x + 1.5, min(q[1] for q in ex["sheet_pts"]), oa + tw))  # 直径线：引线离开 1.5 mm 才分得清
+    if not boxes:
+        return
+    leaders = [d for d in plan.dims if d.view == "front" and d.kind == "gtol" and d.ref.startswith("gtol:")
+               and "@step:" in d.ref and "sheet_at" in (d.extra or {}) and "sheet_pos" in (d.extra or {})
+               and not (d.extra or {}).get("elbow") and tuple((d.extra or {}).get("normal", (0, 1))) == (0, 1)]
+    for d in leaders:
+        ex = d.extra
+        (ax, ay), (_, py) = ex["sheet_at"], ex["sheet_pos"]
+        hit = lambda x_: any(a < x_ < b and y0 < py and ay < y1 for a, b, y0, y1 in boxes)  # noqa: E731
+        if not hit(ax):
+            continue
+        i = int(d.ref.split("@step:")[1])
+        za, zb = p.step_z(i)
+        xa, xb = sorted((shaft_sx(fv, None, za), shaft_sx(fv, None, zb)))
+        g = next((g for g in p.geotols if f"gtol:{g['type']}@{g['target']}" == d.ref), None)
+        if g is None:
+            continue
+        w = sum(_widths([g["symbol"], g["zone"], *g["datums"]]))
+        dx = ex.get("frame_dx", 0.0)
+        f0 = ax - 3.5 - dx  # 框格左端（不动）
+        others = [o.extra["sheet_at"][0] for o in leaders if o is not d]
+        others += [(o.extra.get("elbow") or {}).get("x_leader", o.extra["sheet_at"][0]) for o in plan.dims
+                   if o.view == "front" and o.kind == "gtol" and o not in leaders and "sheet_at" in (o.extra or {})]
+        cands = [xa + 1.5 + k * 0.25 for k in range(int(max(0.0, xb - xa - 3.0) / 0.25) + 1)]
+        ok = [x_ for x_ in cands if f0 + 1.5 <= x_ <= f0 + w - 1.5 and not hit(x_)
+              and all(abs(x_ - o_) >= 2.0 for o_ in others)]
+        if not ok:
+            continue
+        nx = min(ok, key=lambda x_: abs(x_ - ax))
+        ex.update({"sheet_at": (round(nx, 2), ay), "sheet_pos": (round(nx, 2), py), "frame_dx": round(dx + nx - ax, 2)})
+
+
 def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
     """向上伸出轮廓的直径文字（带极限偏差写全，短轴段放不下）：压到上方尺寸行（尺寸线、数字）或引出标注时，
     文字起点抬到这些行之上，直径线随之延长。结果 extra["over_at"]（文字下端的图纸 y），预览与 CAD 共用。"""
@@ -4707,6 +4772,10 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if o.view == "front" and o.kind == "roughness" and eo.get("on_frame") and "sheet_at" in eo:
             rx, ry = eo["sheet_at"]
             prof.append((rx - 2.6, ry - 0.3, rx + 7 + len(o.text) * 2.0, ry + 9))
+    for o in plan.dims:  # 轴肩端面框格的水平折线（引线竖段 → 端面）：伸出的直径文字从它上方起写
+        el = (o.extra or {}).get("elbow")
+        if o.view == "front" and o.kind == "gtol" and isinstance(el, dict) and "x_face" in el:
+            prof.append((min(el["x_face"], el["x_leader"]) - 0.3, el["y"] - 0.8, max(el["x_face"], el["x_leader"]) + 0.3, el["y"] + 0.8))
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
     tboxes = []  # 向上伸出的直径文字框

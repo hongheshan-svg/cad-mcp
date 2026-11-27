@@ -374,3 +374,12 @@ def test_shaft_datum_aligned_with_dia_line_and_cut_z():
     assert sec and sec[0].cut_z is not None
     from cadmcp.adapters.creo.drawing import shaft_section_z
     assert shaft_section_z(plan, sec[0]) == sec[0].cut_z
+
+
+def test_short_bearing_seat_enlarges():
+    """10 mm 轴承位：圆柱度框格引线、轴肩跳动引线、伸出的直径文字在 1:1 下挤不开 → 放大画（短轴放得下）。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S214", "part_no": "S-214", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 60, "diameter": 55, "tolerance": "h7"}, {"length": 10, "diameter": 47, "tolerance": "k6"}], "end_holes": [{"side": "end", "size": "M16", "depth": 24}]}, "features": [], "auto_precision": true}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert plan.scale > 1.0
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
