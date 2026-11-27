@@ -3546,9 +3546,16 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
         if not b_.get("kw") and tw_ > b_["d"] * sc - 2:  # 孔里写不下（伸出方向按上方处理，宁可多让）
             bore_up.append(bore_dia_place(p, k_, sc, with_outer=False))
 
+    short_mid = []  # 短轴段（带公差、直径文字长于段内可放位置）中部：直径线与竖写文字多半在这里
+    for j_, (L_, d_) in enumerate(p.shaft_steps):
+        if p.shaft_tolerances and p.shaft_tolerances[j_] and L_ * sc < 25:
+            a_, b_ = p.step_z(j_)
+            short_mid.append(((a_ + b_) / 2 - 6 / sc, (a_ + b_) / 2 + 2 / sc))
+
     def solo(it, z, row, pref):  # 与其它框格无关的代价
         c = 4 * row + pref
         c += sum(30 for zb in bore_up if zb - 10 / sc < z < zb + 5 / sc)
+        c += sum(6 for a_, b_ in short_mid if a_ < z < b_)
         c += sum(20 for fa, fb in flank if fa <= z <= fb)
         c += sum(3 for x in lines + shoulder_faces if abs(x - z) < 2.5 / sc)
         c += sum(3 for m, hw in texts if abs(m - z) < hw)
