@@ -202,12 +202,13 @@ def _fill(sh: str, s: float, col_w, row_h) -> float:
 
 
 def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: str,
-            notes_h: float = 0.0) -> tuple[str, float]:
+            notes_h: float = 0.0, max_scale: float | None = None) -> tuple[str, float]:
     sheets = [sheet] if sheet and sheet != "auto" else list(SHEETS)
     if kind == "part":
         # 工程师习惯：能 1:1 就 1:1；小件或孔太小才放大；图幅优先 A4/A3
         tiny = max(b.size) <= 30 or (0 < min_feature < MIN_FEATURE_ON_PAPER)
         order = ([5.0, 2.0] if tiny else []) + [1.0, 0.5, 0.2, 0.1, 0.05, 0.02]
+        order = [s for s in order if max_scale is None or s <= max_scale + 1e-9]
         for group in ([s for s in sheets if s in ("A4", "A3")], [s for s in sheets if s not in ("A4", "A3")]):
             for s in order:
                 if s > 1 and min_feature * s < MIN_FEATURE_ON_PAPER and max(b.size) > 30:
@@ -1308,6 +1309,34 @@ def with_deviations(text: str) -> str:
 
 
 def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
+    """轴类零件图（见 _plan_shaft）。放大比例下主视图下方的尺寸带或断面图伸进标题栏上方的技术要求：降一档比例重排。"""
+    plan = _plan_shaft(spec, p, today)
+    for s_ in (2.0, 1.0):
+        if plan.scale <= s_ or not _shaft_hits_notes(plan):
+            break
+        plan = _plan_shaft(spec, p, today, max_scale=s_)
+    return plan
+
+
+def _shaft_hits_notes(plan: "DrawingPlan") -> bool:
+    """主视图尺寸（含总长）或其它视图的下沿低于技术要求块顶部、且横向与之重叠。"""
+    nx = notes_x(plan)
+    tw = max((text_width(n, 3.5) for n in plan.notes), default=0.0)
+    top = 5 + 56 + 14 + 5 * len(plan.notes)
+    lows = []
+    for d in plan.dims:
+        sp = (d.extra or {}).get("sheet_pos")
+        if d.view == "front" and d.kind == "linear" and isinstance(sp, (tuple, list)) and len(sp) == 2:
+            fv = plan.views[0]
+            lows.append((fv.origin_on_sheet[0] - fv.size_mm[0] / 2, fv.origin_on_sheet[0] + fv.size_mm[0] / 2, sp[1] - 1))
+    for v in plan.views:
+        lows.append((v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2,
+                     v.origin_on_sheet[1] - v.size_mm[1] / 2 - 4))
+    return any(y < top and a < nx + tw and nx < b for a, b, y in lows)
+
+
+def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
+                max_scale: float | None = None) -> DrawingPlan:
     """轴类按工程师习惯：主视图轴线水平、键槽朝前；每个键槽一个移出断面图（A-A、B-B…）放在主视图下方。
     尺寸：各轴段长度（链式）+ 总长、各段直径（带公差带）、键槽长度与定位、断面上的键宽和 d-t1、环槽标注、端部倒角。"""
     b = p.bbox
@@ -1332,7 +1361,7 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
     row_h = [D + extra_top + (12.0 if g_steps & {r["target"] for r in p.roughness} else 0.0)] + \
         ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
-    sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part")
+    sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale)
     # 直径文字带极限偏差放不进该段（竖写长于直径）而只注公差带代号放得下 → 只注代号（GB/T 4458.5 允许）
     p._dia_code_only = set()
     for j_, (L_, d_) in enumerate(p.shaft_steps):
