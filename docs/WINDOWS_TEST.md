@@ -541,3 +541,12 @@ Creo：`feat.round` edges 同样给点坐标。
 ### 装配图主视图全剖（tests/test_fit_dims.py 销座组件、轴承组件）
 - SW：`section_cut` 的 `exclude_components`（Section Scope 排除零部件）API 待核对；相邻零件剖面线方向是否自动错开。
 - Creo：`tk.drw.section` 装配剖面 + 排除零部件待实现/核对。
+
+## 带凸台的板（boss，TODO(实机核对)）
+- 样例：`tests/test_plate_review.py::test_boss_auto_surface`（Φ30 凸台 + 板面型腔 + 四角螺孔 + 凸台顶螺孔）、
+  `test_sw_boss_sketch_on_own_base`（两个凸台）。
+- SW：每个凸台的 `sketch_on_face` 射线从凸台自身中心、凸台底面（板面）上方 0.5 mm 打下；两个凸台都应立在板面上，
+  第二个不落在第一个凸台顶上。板面上的型腔/螺孔从板面（z = 板厚）起切，凸台上的螺孔从凸台顶起切。
+- Creo：型腔/孔的草绘面 = TOP 偏移 `at`（解析层自动取所在表面：板面或凸台顶）；凸台 = TOP 偏移 z0 向上拉伸。
+- 工程图：主视图（或剖视）外形为板 + 凸台，剖视中凸台与板之间无分界线；俯视图有凸台轮廓；
+  引出标注“Φ30 高10”指在凸台轮廓上；凸台圆心进坐标尺寸。
