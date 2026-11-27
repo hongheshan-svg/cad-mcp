@@ -3260,7 +3260,20 @@ def shaft_dia_overflow(p: ResolvedPart, j: int, sc: float, text: str) -> str | N
     R = max(dd for _, dd in p.shaft_steps) / 2
     room = (R - d / 2) * sc + 15 - 1.5  # 轮廓下沿到链式尺寸线（y_bot − 15）；该行文字在段中点，不在直径尺寸线处
     has_datum = any(x["target"] == f"step:{j}" for x in p.datums)
-    return "down" if tw + 3 <= room and not has_datum else "up"
+    if tw + 3 <= room and not has_datum:
+        return "down"
+    if p.geotols and not has_datum:  # 上方是几何公差框格行（轮廓上约 22 mm）：长文字放不进，往下伸（_shaft_dia_lift 移到尺寸行之下）
+        from .render_gdt import _widths
+        z = shaft_dia_z(p, j, sc)
+        for g in p.geotols:
+            key = f"{g['type']}@{g['target']}"
+            zl = shaft_gtol_layout(p, sc).get(key)
+            if zl is None:
+                continue
+            w = sum(_widths([g["symbol"], g["zone"], *g["datums"]])) / sc
+            if zl[0] - 3.5 / sc - 5 / sc <= z <= zl[0] - 3.5 / sc + w + 1 / sc:
+                return "down"
+    return "up"
 
 
 def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
@@ -4330,7 +4343,7 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             if "anchor" in lb:
                 leads.append((tuple(lb["anchor"]), (ex, ey)))
     W, H = plan.sheet_size
-    prof = []  # 各轴段轮廓（伸出的直径文字不能压到相邻较粗轴段的轮廓线）
+    prof = []  # 各轴段轮廓（伸出的直径文字不能压到相邻较粗轴段的轮廓线）；只用于直径文字
     for j, (_, dj) in enumerate(p.shaft_steps):
         za, zb = p.step_z(j)
         xa_, xb_ = shaft_sx(fv, None, za), shaft_sx(fv, None, zb)
