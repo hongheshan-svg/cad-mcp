@@ -4138,14 +4138,16 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 y = y_top + 14 - TRACK_DY * (d.extra or {}).get("track", 0)
             kw = not d.ref.startswith(("step", "overall"))
             xh = {round(h["z"], 6): h for h in p.cross_holes} if d.ref.startswith("XH") else {}
-            def xh_pt(h):  # 横孔：view 向取孔圆顶点；竖直孔取左孔壁线上一点（TODO(实机核对) 原生需量到孔轴线）
-                if h["dir"] == "vertical":
-                    return (round(X(h["z"] - h["hole"] / 2), 2), round(cy + h["D"] / 2 * 0.6 * sc, 2))
+            def xh_pt(h, pick=False):  # 横孔：view 向取孔圆顶点；竖直孔量到孔轴线，原生选边取左孔壁线上一点（pick_pts）
+                if h["dir"] == "vertical":  # TODO(实机核对) 原生选孔壁后需改量到孔轴线
+                    return (round(X(h["z"] - (h["hole"] / 2 if pick else 0.0)), 2), round(cy + h["D"] / 2 * 0.6 * sc, 2))
                 return (round(X(h["z"]), 2), round(cy + h["hole"] / 2 * sc, 2))
             pts = [xh_pt(xh[round(z, 6)]) if round(z, 6) in xh
                    else edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
+            pick = [xh_pt(xh[round(z, 6)], True) if round(z, 6) in xh
+                    else edge_pt(z, kw and round(z, 6) in kw_ends) for z in (za, zb)]
             d.extra = {**(d.extra or {}), "sheet_pts": pts, "sheet_pos": (round((pts[0][0] + pts[1][0]) / 2, 2), round(y, 2)),
-                       "orient": "h"}
+                       "orient": "h", **({"pick_pts": pick} if pick != pts else {})}
         elif d.kind == "diameter" and d.ref.startswith("bore"):
             k = int(d.ref[4:].split("_")[0])
             zb_ = bore_dia_place(p, k, sc)

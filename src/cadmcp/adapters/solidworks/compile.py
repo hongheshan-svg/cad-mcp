@@ -640,7 +640,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         ex = d.extra or {}
         if d.kind == "linear" and d.at is None and (d.view not in ordinate_views or ex.get("pitch") or ex.get("install") or ex.get("fit")):  # 图纸坐标一律 mm（executor 内转 m）：pts = 两条被标注边线上的点，pos = 尺寸线/文字位置
             ops.append(NativeOp("overall_dimension", {"view": d.view, "axis": d.axis, "value": d.value, "ref": d.ref,
-                                                      "pts": ex.get("sheet_pts"), "pos": dim_text_pos(ex),
+                                                      "pts": ex.get("pick_pts") or ex.get("sheet_pts"), "pos": dim_text_pos(ex),
                                                       "orient": ex.get("orient"),
                                                       **({"prefix": ex["prefix"], "suffix": ex.get("suffix", "")}
                                                          if ex.get("prefix") else {})},
@@ -671,7 +671,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                 ex = d.extra or {}  # 图纸坐标一律 mm（executor 内转 m）
                 view = f"section:{ex['section']}" if ex.get("section") else d.view  # 移出断面图按标签区分
                 ops.append(NativeOp("shaft_dimension", {"view": view, "kind": d.kind, "text": d.text,
-                                                        "at": d.at, "ref": d.ref, "pts": ex.get("sheet_pts"),
+                                                        "at": d.at, "ref": d.ref, "pts": ex.get("pick_pts") or ex.get("sheet_pts"),
                                                         "pos": dim_text_pos(ex), "orient": ex.get("orient"),
                                                         **({"arc_end": list(ex["arc_end"])} if ex.get("arc_end") else {})},
                                     "选两条边线 AddDimension2；直径用文字覆盖带公差带"))

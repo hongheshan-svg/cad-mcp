@@ -530,6 +530,8 @@ Creo：`feat.round` edges 同样给点坐标。
 - `tests/test_cross_holes.py` 的 XV 样例：SW 每孔一个 `broken_out_section`（孔周矩形、深度 = 轴半径），核对局部剖
   边界是否画成波浪线（SW 样条边界）、剖面线是否只在剖到的实体上；Top Plane 上的孔从 −Y（主视图上方）钻入。
 - Creo：同一视图上多处 `tk.drw.section kind=local` 能否共存（TODO）。
+- 竖直横孔定位尺寸：规划坐标 `sheet_pts` 量到孔轴线（预览一致），原生选边用 `pick_pts`（左孔壁线上一点，SW/Creo 都优先读它）。
+  核对选孔壁后原生尺寸值是否为“到孔轴线”（如 7.5）；若量成到孔壁（5），需改为选孔轴线或改文字覆盖。
 
 ### 型腔底面粗糙度（roughness target `pocket:<名>`）
 - 主视图全剖中，符号应立在型腔底面线上（型腔内、靠左 1/4）；核对 SW/Creo 能否在剖视图的底面边上挂符号。

@@ -430,3 +430,19 @@ def test_gear_shaft_pitch_root_lines_broken_at_text():
     from cadmcp.adapters.creo import drawing as CD
     cops = CD.compile_drawing(plan, "m.prt", toolkit=True)
     assert sum(o.op == "tk.drw.line" and "齿轮段" in o.why for o in cops) == len(plan.lines)
+
+
+def test_vertical_cross_hole_pos_measured_to_axis():
+    """竖直横孔定位尺寸：规划坐标量到孔轴线（与预览一致，数字不被孔中心线穿过）；原生选边点 pick_pts 仍取左孔壁。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S136", "part_no": "S-136", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 30, "diameter": 17, "tolerance": "js6"}, {"length": 40, "diameter": 20}, {"length": 80, "diameter": 25}, {"length": 15, "diameter": 35}, {"length": 40, "diameter": 27}, {"length": 80, "diameter": 22, "tolerance": "js6"}], "cross_holes": [{"step": 3, "diameter": 5, "tolerance": "H7", "direction": "vertical"}]}, "features": [{"feature": "keyway", "name": "K0", "step": 0, "length": 22}, {"feature": "groove", "name": "G5", "type": "circlip", "step": 5}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    d = next(d for d in plan.dims if d.ref == "XH1_pos")
+    h = p.cross_holes[0]
+    (xa, _), (xb, _) = d.extra["sheet_pts"]
+    assert abs((xb - xa) / plan.scale - d.value) < 0.02
+    assert abs(d.extra["pick_pts"][1][0] - (xb - h["hole"] / 2 * plan.scale)) < 0.02
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    from cadmcp.adapters.solidworks import compile as SW
+    op = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.args.get("ref") == "XH1_pos")
+    assert op.args["pts"] == d.extra["pick_pts"]
