@@ -110,6 +110,14 @@ def check_part(p: ResolvedPart) -> list[Finding]:
             r = h.max_dia / 2
             for inst in h.instances:
                 d = dist_to_outline(inst.uv, poly)  # 型腔内为正
+                if d >= r and not pk["through"] and not h.through and h.depth <= pk["depth"] + 1e-9:
+                    # R013 孔在型腔底面内但深度仍从原表面算起：孔整个落在铣空的部分，实际不存在
+                    floor = p.bbox.zmax - pk["depth"] if pk["face"] == "top" else p.bbox.zmin + pk["depth"]
+                    out.append(_f("R013", "error", f"{h.name}[{inst.index}]",
+                                  f"孔在型腔 {pk['name']} 底面内，深度 {h.depth:g} 却从原表面算起，"
+                                  f"未到型腔底（型腔深 {pk['depth']:g}），孔实际不存在",
+                                  f"孔改从型腔底面起算：加 at: {floor:g}（同一组孔须都在型腔底内，否则拆成两组）"))
+                    continue
                 if -r - 1.0 < d < r:
                     out.append(_f("R012", "error" if abs(d) < r else "warning", f"{h.name}[{inst.index}]",
                                   f"孔骑在型腔 {pk['name']} 的侧壁上（孔心距型腔边 {d:+.2f} mm，孔半径 {r:g}）"

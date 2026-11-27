@@ -147,3 +147,12 @@ def test_hole_on_pocket_wall():
     assert ("R012", "H[0]", "warning") in _rules([pk, h(23.5)], t=20)  # 孔边离型腔边 0.2 mm
     assert not any(r[0] == "R012" for r in _rules([pk, h(0)], t=20))  # 整孔在型腔底
     assert not any(r[0] == "R012" for r in _rules([pk, h(30)], t=20))
+
+
+def test_hole_in_pocket_floor_needs_at():
+    pk = {"feature": "pocket", "name": "PK", "profile": {"shape": "rect", "width": 40, "height": 30, "corner_radius": 5},
+          "depth": 12}
+    t = {"feature": "hole", "name": "T", "type": "tapped", "size": "M6", "depth": 10, "positions": [[0, 0]]}
+    assert ("R013", "T[0]", "error") in _rules([pk, t], t=20)
+    assert not any(r[0] == "R013" for r in _rules([pk, {**t, "at": 8, "depth": 6}], t=20))  # 从型腔底面起算
+    assert not any(r[0] == "R013" for r in _rules([pk, {**t, "depth": "through"}], t=20))
