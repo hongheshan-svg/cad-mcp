@@ -642,3 +642,6 @@ Creo：`feat.round` edges 同样给点坐标。
 - 齿轮端视图腹板孔/均布孔：`n×孔 均布` 斜向引出标注 + `Φxx 分布圆`（圆点指在分布圆上），SW `leader_note`；
   核对 SW/Creo 端视图是否自动画出沉孔两圆、孔中心线与分布圆（AutoInsertCenterMarks 连接线）。
 - 齿轮小轴孔 Ra：标在下孔壁轮廓线向右端面外的延长线上（`ext_pts`，细实线 `view_line` / Creo SOLIDFONT）。
+- 圆盘中心孔上的键槽：俯视图按轮毂键槽注 b（JS9）与 d+t2（`hubkw`，走 `overall_dimension` 选边线），
+  不再注型腔“宽×高”与槽角坐标。核对 SW 选到槽侧壁/孔底象限点。
+- 引出标注备选：预览检查仍压线时按代价顺序换位置（`callout_retry`），CAD 端只看最终 label 坐标。

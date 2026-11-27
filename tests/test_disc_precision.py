@@ -41,3 +41,28 @@ def test_gear_web_holes_called_out_with_pcd():
     svg, out = render(plan, p)
     assert "3×Φ6.6" in svg and "Φ78 分布圆" in svg
     assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
+
+
+def test_disc_hub_keyway_dims():
+    """圆盘中心孔上的键槽：按轮毂键槽注 b（JS9）与 d + t2（GB/T 1095），不再注型腔 "宽×高" 与型腔角点坐标。"""
+    p, plan = _plan(CAP)
+    kw = {d.ref: d for d in plan.dims if (d.extra or {}).get("hubkw")}
+    assert kw["KW_w"].text.startswith("8JS9") and kw["KW_t"].text.startswith("33.3(+0.2/0)")
+    assert not any(d.kind == "callout" and d.ref == "KW" for d in plan.dims)
+    assert not any(d.kind == "ordinate" and d.text in ("46", "63") for d in plan.dims)
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    ops = compile_drawing(plan, "D.SLDPRT")
+    assert {o.args["ref"] for o in ops if o.op == "overall_dimension"} >= {"KW_w", "KW_t"}
+
+
+SMALL_CAP = {'name': 'D18', 'part_no': 'D-18', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 60}, 'thickness': 20}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 25, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 8, 'height': 5.3, 'center': [0, 13.15]}}, {'feature': 'boss', 'name': 'Spigot', 'height': 5, 'profile': {'shape': 'circle', 'diameter': 41, 'center': [0, 0]}}, {'feature': 'chamfer', 'name': 'C1', 'edges': 'bottom_outer', 'size': 0.5}]}
+CROWDED_CAP = {'name': 'D51', 'part_no': 'D-51', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 80}, 'thickness': 15}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 20, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 6, 'height': 4.8, 'center': [0, 10.4]}}, {'feature': 'hole', 'name': 'PC', 'type': 'tapped', 'size': 'M6', 'pattern': {'kind': 'circular', 'radius': 29, 'count': 6, 'start_angle': 45}, 'depth': 12}, {'feature': 'boss', 'name': 'Spigot', 'height': 5, 'profile': {'shape': 'circle', 'diameter': 40, 'center': [0, 0]}}], 'datums': [{'name': 'A', 'target': 'hole:Bore'}], 'tolerances': [{'type': 'circular_runout', 'value': 0.02, 'target': 'face:top', 'datums': ['A']}], 'roughness': [{'target': 'hole:Bore', 'ra': 1.6}, {'target': 'face:top', 'ra': 3.2}]}
+
+
+def test_small_disc_keyway_callouts_retry_clean():
+    """小端盖 / 挤的端盖：键槽尺寸占了视图上方，引出标注按出图检查换备选位置，不压凸台圆、孔圆。"""
+    for spec in (SMALL_CAP, CROWDED_CAP):
+        p, plan = _plan(spec)
+        assert not any("_alts" in (d.extra or {}) for d in plan.dims)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == []

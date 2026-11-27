@@ -808,6 +808,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     _plan_sections(plan, spec, p)
     _hole_ra_to_section(plan, p)
     if spec.dimensions != "none":
+        _disc_keyway_sheet(plan, p, spec)
         pitch_dim_sheet(plan, p)
         ordinate_dim_sheet(plan, p)  # 坐标值位置先定，引出标注避开它们
         flat_dim_sheet(plan, p)  # 展开图尺寸/折弯说明先定，引出标注避开它们
@@ -817,7 +818,43 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         _face_ra_slide(plan, p)
         _hole_ra_retry(plan, p)
         _hole_datum_retry(plan, p)
+        callout_retry(plan, p)
     return _general_ra_retry(plan, p)
+
+
+def callout_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """引出标注在预览出图里仍压线压字（几何粗估没算到的线、小视图挤不下）：按备选（extra["_alts"]，代价顺序）
+    逐个出图检查，取冲突最少的；备选用完即删。备选带 "_at" 时引出点一并换（同规格多孔换实例等）。"""
+    from .render_svg import render
+
+    def bad(text):
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6, True
+        hard = list(out["crossings"]) + [t for pair in out["collisions"] for t in pair]
+        dash = out.get("dash_crossings") or []
+        return 10 * len(out["crossings"]) + 10 * len(out["collisions"]) + len(dash), (text in hard or text in dash)
+    for d in plan.dims:
+        alts = (d.extra or {}).pop("_alts", None)
+        if not alts:
+            continue
+        n0, mine = bad(d.text)
+        if not mine:
+            continue
+        best = (n0, d.extra["label"], d.at)
+        for lb in alts:
+            lb = dict(lb)
+            at_ = lb.pop("_at", None)
+            d.extra["label"] = lb
+            if at_ is not None:
+                d.at = at_
+            n, mine = bad(d.text)
+            if n < best[0]:
+                best = (n, lb, d.at)
+            if not mine and n < n0:
+                break
+        d.extra["label"], d.at = best[1], best[2]
 
 
 def _hole_datum_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -2324,7 +2361,7 @@ def _push_overall_past_fits(plan: "DrawingPlan") -> None:
         for d in plan.dims:
             ex = d.extra or {}
             if d.view != v.type or d.kind != "linear" or d.at is not None or "sheet_pos" not in ex \
-                    or ex.get("fit") or ex.get("install") or ex.get("pitch"):
+                    or ex.get("fit") or ex.get("install") or ex.get("pitch") or ex.get("hubkw"):
                 continue
             (ax_, ay_), (bx_, by_) = ex["sheet_pts"]
             px_, py_ = ex["sheet_pos"]
@@ -3223,7 +3260,8 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                  and d.extra and "normal" in d.extra and not d.extra.get("attach")]
         for d in ords:
             ex_ = d.extra or {}
-            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit"):
+            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit") \
+                    or ex_.get("hubkw"):
                 continue
             tw = text_width(d.text, 3.5)
             if d.axis == ha:
@@ -3255,6 +3293,25 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         else:
             hard.append((px_ + o_ - 0.5, py_ - 1.5, px_ + o_ + tw_, py_ + 1.5))
         ord_texts.append(hard[-1])
+    for d in plan.dims:  # 轮毂键槽尺寸（_disc_keyway_sheet 已定位）：数字、尺寸线与界线都是硬障碍
+        ex = d.extra or {}
+        if not ex.get("hubkw") or "sheet_pos" not in ex:
+            continue
+        px_, py_ = ex["sheet_pos"]
+        tw_ = text_width(d.text, 3.5)
+        (xa_, ya_), (xb_, yb_) = ex["sheet_pts"]
+        if ex["orient"] == "h":
+            hard.append((px_ - tw_ / 2 - 1, py_ - 1, px_ + tw_ / 2 + 1, py_ + 4.5))
+            ord_texts.append(hard[-1])
+            hard.append((min(xa_, px_ - tw_ / 2), py_ - 0.6, max(xb_, px_), py_ + 0.6))
+            for x_ in (xa_, xb_):  # 尺寸界线（竖直，自槽底到尺寸线之上 2 mm）：文字不压，引线可穿
+                edges_.append((x_ - 0.6, min(ya_, py_) - 0.5, x_ + 0.6, py_ + 2.5))
+        else:
+            hard.append((px_ - 4.5, py_ - tw_ / 2 - 1, px_ + 1, py_ + tw_ / 2 + 1))
+            ord_texts.append(hard[-1])
+            hard.append((px_ - 0.6, min(ya_, yb_, py_ - tw_ / 2), px_ + 0.6, max(ya_, yb_, py_ + tw_ / 2)))
+            for x_, y_ in ((xa_, ya_), (xb_, yb_)):  # 尺寸界线（水平，自被注点到尺寸线之外 2 mm）：文字不压，引线可穿
+                edges_.append((min(x_, px_) - 0.5, y_ - 0.6, px_ + 2.5, y_ + 0.6))
     leaders: list[tuple[tuple[float, float], tuple[float, float]]] = []
     labels = [d for d in plan.dims if d.kind in ("callout", "radius", "diameter") and d.view in vmap
               and not (plan.layout == "shaft" and d.kind == "diameter")]
@@ -3294,27 +3351,41 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         rr = h_.max_dia / 2 * v.scale if d.kind == "callout" and h_ is not None and not h_.circular \
             and v.type in VIEW_AXES and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type) else 0.0
         best = None
+        pool: list = []
         for at_ in anchors:
             if at_ is not None:
                 ax, ay = _uv_sheet(v, bbox, at_)
             else:
                 ax, ay = cx + v.size_mm[0] / 2, cy + v.size_mm[1] / 2
-            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr, ord_texts, edges_)
+            best = _best_label(best, at_, ax, ay, tw, W, H, hard, soft, feat, leaders, below, rr, ord_texts, edges_, pool)
+
+        def _lab(c_):
+            _, ex, ey, dirn, box, _at, ax, ay = c_
+            return {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
+                    "text_at": (round(box[0] + 0.5, 2), round(ey + 0.8, 2)),
+                    "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn,
+                    **({"on_edge": True} if rr >= 5 else {})}
+        alts = []
+        hung = any((d2.extra or {}).get("attach") == "callout" and d2.ref.endswith(f"hole:{d.ref}") for d2 in plan.dims)
+        if not hung and d.kind == "callout":  # 备选（出图检查仍压线压字时按代价顺序试，callout_retry）
+            for c_ in sorted(pool, key=lambda t: t[0])[1:]:  # 孔上挂了基准/粗糙度：引出点不换
+                if c_[0] >= 5000 or len(alts) >= 16:
+                    break
+                if tied and c_[5] != best[5]:
+                    continue
+                alts.append({**_lab(c_), **({"_at": (round(c_[5][0], 6), round(c_[5][1], 6))} if c_[5] is not None else {})})
         _, ex, ey, dirn, box, at_, ax, ay = best
         if at_ is not None and at_ != d.at:
             d.at = (round(at_[0], 6), round(at_[1], 6))
         hard.append(box)
         ord_texts.append(box)  # 后放的引线不得穿过已放的标注文字
         leaders.append(((ax, ay), (ex, ey)))
-        d.extra = {**(d.extra or {}), "label": {"anchor": (round(ax, 2), round(ay, 2)), "elbow": (round(ex, 2), round(ey, 2)),
-                                                 "text_at": (round(box[0] + (0.5 if dirn > 0 else 0.5), 2), round(ey + 0.8, 2)),
-                                                 "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn,
-                                                 **({"on_edge": True} if rr >= 5 else {})}}
+        d.extra = {**(d.extra or {}), "label": _lab(best), **({"_alts": alts} if alts else {})}
     _flip_hole_roughness(plan, vmap, bbox, part, hard, feat)
 
 
 def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below: float = 0.0, rr: float = 0.0,
-                texts: list | None = None, edges: list | None = None):
+                texts: list | None = None, edges: list | None = None, pool: list | None = None):
     """引出标注一个锚点的 8 方向 × 7 档长度候选，与当前最优比较（代价：长度 + 压线/压图/交叉/出图框罚分）。
     rr ≥ 5：锚点为孔心，引线起点取在孔轮廓上（沿引线方向偏 rr）；返回的 ax, ay 为该轮廓点。"""
     for L in (10, 16, 24, 34, 46, 60, 80):
@@ -3343,6 +3414,8 @@ def _best_label(best, at_, ax0, ay0, tw, W, H, hard, soft, feat, leaders, below:
             cost += sum(1000 for tb in texts or [] if _seg_box((sx_, sy_), (ex, ey), tb))  # 引线不穿坐标尺寸数字
             cost += sum(150 for fb in feat if _seg_box((sx_, sy_), (ex, ey), fb)  # 引线穿过别的孔/型腔
                         and not (fb[0] <= ax0 <= fb[2] and fb[1] <= ay0 <= fb[3]))
+            if pool is not None:
+                pool.append((cost, ex, ey, dirn, box, at_, ax, ay))
             if best is None or cost < best[0]:
                 best = (cost, ex, ey, dirn, box, at_, ax, ay)
     return best
@@ -3595,8 +3668,89 @@ def _flange_hole_dims(p: ResolvedPart, lv: "ViewPlan", D: float) -> list[Dim]:
     return out
 
 
+def disc_hub_keyway(p: ResolvedPart) -> dict | None:
+    """拉伸圆盘上的轮毂键槽：圆形底座、同心通孔（中心孔），矩形通槽（无圆角）关于孔中心左右对称、位于孔的 +Y 侧
+    且从孔里开出。返回 {pocket, bore, w, top（槽底到孔轴线）, rb, center}；不是返回 None。"""
+    pr0 = p.profile
+    if p.base_type != "extrude" or pr0 is None or pr0.shape != "circle":
+        return None
+    cx, cy = pr0.data.get("center", (0.0, 0.0))
+    bore = next((h for h in p.holes if h.face in ("top", "bottom") and len(h.instances) == 1 and not h.circular
+                 and abs(h.instances[0].xyz[0] - cx) < 1e-6 and abs(h.instances[0].xyz[1] - cy) < 1e-6
+                 and h.through and h.max_dia == h.drill), None)
+    if bore is None:
+        return None
+    rb = bore.drill / 2
+    for pk in p.pockets:
+        pr = pk["profile"]
+        if not pk.get("through") or pr.shape != "rect" or pr.data.get("corner_radius") or pk["face"] not in ("top", "bottom"):
+            continue
+        x0, x1, y0, y1 = pr.bbox2d
+        w = x1 - x0
+        if abs((x0 + x1) / 2 - cx) < 1e-6 and y0 < cy + rb - 1e-6 and y1 > cy + rb + 1e-6 and y0 > cy and w < 2 * rb:
+            return {"pocket": pk, "bore": bore, "w": w, "top": y1 - cy, "rb": rb, "center": (cx, cy)}
+    return None
+
+
+def _disc_keyway_sheet(plan: "DrawingPlan", p: ResolvedPart, spec: DrawingSpec) -> None:
+    """圆盘俯视图上的轮毂键槽：去掉型腔通用标注（宽×高）和型腔坐标，改注槽宽 b（JS9）与 d + t2（GB/T 1095），
+    与齿轮/套类同一规则（hub_keyway_dims）。"""
+    hk = disc_hub_keyway(p)
+    v = next((v_ for v_ in plan.views if v_.type == "top"), None)
+    if hk is None or v is None:
+        return
+    name = hk["pocket"]["name"]
+    pr = hk["pocket"]["profile"]
+    ha, va = VIEW_AXES["top"]
+    lo = (vrange(p.bbox, ha)[0], vrange(p.bbox, va)[0])
+    corner = {ha: vc((pr.bbox2d[0], pr.bbox2d[2], 0), ha) - lo[0], va: vc((pr.bbox2d[0], pr.bbox2d[2], 0), va) - lo[1]}
+    drop = {f"ord:top.{ax}={round(val, 3):g}" for ax, val in corner.items()}
+    keep_ord = {d.ref for d in plan.dims if d.kind == "ordinate" and d.ref in drop
+                and any(o is not d and o.kind == "ordinate" and o.ref == d.ref for o in plan.dims)}
+    plan.dims[:] = [d for d in plan.dims if not (d.view == "top" and d.kind == "callout" and d.ref == name)
+                    and not (d.kind == "ordinate" and d.ref in drop and d.ref not in keep_ord and not _ord_shared(plan, p, d))]
+    ex, ey = _uv_sheet(v, p.bbox, (vc((*hk["center"], 0), ha), vc((*hk["center"], 0), va)))
+    sc = v.scale
+    rings = (hk["rb"] * sc, p.profile.data["diameter"] / 2 * sc) + tuple(
+        bs["profile"].data["diameter"] / 2 * sc for bs in p.bosses if bs["profile"].shape == "circle")
+    rings += tuple(h.circular["pcd"] / 2 * sc for h in p.holes if h.circular)
+    circles = tuple((*_uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va))), h.max_dia / 2 * sc + 2.0)
+                    for h in p.holes if h is not hk["bore"] for i in h.instances)
+
+    def dev(t):
+        return t if spec.fit_deviations else t.split("(")[0]
+    vx1 = v.origin_on_sheet[0] + v.size_mm[0] / 2
+    skip = (vx1 - 1.0, vx1 + 14.0) if any(d.view == "top" and d.kind == "ordinate" and d.axis == va
+                                           for d in plan.dims) else None  # 右侧坐标值引线与数字
+    for d in hub_keyway_dims("top", ex, ey, sc, hk["rb"], hk["w"], hk["top"], name, dev, rings=rings, circles=circles,
+                             x_skip=skip):
+        d.extra["hubkw"] = True
+        plan.dims.append(d)
+
+
+def _ord_shared(plan: "DrawingPlan", p: ResolvedPart, d: Dim) -> bool:
+    """坐标值还被别的要素（孔、凸台、外形顶点）用着：同值坐标只出一个，去掉会让那些要素失去定位。"""
+    if d.at is None:
+        return False
+    for h in p.holes:
+        for i in h.instances:
+            ha, va = VIEW_AXES["top"]
+            lo = {ha: vrange(p.bbox, ha)[0], va: vrange(p.bbox, va)[0]}
+            if abs(vc(i.xyz, d.axis) - lo[d.axis] - d.value) < 1e-6:
+                return True
+    for bs in p.bosses:
+        pr = bs["profile"]
+        if pr.shape == "circle":
+            ha, va = VIEW_AXES["top"]
+            lo = {ha: vrange(p.bbox, ha)[0], va: vrange(p.bbox, va)[0]}
+            if abs(vc((*pr.data["center"], 0), d.axis) - lo[d.axis] - d.value) < 1e-6:
+                return True
+    return False
+
+
 def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev,
-                    rings: tuple[float, ...] = (), circles: tuple[tuple[float, float, float], ...] = ()) -> list[Dim]:
+                    rings: tuple[float, ...] = (), circles: tuple[tuple[float, float, float], ...] = (),
+                    x_skip: tuple[float, float] | None = None) -> list[Dim]:
     """端视图上的轮毂键槽尺寸（GB/T 1095）：槽宽 b（JS9）与 d + t2（上偏差按 b）。键槽在端视图上方。
     ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。
     rings = 端视图上同心实线圆的图上半径（齿根圆、齿顶圆、外圆…）：文字压圆时槽宽文字上移、槽深尺寸线外移。"""
@@ -3634,6 +3788,8 @@ def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: fl
     xt = ex + rb * sc + 8
     for k in range(80):  # 槽深文字压同心圆：尺寸线逐 1 mm 外移
         x_ = ex + rb * sc + 8 + k
+        if x_skip is not None and x_skip[0] < x_ + 0.35 and x_ - 2.8 < x_skip[1]:  # 坐标尺寸引线带等：整体跳过
+            continue
         if not on_ring((x_ - 2.8, ty - half, x_ + 0.35, ty + half)) and all(abs(x_ - ex - r) > 1.5 for r in rings):  # 也不贴着同心圆切过
             xt = x_
             break
@@ -6112,7 +6268,8 @@ def overall_dim_sheet(plan: "DrawingPlan", p) -> None:
                  and d.extra and "normal" in d.extra and not d.extra.get("attach")]
         for d in ords:
             ex_ = d.extra or {}
-            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit"):
+            if d.kind != "linear" or d.at is not None or ex_.get("install") or ex_.get("pitch") or ex_.get("fit") \
+                    or ex_.get("hubkw"):
                 continue
             if d.axis == ha:
                 y = y0 - (22 if has_ord_h or (0, -1) in norms else 10)

@@ -202,39 +202,9 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     plan = DrawingPlan(p.name, "part", sheet, SHEETS[sheet], scale, spec.projection, views, dims, notes, tb,
                        layout="gear", revisions=list(spec.revisions))
     plan.gear_table = param_table(plan, p)
-    _callout_retry(plan, p)
+    from .detailing import callout_retry
+    callout_retry(plan, p)
     return plan
-
-
-def _callout_retry(plan: DrawingPlan, p: ResolvedPart) -> None:
-    """端视图腹板孔/分布圆引出标注仍压线压字（尺寸界线、框格引线等几何粗估没算到的）：按备选顺序用预览出图检查，
-    取冲突最少的；备选（extra["_alts"]）用完即删。"""
-    from .render_svg import render
-
-    def bad(text):
-        try:
-            _, out = render(plan, p)
-        except Exception:  # noqa: BLE001
-            return 10 ** 6
-        hard = list(out["crossings"]) + [t for pair in out["collisions"] for t in pair]
-        dash = out.get("dash_crossings") or []
-        return 10 * len(out["crossings"]) + 10 * len(out["collisions"]) + len(dash), (text in hard or text in dash)
-    for d in plan.dims:
-        alts = (d.extra or {}).pop("_alts", None)
-        if not alts:
-            continue
-        n0, mine = bad(d.text)
-        if not mine:
-            continue
-        best = (n0, d.extra["label"])
-        for lb in alts:
-            d.extra["label"] = lb
-            n, mine = bad(d.text)
-            if n < best[0]:
-                best = (n, lb)
-            if not mine and n < n0:
-                break
-        d.extra["label"] = best[1]
 
 
 def param_table_rows(plan: DrawingPlan) -> dict[str, Any]:

@@ -1578,6 +1578,11 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 _arrow_pair(s, (ax_, ay_), (bx_, by_))
                 rendered_refs.append(d.ref)
                 continue
+            if d.kind == "linear" and (d.extra or {}).get("hubkw") and d.extra.get("sheet_pts"):  # 轮毂键槽 b、d+t2
+                from .render_gear import draw_sheet_linear
+                draw_sheet_linear(s, d)
+                rendered_refs.append(d.ref)
+                continue
             if d.kind == "linear" and ((d.extra or {}).get("install") or (d.extra or {}).get("pitch")) \
                     and d.extra.get("sheet_pts"):  # 安装尺寸 / 等距节距：规划层给定图纸坐标
                 (ax_, ay_), (bx_, by_) = d.extra["sheet_pts"]
