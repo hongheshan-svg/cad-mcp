@@ -825,7 +825,7 @@ def _hole_ra_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
             _, out = render(plan, p)
         except Exception:  # noqa: BLE001
             return 10 ** 6
-        return len(out["crossings"]) + len(out["collisions"])
+        return 10 * (len(out["crossings"]) + len(out["collisions"])) + len(out.get("dash_crossings") or [])  # 压点画线次之
     for d in ds:
         h = next((h for h in p.holes if h.name == d.ref[len("ra:hole:"):]), None)
         if h is None:
@@ -884,9 +884,10 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
         except Exception:  # noqa: BLE001
             return 10 ** 6
         allc = out["crossings"] + out["collisions"]
-        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc):
+        dash = out.get("dash_crossings") or []  # 压中心线/点画线：次一等的冲突
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc + dash):
             return 0
-        return len(allc)
+        return 10 * len(allc) + len(dash)
     for d in ds:
         face = face_of(d)
         v = vmap[d.view]
@@ -1389,6 +1390,11 @@ def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
             u, w = min(walls)
             d.view, d.at = sec.view, (round(u, 6), round(w, 6))
             d.extra = {**(d.extra or {}), "normal": (1, 0), "in_section": sec.label}
+            # 孔轴线（细点画线）在孔腔正中：引线缩短到 Ra 文字末端（尖端 + 引线 + 7 + 字宽）不越过轴线；
+            # 半个孔宽放不下时保持 8 mm（文字跨轴线）
+            room = half * vscale.get(sec.view, 1.0) - 8.0 - len(d.text) * 2.0
+            if room >= 3.5:
+                d.extra["reach"] = round(min(8.0, room), 2)
 
 
 def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:
@@ -4714,9 +4720,10 @@ def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         except Exception:  # noqa: BLE001
             return 10 ** 6
         allc = out["crossings"] + out["collisions"]
-        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc):
+        dash = out.get("dash_crossings") or []  # 压中心线/点画线：次一等的冲突
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc + dash):
             return 0  # 冲突与这个 Ra 无关：不动它
-        return len(allc)
+        return 10 * len(allc) + len(dash)
     sc, cy = fv.scale, fv.origin_on_sheet[1]
     R = max(dd for _, dd in p.shaft_steps) / 2 * sc
     y_top, y_bot = cy + R, cy - R
@@ -5882,6 +5889,16 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             hx, hy = F(u, v_)
             hr = h.drill / 2 * sc + 0.4
             bend_taken.append((hx - hr, hy - hr, hx + hr, hy + hr))
+    bend_lines = []  # 折弯线（细点画线，两端伸出轮廓约 4 mm）：别的折弯说明尽量不压它
+    for bd_ in p.bends:
+        if bd_["flat_axis"] == "v":
+            yb_ = F(0, bd_["flat_pos"])[1]
+            bend_lines.append((x0 - 5, yb_ - 0.3, x1 + 5, yb_ + 0.3))
+        else:
+            xb_ = F(bd_["flat_pos"], 0)[0]
+            bend_lines.append((xb_ - 0.3, y0 - 5, xb_ + 0.3, y1 + 5))
+    W_, H_ = plan.sheet_size
+    frame_ = (MARGIN + 1, MARGIN + 1, W_ - MARGIN - 1, H_ - MARGIN - 1)
     for d in plan.dims:
         if d.view != "flat_pattern":
             continue
@@ -5910,7 +5927,7 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 d.extra = {**d.extra, "sheet_pts": [(round(x0, 2), round(y1, 2)), (round(xb, 2), round(y, 2))],
                            "sheet_pos": (round((x0 + xb) / 2, 2), round(yy, 2)), "orient": "h"}
         elif d.kind == "callout" and d.at is not None and d.ref.startswith("bend"):
-            bn_ = _bend_note(p, int(d.ref[4:]), d.text, F(*d.at), (x0, y0, x1, y1), bend_taken)
+            bn_ = _bend_note(p, int(d.ref[4:]), d.text, F(*d.at), (x0, y0, x1, y1), bend_taken, bend_lines, frame_)
             d.extra = {**(d.extra or {}), **bn_}
             bend_taken.append(bn_["box"])
         elif d.kind == "callout" and d.at is not None:
@@ -5918,10 +5935,13 @@ def flat_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
             d.extra = {**(d.extra or {}), "sheet_pos": (round(px - _tw(d.text) / 2, 2), round(py + 1, 2))}
 
 
-def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None = None) -> dict:
+def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None = None,
+               soft: list | None = None, frame: tuple | None = None) -> dict:
     """展开图折弯说明（上折/下折 角度 R）的图纸位置：写在折弯线中部旁；离外轮廓太近换到线的另一侧；
     展开图内放不下时移到轮廓外——水平折弯线移到右侧（越过展开高度尺寸），竖直折弯线沿线引到上方
     （越过折弯定位尺寸行 y1+10+8k），左半边文字向左写、右半边向右写，配细线引出。
+    taken = 硬障碍（孔、已放的说明），soft = 别的折弯线（细点画线）：先找都不压的位置；轮廓外的位置出图框
+    （frame = 图框内区 x0, y0, x1, y1）时宁可压别的折弯线也留在线旁。
     返回 text_at（文字锚点）、anchor（start/middle/end）、rot（0 / 90 竖写）、leader（细线折线）、
     sheet_pos（文字左下角，供 CAD 注释）。"""
     x0, y0, x1, y1 = box
@@ -5929,33 +5949,51 @@ def _bend_note(p: ResolvedPart, i: int, text: str, at, box, taken: list | None =
     tw = text_width(text, 3)
     px, py = at
     lead: list = []
-    hit = lambda b_: any(_box_hit(b_, t_) > 0 for t_ in taken or [])  # noqa: E731
+    hard = list(taken or [])
+    both = hard + list(soft or [])
     def slide(c, lo, hi):  # 文字沿折弯线从中部向两端逐 1 mm 试位置（压孔等再挪）：返回第一个可用的中心
         for k in range(int(max(hi - lo, 0)) + 1):
             for t in ((c + k, c - k) if k else (c,)):
                 if lo <= t <= hi:
                     yield t
+
+    def in_frame(bx):
+        return frame is None or (frame[0] <= bx[0] and bx[2] <= frame[2] and frame[1] <= bx[1] and bx[3] <= frame[3])
     if bd["flat_axis"] == "v":  # 水平折弯线 y = py
-        tx = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
+        tx0 = min(max(px, x0 + 2 + tw / 2), x1 - 2 - tw / 2)
         ty = py + 1 if y1 - py > 4.6 else py - 3.2
-        tx = next((t for t in slide(tx, x0 + 2 + tw / 2, x1 - 2 - tw / 2)
-                   if not hit((t - tw / 2, ty, t + tw / 2, ty + 3))), None) if tw <= (x1 - x0) - 4 else None
+
+        def along(obs):
+            if tw > (x1 - x0) - 4:
+                return None
+            return next((t for t in slide(tx0, x0 + 2 + tw / 2, x1 - 2 - tw / 2)
+                         if not any(_box_hit((t - tw / 2, ty, t + tw / 2, ty + 3), o) > 0 for o in obs)), None)
+        tx = along(both)
+        if tx is None and not in_frame((x1 + 18.5, py - 1, x1 + 18.5 + tw, py + 2)):
+            tx = along(hard)
         if tx is not None:
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 0, "sheet_pos": (tx - tw / 2, ty)}
         else:
             lead = [[(x1 + 1, py), (x1 + 18, py)]]
             out = {"text_at": (x1 + 18.5, py - 1), "anchor": "start", "rot": 0, "sheet_pos": (x1 + 18.5, py - 1)}
     else:  # 竖直折弯线 x = px
-        ty = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
+        ty0 = min(max(py, y0 + 2 + tw / 2), y1 - 2 - tw / 2)
         tx = px - 1 if px - x0 > 4.6 else px + 3.2
-        ty = next((t for t in slide(ty, y0 + 2 + tw / 2, y1 - 2 - tw / 2)
-                   if not hit((tx - 3, t - tw / 2, tx, t + tw / 2))), None) if tw <= (y1 - y0) - 4 else None
+
+        def along(obs):
+            if tw > (y1 - y0) - 4:
+                return None
+            return next((t for t in slide(ty0, y0 + 2 + tw / 2, y1 - 2 - tw / 2)
+                         if not any(_box_hit((tx - 3, t - tw / 2, tx, t + tw / 2), o) > 0 for o in obs)), None)
+        n_u = sum(1 for b in p.bends if b["flat_axis"] != "v")
+        yn = y1 + 10 + 8 * (n_u - 1) + 7 if n_u else y1 + 5
+        left = px < (x0 + x1) / 2
+        ty = along(both)
+        if ty is None and not in_frame((px - 1 - tw if left else px, yn, px if left else px + 1 + tw, yn + 4.2)):
+            ty = along(hard)
         if ty is not None:
             out = {"text_at": (tx, ty), "anchor": "middle", "rot": 90, "sheet_pos": (tx, ty - tw / 2)}
         else:
-            n_u = sum(1 for b in p.bends if b["flat_axis"] != "v")
-            yn = y1 + 10 + 8 * (n_u - 1) + 7 if n_u else y1 + 5
-            left = px < (x0 + x1) / 2
             lead = [[(px, y1 + 1), (px, yn)], [(px - 1 - tw, yn), (px, yn)] if left else [(px, yn), (px + 1 + tw, yn)]]
             tx = px - 1 if left else px + 1
             out = {"text_at": (tx, yn + 1.2), "anchor": "end" if left else "start", "rot": 0,

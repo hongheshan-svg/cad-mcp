@@ -68,6 +68,9 @@ for n in range(N):
         elif out["crossings"] or out["collisions"]:
             stats["overlap"] += 1
             bad.append((n, "overlap", out["crossings"][:3], out["collisions"][:3], spec))
+        elif out.get("dash_crossings"):  # 虚线/点画线（中心线、轴线、分度圆）压字
+            stats["dash"] += 1
+            bad.append((n, "dash", out["dash_crossings"][:3], None, spec))
         else:
             stats["ok"] += 1
     except CadError as e:
