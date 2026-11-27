@@ -3436,6 +3436,11 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
         zs += [f["z0"], f["z1"], p.step_z(f["step"])[0]]
         if f["kind"] == "keyway" and f["step"] == len(p.shaft_steps) - 1:
             zs.append(Ltot)
+    for h in p.cross_holes:  # 横孔定位尺寸的两条尺寸界线（轴端段从轴端面量，其余从轴段起点）；标注引线 45° 斜出轮廓
+        last = h["step"] == len(p.shaft_steps) - 1 and len(p.shaft_steps) > 1
+        zs += [h["z"], Ltot if last else p.step_z(h["step"])[0]]
+        r_ = p.shaft_steps[h["step"]][1] / 2
+        zs += [h["z"] + r_ + k / sc for k in (0.0, 3.0, 6.0, 9.0)]  # 引线在轮廓上方 0–9 mm（Ra 符号高度）内的位置
     fr = shaft_gtol_fracs(p, sc)
     for g in p.geotols:
         if g["target"].startswith("step:"):
