@@ -1699,10 +1699,11 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                             (0.0 if h["end"] == "start" else Ltot, 0.0), {"keep": h["keep"]}))
         for f in p.shaft_features:
             sz0 = p.step_z(f["step"])[0]
-            if f["kind"] == "gear":  # 齿面粗糙度注在分度线延长线上（齿段右端外）
+            if f["kind"] == "gear":  # 齿面粗糙度注在分度线延长线上（齿段外，见 gear_flank_ra_z）
                 ra = p.gear["flank_ra"]
+                zt, zend = gear_flank_ra_z(p, f, f"Ra {ra:g}", scale)
                 dims.append(Dim("front", "roughness", None, ra, f"Ra {ra:g}", f"ra:flank:{f['name']}",
-                                (f["z1"] + 3 / scale, f["pd"] / 2), {"normal": (0, 1)}))
+                                (zt, f["pd"] / 2), {"normal": (0, 1), "ext_z": zend}))
                 continue
             if f["kind"] == "thread":  # 未满整段：注螺纹长度（自轴段端面起）
                 if not f["full"]:
@@ -1850,6 +1851,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                        layout="shaft", revisions=list(spec.revisions))
     plan._sec_z = [v.cut_z for v in views if v.type == "section" and v.cut_z is not None]  # 键槽断面的剖切位置（主视图轮廓上下的短粗线 + 字母）
     precision_sheet(plan, p)
+    _gear_flank_ext_sheet(plan)
     _shaft_gtol_frame_dx(plan, p)
     if spec.dimensions != "none":
         shaft_dim_sheet(plan, p)
@@ -3368,6 +3370,57 @@ def bore_dia_overflow(p: ResolvedPart, k: int, sc: float, text: str) -> str | No
     d_out = next(d for (L, d), (z0, z1) in zip(p.shaft_steps, (p.step_z(i) for i in range(len(p.shaft_steps))))
                  if z0 - 1e-9 <= z <= z1 + 1e-9)
     return "down" if tw + 3 <= (R - d_out / 2) * sc + 15 - 1.5 else "up"
+
+
+def gear_flank_ra_z(p: ResolvedPart, f: dict, text: str, sc: float) -> tuple[float, float]:
+    """齿面粗糙度（GB/T 4459.2：注在分度线延长线上）的符号尖端 z 与延长线起点（齿段端面 z）。
+    符号立在分度线之上（高约 8.4 mm、文字向右约 len·2 + 7 mm）。候选：齿段右端外（尖端离端面 3 mm）、
+    左端外（整个符号在齿段左侧）；符号覆盖范围内的轴段须比分度圆细 1.5 mm 以上（延长线与轮廓分得清），
+    伸到轴左端外时左端不能有引出标注；可用的取上方竖线（尺寸界线、伸出的直径线、框格引线）穿得少的，平局取右。都不行仍放右端。"""
+    w = 2 * 4.2 * 0.58 + len(text) * 2.0 + 2 + 1.0  # 尖端右侧的符号宽（图纸 mm）
+
+    def clear(za, zb):
+        for j, (_, dj) in enumerate(p.shaft_steps):
+            a_, b_ = p.step_z(j)
+            if a_ < zb and za < b_ and dj / 2 * sc > f["pd"] / 2 * sc - 1.5:
+                return False
+        return True
+    start_busy = p.shaft_chamfer or any(h["end"] == "start" for h in p.center_holes) \
+        or any(h["side"] == "start" for h in p.end_holes)
+    zr = f["z1"] + 3 / sc
+    zl = f["z0"] - (w + 2) / sc
+    Ltot = p.bbox.zmax - p.bbox.zmin
+    cands = []
+    for k in range(8):  # 沿延长线再往外挪（每次 2 mm 图纸）
+        zr_, zl_ = zr + 2 * k / sc, zl - 2 * k / sc
+        if clear(f["z1"] + 1e-6, zr_ + w / sc) and zr_ + w / sc <= Ltot + 30 / sc:
+            cands.append((zr_, f["z1"], 0, k))
+        if clear(zl_ - 2.6 / sc, f["z0"] - 1e-6) and zl_ - 2.6 / sc >= -30 / sc and not (zl_ - 2.6 / sc < 0 and start_busy):
+            cands.append((zl_, f["z0"], 1, k))
+    if not cands:
+        return zr, f["z1"]
+    obs = shaft_top_obstacles(p, sc)
+    cuts = [(g["z0"] + g["z1"]) / 2 for g in p.shaft_features if g["kind"] == "keyway"]  # 剖切符号（短粗线 + 右侧字母）
+
+    def cost(c):
+        lo, hi = min(c[0], c[1]), max(c[0], c[1])  # 延长线段
+        return (sum(c[0] - 3 / sc <= o <= c[0] + w / sc for o in obs)
+                + sum(min(lo, c[0] - 3 / sc) - 4 / sc <= z_ <= max(hi, c[0] + w / sc) + 1 / sc for z_ in cuts))
+    best = min(cands, key=lambda c: (cost(c), c[3], c[2]))
+    return best[0], best[1]
+
+
+def _gear_flank_ext_sheet(plan: "DrawingPlan") -> None:
+    """齿面 Ra 的分度线延长线（图纸坐标，细点画线）：从齿段端面到符号尖端，写入 extra["ext_pts"]，预览/SW/Creo 共用。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is None:
+        return
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.kind == "roughness" and d.ref.startswith("ra:flank:") and "ext_z" in ex and "sheet_at" in ex:
+            xe = shaft_sx(fv, None, ex["ext_z"])
+            tx, ty = ex["sheet_at"]
+            d.extra = {**ex, "ext_pts": [(round(xe, 2), ty), (round(tx + (1.0 if tx > xe else -1.0), 2), ty)]}
 
 
 def shaft_cut_z(p: ResolvedPart, f: dict, sc: float) -> float:

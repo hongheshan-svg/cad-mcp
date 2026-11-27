@@ -55,6 +55,53 @@ for n in range(N):
                 base.pop("center_holes", None)
         if r2.random() < .3:
             spec["auto_precision"] = True
+    if os.environ.get("EXTRA2"):  # 第二组扩展（独立随机流）：齿轮段、轴肩圆角、法兰孔、螺孔/竖直/配作横孔、孔内键槽、右端孔、半段螺纹
+        r3 = random.Random(int(sys.argv[1]) * 104729 + n)
+        if r3.random() < .3:
+            base["shoulder_fillet"] = r3.choice([0.5, 1, 1.5])
+        free = [i for i in range(k) if not any(f["step"] == i for f in feats)]
+        if free and r3.random() < .25:  # 齿轮段：齿顶圆 = m(z+2)，取接近该段直径的齿数
+            i = r3.choice(free); m = r3.choice([1.5, 2, 2.5, 3])
+            z = max(12, round(steps[i]["diameter"] / m) - 2)
+            steps[i]["diameter"] = round(m * (z + 2), 3); steps[i].pop("tolerance", None)
+            steps[i]["length"] = max(steps[i]["length"], 20)
+            feats.append({"feature": "gear", "name": f"Z{i}", "step": i, "module": m, "teeth": z})
+            free.remove(i)
+        if r3.random() < .25:
+            i = r3.randrange(k)
+            h = {"step": i}
+            kind = r3.choice(["tap", "vertical", "asm"])
+            if kind == "tap":
+                h["size"] = r3.choice(["M5", "M6", "M8"]); h["depth"] = 10
+            else:
+                h["diameter"] = r3.choice([4, 5, 6]); h["tolerance"] = "H7"
+                if kind == "vertical":
+                    h["direction"] = "vertical"
+                else:
+                    h["at_assembly"] = True
+            if steps[i]["diameter"] >= 20 and not any(f["feature"] == "gear" and f["step"] == i for f in feats):
+                base["cross_holes"] = [h]
+        if not base.get("bores") and r3.random() < .25:
+            dmin = min(st["diameter"] for st in steps)
+            bd = round(dmin * r3.choice([.4, .5]))
+            if bd >= 10:
+                b = {"diameter": bd, "side": r3.choice(["start", "end"])}
+                if r3.random() < .4:
+                    b["keyway"] = True; b["tolerance"] = "H7"
+                elif r3.random() < .5:
+                    b["length"] = round(sum(st["length"] for st in steps) * .3)
+                base["bores"] = [b]
+                base.pop("center_holes", None)
+                Dm = max(st["diameter"] for st in steps)
+                imax = [st["diameter"] for st in steps].index(Dm)
+                if r3.random() < .3 and Dm - bd > 24:
+                    base["flange_holes"] = [{"step": imax, "count": r3.choice([4, 6]), "pcd": round((Dm + bd) / 2),
+                                             "diameter": r3.choice([6.6, 9])}]
+        for f in feats:
+            if f["feature"] == "thread" and r3.random() < .4 and steps[f["step"]]["length"] >= 20:
+                f["length"] = round(steps[f["step"]]["length"] * .6)
+            if f["feature"] == "keyway" and r3.random() < .3:
+                f["offset"] = 2
     try:
         p = resolve_part(PartSpec.model_validate(spec))
         from cadmcp import rules

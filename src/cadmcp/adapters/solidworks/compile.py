@@ -683,6 +683,11 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                                 **({"text_pos": lb["text_at"], "anchor": lb["anchor"]} if lb else
                                                    {"text_pos": pos} if pos else {}),
                                                 **({"angle": 90} if (d.extra or {}).get("rot") == 90 else {})}))
+    for d in plan.dims:  # 齿面 Ra 的分度线延长线：细点画线（GB/T 4459.2）
+        if d.kind == "roughness" and (d.extra or {}).get("ext_pts"):
+            ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["ext_pts"]],
+                                              "style": "CENTER", "weight": "thin", "ref": d.ref + ":ext"},
+                                "齿面粗糙度：分度线延长到符号尖端（细点画线）"))
     for d in plan.dims:  # 局部热处理部位：视图中画线，改为粗点画线
         if d.kind == "chain":
             ops.append(NativeOp("view_line", {"view": d.view, "points": [list(q) for q in d.extra["sheet_pts"]],

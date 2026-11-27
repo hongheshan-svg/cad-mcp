@@ -605,3 +605,6 @@ Creo：`feat.round` edges 同样给点坐标。
   SW `section_view` 的 `z`、Creo `tk.drw` 剖面 `z`（`shaft_section_z`）都读它（断面图互相推开后不再在剖切位置正下方）。
   核对：原生剖切线位置与预览一致、断面形状正确。
 - 上方低一道尺寸行（孔深、横孔定位、放不下的短尺寸）在轮廓上方 10 mm（`TRACK_DY`）；`sheet_pos` 的 y 即该行，原生尺寸按它放。
+- 齿轮轴齿面粗糙度（`ra:flank:<名>`，GB/T 4459.2 注在分度线延长线上）：右邻轴段比分度圆粗时改标在齿段左端外，
+  符号可沿延长线外移避开上方竖线；延长线由规划层给出 `extra["ext_pts"]`（图纸坐标），SW `view_line`（CENTER、细）、
+  Creo `tk.drw.line` 画出。核对：原生延长线与分度线对齐、Ra 尖端落在延长线上。

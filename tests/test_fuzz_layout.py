@@ -395,3 +395,17 @@ def test_shaft_ra_on_dia_line_when_no_room():
     assert abs(ra[0].extra["sheet_at"][0] - dia.extra["sheet_pts"][0][0]) < 0.01
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_gear_flank_ra_left_when_right_blocked():
+    """齿段右邻轴段比分度圆粗：齿面 Ra 改标在左端外的分度线延长线上（GB/T 4459.2），延长线坐标规划层给出，SW/Creo 画细点画线。"""
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S89", "part_no": "S-89", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 40, "diameter": 36}, {"length": 80, "diameter": 45, "tolerance": "m6"}]}, "features": [{"feature": "groove", "name": "G1", "type": "undercut", "step": 1}, {"feature": "gear", "name": "Z0", "step": 0, "module": 2, "teeth": 16}]}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    ra = next(d for d in plan.dims if d.ref.startswith("ra:flank:"))
+    (xe, _), (xt, _) = ra.extra["ext_pts"]
+    assert xt < xe  # 在齿段左侧
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    from cadmcp.adapters.solidworks import compile as SW
+    ops = SW.compile_drawing(plan, "m.sldprt")
+    assert any(o.op == "view_line" and o.args.get("ref", "").endswith(":ext") for o in ops)

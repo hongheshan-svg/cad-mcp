@@ -370,6 +370,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             else:
                 s.line(*P(zt, -f["d"] / 2), *P(zt, f["d"] / 2), THICK)
     # 齿轮段（GB/T 4459.2 外形视图）：齿顶线即轮廓；分度线细点画线（伸出端面 2 mm）、齿根线细实线
+    for d in plan.dims:  # 齿面 Ra 的分度线延长线（规划层 ext_pts）
+        if d.kind == "roughness" and (d.extra or {}).get("ext_pts"):
+            (xa_, ya_), (xb_, yb_) = d.extra["ext_pts"]
+            s.line(xa_, ya_, xb_, yb_, THIN, CENTER)
     for f in (f for f in part.shaft_features if f["kind"] == "gear"):
         for sign in (1, -1):
             s.line(*P(f["z0"] - 2 / sc, sign * f["pd"] / 2), *P(f["z1"] + 2 / sc, sign * f["pd"] / 2), THIN, CENTER)

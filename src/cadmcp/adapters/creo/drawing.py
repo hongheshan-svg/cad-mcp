@@ -369,6 +369,9 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                 skip(f"{d.kind} 符号（无图纸坐标）")
                 continue
             at, pos = _xy(ex["sheet_at"]), _xy(gtol_frame_pos(ex) if d.kind == "gtol" else ex["sheet_pos"])
+            if d.kind == "roughness" and ex.get("ext_pts"):  # 齿面 Ra：分度线延长到符号尖端（细点画线）
+                ops.append(NativeOp("tk.drw.line", {"drawing": D, "view": vw, "points": [_xy(q) for q in ex["ext_pts"]],
+                                                    "font": "CTRLFONT", "width": 0.0}, "齿面粗糙度：分度线延长线"))
             if d.kind == "datum":
                 ops.append(NativeOp("tk.drw.datum", {"drawing": D, "view": vw, "at": at, "pos": pos, "label": d.text}))
             elif d.kind == "gtol":
