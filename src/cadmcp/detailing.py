@@ -1336,6 +1336,19 @@ def with_deviations(text: str) -> str:
 def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = None) -> DrawingPlan:
     """轴类零件图（见 _plan_shaft）。放大比例下主视图下方的尺寸带或断面图伸进标题栏上方的技术要求：降一档比例重排。"""
     plan = _plan_shaft(spec, p, today)
+    need = getattr(plan, "_lift_need", 0.0)
+    if need > 0:  # 伸出轮廓的直径文字（偏差写全）上方没地方：视图整体下移再排（不压技术要求才用）
+        p2 = _plan_shaft(spec, p, today, top_extra=need)
+        if not _shaft_hits_notes(p2) and getattr(p2, "_lift_need", 0.0) <= 0:
+            plan = p2
+        elif spec.sheet in (None, "auto") and plan.sheet == "A4":  # A4 竖放上下都没地方：换 A3 再排
+            s3 = spec.model_copy(update={"sheet": "A3"})
+            p3 = _plan_shaft(s3, p, today)
+            n3 = getattr(p3, "_lift_need", 0.0)
+            if n3 > 0:
+                p3 = _plan_shaft(s3, p, today, top_extra=n3)
+            if not _shaft_hits_notes(p3) and getattr(p3, "_lift_need", 0.0) <= 0:
+                plan = p3
     for s_ in (2.0, 1.0):
         if plan.scale <= s_ or not _shaft_hits_notes(plan):
             break
@@ -1361,7 +1374,7 @@ def _shaft_hits_notes(plan: "DrawingPlan") -> bool:
 
 
 def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
-                max_scale: float | None = None) -> DrawingPlan:
+                max_scale: float | None = None, top_extra: float = 0.0) -> DrawingPlan:
     """轴类按工程师习惯：主视图轴线水平、键槽朝前；每个键槽一个移出断面图（A-A、B-B…）放在主视图下方。
     尺寸：各轴段长度（链式）+ 总长、各段直径（带公差带）、键槽长度与定位、断面上的键宽和 d-t1、环槽标注、端部倒角。"""
     b = p.bbox
@@ -1387,17 +1400,8 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         ([max(sec_d, 30.0 if dets else 0.0)] if kws or dets else [])
     min_feat = min((f["width"] for f in p.shaft_features if "width" in f), default=0.0)
     sheet, scale = _choose(b, col_w, row_h, spec.sheet, min_feat, "part", max_scale=max_scale)
-    # 直径文字带极限偏差放不进该段（竖写长于直径）而只注公差带代号放得下 → 只注代号（GB/T 4458.5 允许）
+    # 直径带极限偏差的文字一律写全（车间按数值加工检验，不让人查表）：放不进该段时伸出轮廓，不改为只注公差带代号
     p._dia_code_only = set()
-    for j_, (L_, d_) in enumerate(p.shaft_steps):
-        z_ = p.step_z(j_)
-        room_ = shaft_text_room(p, (z_[0] + z_[1]) / 2, d_) * scale - 2
-        # 带偏差放不进：只注代号（代号放得下就不伸出轮廓；放不下也比带偏差伸出得短）
-        if text_width(_shaft_dia_label(p, j_), 3.5) > room_:
-            p._dia_code_only.add(j_)
-    for j_ in range(len(p.shaft_steps)):  # 轮廓内找不到位置（键槽占满）、文字须伸出轮廓：伸出越短越好 → 只注代号
-        if shaft_dia_blocked(p, j_, scale):
-            p._dia_code_only.add(j_)
     W, H = SHEETS[sheet]
     x0 = MARGIN + GAP + 8
     cy_main = H - MARGIN - GAP / 2 - D * scale / 2 - 8 - extra_top
@@ -1604,6 +1608,9 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         if nrow:  # 框格排到第二/三行：视图整体下移让出上方空间
             for v in views:
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - GTOL_ROW_GAP * nrow)
+        if top_extra:  # 伸出轮廓的长直径文字须越过上方尺寸行：视图整体下移
+            for v in views:
+                v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - top_extra)
         if any(d.kind == "roughness" and (d.extra or {}).get("on_frame") for d in dims):
             for v in views:  # 粗糙度标在框格上方：所有视图整体下移让出上方空间（尺寸都是模型坐标，不受影响）
                 v.origin_on_sheet = (v.origin_on_sheet[0], v.origin_on_sheet[1] - 12.0)
@@ -3443,7 +3450,8 @@ def shaft_sx(v: "ViewPlan", Ltot: float | None, z: float) -> float:
     return x
 
 
-def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str) -> tuple[float, float, float, float]:
+def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str,
+                       over_at: float | None = None) -> tuple[float, float, float, float]:
     """第 i 段直径竖写文字在图纸上的占位框（与 render_shaft._vdim 一致：文字在尺寸线左/右侧，放不下时伸出轮廓）。"""
     sc = front.scale
     z, side = shaft_dia_place(p, i, sc)
@@ -3456,6 +3464,8 @@ def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str) ->
     ym = (ya + yb) / 2
     if tw > room - 2:
         ym = ya - 1 - tw / 2 if (shaft_dia_overflow(p, i, sc, text) or "up") == "down" else yb + 1 + tw / 2
+        if over_at is not None:
+            ym = over_at + tw / 2
     x0 = x - 4.5 if side == "left" else x + 1
     return (x0, ym - tw / 2, x0 + 3.5, ym + tw / 2)
 
@@ -3677,6 +3687,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
     _shaft_num_dodge_leaders(plan)
+    _shaft_dia_lift(plan, p)
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -3861,6 +3872,101 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
         elif short:  # 两侧都被占（别的数字/引线）：放到轮廓与尺寸行之间的低一道
             d.extra = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], round(py - 7, 2))}
+
+
+def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """向上伸出轮廓的直径文字（带极限偏差写全，短轴段放不下）：压到上方尺寸行（尺寸线、数字）或引出标注时，
+    文字起点抬到这些行之上，直径线随之延长。结果 extra["over_at"]（文字下端的图纸 y），预览与 CAD 共用。"""
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if fv is None:
+        return
+    sc = fv.scale
+    cy = fv.origin_on_sheet[1]
+    obst = []
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view != "front":
+            continue
+        if eo.get("orient") == "h" and "sheet_pts" in eo and "sheet_pos" in eo:
+            xa, xb = sorted(q[0] for q in eo["sheet_pts"])
+            px, py = eo["sheet_pos"]
+            tx = eo.get("text_x", px)
+            tw_ = text_width(o.text, 3.5)
+            obst.append((min(xa, tx - tw_ / 2), py - 0.6, max(xb, tx + tw_ / 2), py + 0.6))  # 尺寸线
+            obst.append((tx - tw_ / 2, py, tx + tw_ / 2, py + 4.2))  # 数字
+        lb = eo.get("label")
+        if lb and "elbow" in lb and "end" in lb:
+            (ex, ey), (nx, _) = lb["elbow"], lb["end"]
+            obst.append((min(ex, nx), ey - 0.6, max(ex, nx), ey + 4.2))
+    W, H = plan.sheet_size
+    lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
+    for d in plan.dims:
+        if d.view != "front" or d.kind != "diameter" or not d.ref.startswith("step"):
+            continue
+        i = int(d.ref[4:].split("_")[0])
+        if shaft_dia_overflow(p, i, sc, d.text) != "up":
+            continue
+        x0, y0, x1, y1 = shaft_dia_text_box(p, i, fv, d.text)
+        tw = y1 - y0
+        start = y0
+        for _ in range(12):
+            hit = [b for b in obst if b[0] < x1 + 0.3 and x0 - 0.3 < b[2] and b[1] < start + tw + 0.3 and start - 0.3 < b[3]]
+            if not hit:
+                break
+            start = max(b[3] for b in hit) + 1.0
+        if start + tw >= H - MARGIN - 2:  # 抬到上方尺寸行之上会出图框：记下缺口，由 plan_shaft_drawing 下移视图重排
+            plan._lift_need = max(getattr(plan, "_lift_need", 0.0), start + tw - (H - MARGIN - 2) + 1)
+            continue
+        if start > y0 + 1e-6:
+            ex = d.extra or {}
+            d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
+        lines.append((x0, x1, start + tw + 1))
+    # 延长的直径线（及文字）穿过上方引出标注（环槽/退刀槽/倒角）文字：该标注反向书写（引线斜向另一侧）
+    xl = {}
+    for d in plan.dims:
+        if d.view == "front" and d.kind == "diameter" and d.ref.startswith("step"):
+            i = int(d.ref[4:].split("_")[0])
+            if shaft_dia_overflow(p, i, sc, d.text) == "up":
+                xl[i] = shaft_sx(fv, None, shaft_dia_z(p, i, sc))
+    if not lines:
+        return
+    labels = [o for o in plan.dims if o.view == "front" and o.kind == "callout" and "elbow" in (o.extra or {}).get("label", {})]
+
+    def lbox(lb):
+        return (min(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] - 0.3, max(lb["elbow"][0], lb["end"][0]), lb["elbow"][1] + 4.2)
+
+    def hit_lines(bx):
+        return any(bx[0] < b + 0.3 and a - 0.3 < bx[2] and bx[1] < top for a, b, top in lines)
+    for o in labels:
+        lb = o.extra["label"]
+        if not hit_lines(lbox(lb)):
+            continue
+        ax = lb["anchor"][0]
+        w = abs(lb["end"][0] - lb["elbow"][0])
+        y = lb["elbow"][1]
+        right = lb["end"][0] >= lb["elbow"][0]
+        for dx_ in (6, 10, 16):
+            ex_ = ax - dx_ if right else ax + dx_
+            nl = {**lb, "elbow": (ex_, y), "end": (ex_ - w if right else ex_ + w, y),
+                  "text_at": ((ex_ - w if right else ex_) + 0.5, lb["text_at"][1]), "dir": -1 if right else 1}
+            bx = lbox(nl)
+            others = [lbox(q.extra["label"]) for q in labels if q is not o]
+            if bx[0] > MARGIN + 2 and bx[2] < W - MARGIN - 2 and not hit_lines(bx) \
+                    and not any(_box_hit(bx, ob) > 0 for ob in others) \
+                    and not any(_box_hit(bx, ob) > 0 for ob in obst if ob[1] > y - 5) \
+                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst + others if ob[3] - ob[1] > 2):
+                o.extra = {**o.extra, "label": nl}
+                break
+        else:  # 反向也不行：整条标注抬到这些直径线顶端之上（引线变长）
+            top_ = max(t for a, b, t in lines if lbox(lb)[0] < b + 0.3 and a - 0.3 < lbox(lb)[2]) + 1.0
+            dy_ = top_ - (y - 0.3)
+            nl = {**lb, "elbow": (lb["elbow"][0], round(y + dy_, 2)), "end": (lb["end"][0], round(y + dy_, 2)),
+                  "text_at": (lb["text_at"][0], round(lb["text_at"][1] + dy_, 2))}
+            bx = lbox(nl)
+            others = [lbox(q.extra["label"]) for q in labels if q is not o]
+            if bx[3] < H - MARGIN - 2 and not hit_lines(bx) and not any(_box_hit(bx, ob) > 0 for ob in others + obst) \
+                    and not any(_seg_box(nl["anchor"], nl["elbow"], ob) for ob in obst + others if ob[3] - ob[1] > 2):
+                o.extra = {**o.extra, "label": nl}
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:

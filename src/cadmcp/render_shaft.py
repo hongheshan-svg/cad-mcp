@@ -60,7 +60,7 @@ def _row_text_spans(plan, d, P, same_row) -> list[tuple[float, float]]:
     return out
 
 
-def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None):
+def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None, over_at=None):
     """竖直直径尺寸。文字长于尺寸线（短小轴段上的螺纹代号等）时，尺寸线向外延长，文字放在轮廓之外
     （overflow = up | down，由规划层 shaft_dia_overflow 决定）。"""
     from .render_svg import _text_w
@@ -71,8 +71,9 @@ def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None):
             s.line(x, ya, x, ya - tw - 2, THIN)
             ym = ya - 1 - tw / 2
         else:  # 文字离轮廓 1 mm：上方尺寸行（轮廓上 14 mm）留得下较长的公差带代号
-            s.line(x, yb, x, yb + tw + 2, THIN)
-            ym = yb + 1 + tw / 2
+            y0 = over_at if over_at is not None else yb + 1  # 规划层抬到上方尺寸行之上（_shaft_dia_lift）
+            s.line(x, yb, x, y0 + tw + 1, THIN)
+            ym = y0 + tw / 2
     s.line(x, ya, x, yb, THIN)
     _arrow(s, x, ya, 0, -1)
     _arrow(s, x, yb, 0, 1)
@@ -440,7 +441,7 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             from .detailing import shaft_dia_blocked, shaft_text_room
             _vdim(s, x, cy - dia / 2 * sc, cy + dia / 2 * sc, d.text, text_left=side == "left",
                   room=0.0 if shaft_dia_blocked(part, i, sc) else shaft_text_room(part, zz, dia) * sc,
-                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up")
+                  overflow=shaft_dia_overflow(part, i, sc, d.text) or "up", over_at=(d.extra or {}).get("over_at"))
         elif d.kind in ("datum", "gtol", "roughness"):
             from . import render_gdt
             z, r = d.at
