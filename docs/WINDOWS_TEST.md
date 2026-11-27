@@ -561,3 +561,5 @@ Creo：`feat.round` edges 同样给点坐标。
 - 直径极限偏差一律写全（不再在放不下时只注公差带代号）；文字放不进该段时向上伸出轮廓，规划层 `extra["over_at"]`
   给出文字下端高度（越过上方尺寸行），`sheet_pos` 同步。核对 SW/Creo 直径尺寸文字是否放在该位置、尺寸线是否随之延长，
   上下偏差是否叠写（GB/T 4458.5）。样例：`tests/test_fuzz_layout.py::test_short_step_keeps_deviations`。
+- 向下伸出的同样处理：文字移到下方尺寸行之下（`over_at` 仍为文字下端），被延长直径线穿过的长度尺寸数字
+  在本尺寸界线之间偏开（`text_x`）。

@@ -3874,6 +3874,35 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
             d.extra = {**ex, "track": 1, "sheet_pos": (ex["sheet_pos"][0], round(py - 7, 2))}
 
 
+def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float, float]]) -> None:
+    """延长的直径线穿过主视图水平尺寸的数字：数字在本尺寸界线之间偏到直径线一侧（不与同行数字相压）。"""
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "front" or ex.get("orient") != "h" or "sheet_pts" not in ex or "sheet_pos" not in ex:
+            continue
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        tw = text_width(d.text, 3.5)
+        px, py = ex["sheet_pos"]
+        c0 = ex.get("text_x", px)
+        crossing = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi and c0 - tw / 2 - 0.5 < x < c0 + tw / 2 + 0.5]
+        if not crossing:
+            continue
+        row = []
+        for o in plan.dims:
+            eo = o.extra or {}
+            if o is d or o.view != "front" or eo.get("orient") != "h" or "sheet_pos" not in eo or abs(eo["sheet_pos"][1] - py) > 1:
+                continue
+            ot = text_width(o.text, 3.5)
+            oc = eo.get("text_x", eo["sheet_pos"][0])
+            row.append((oc - ot / 2, oc + ot / 2))
+        xs_all = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi]
+        for c in sorted((min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6), key=lambda c: abs(c - c0)):
+            if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3 and not any(c - tw / 2 - 0.5 < x < c + tw / 2 + 0.5 for x in xs_all) \
+                    and not any(a - 0.5 < c + tw / 2 and c - tw / 2 < b + 0.5 for a, b in row):
+                d.extra = {**ex, "text_x": round(c, 2)}
+                break
+
+
 def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
     """向上伸出轮廓的直径文字（带极限偏差写全，短轴段放不下）：压到上方尺寸行（尺寸线、数字）或引出标注时，
     文字起点抬到这些行之上，直径线随之延长。结果 extra["over_at"]（文字下端的图纸 y），预览与 CAD 共用。"""
@@ -3909,11 +3938,30 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 leads.append((tuple(lb["anchor"]), (ex, ey)))
     W, H = plan.sheet_size
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
+    vlines = []  # 因越过尺寸行而延长的直径线段：(x, y 下端, y 上端)
     for d in plan.dims:
         if d.view != "front" or d.kind != "diameter" or not d.ref.startswith("step"):
             continue
         i = int(d.ref[4:].split("_")[0])
-        if shaft_dia_overflow(p, i, sc, d.text) != "up":
+        ov_ = shaft_dia_overflow(p, i, sc, d.text)
+        if ov_ == "down":  # 向下伸出：文字移到下方尺寸行之下（over_at 仍为文字下端）
+            x0, y0, x1, y1 = shaft_dia_text_box(p, i, fv, d.text)
+            tw = y1 - y0
+            start = y0
+            for _ in range(12):
+                tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
+                hit = [b for b in obst if _box_hit(tb_, b) > 0]
+                hit += [(0, min(a_[1], e_[1]) - 0.5, 0, 0) for a_, e_ in leads if _seg_box(a_, e_, tb_)]
+                if not hit:
+                    break
+                start = min(b[1] for b in hit) - 1.0 - tw
+            if start < y0 - 1e-6 and start > MARGIN + 2 and not any(
+                    _box_hit((x0, start, x1, start + tw), _view_box(v)) > 0 for v in plan.views if v is not fv and _view_box(v)):
+                ex = d.extra or {}
+                d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
+                vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), start - 1, y0))
+            continue
+        if ov_ != "up":
             continue
         x0, y0, x1, y1 = shaft_dia_text_box(p, i, fv, d.text)
         tw = y1 - y0
@@ -3931,7 +3979,9 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if start > y0 + 1e-6:
             ex = d.extra or {}
             d.extra = {**ex, "over_at": round(start, 2), "sheet_pos": (ex.get("sheet_pos", (0, cy))[0], round(start + tw / 2, 2))}
+            vlines.append((shaft_sx(fv, None, shaft_dia_z(p, i, sc)), y0, start + tw + 1))
         lines.append((x0, x1, start + tw + 1))
+    _shaft_num_dodge_vlines(plan, vlines)
     # 延长的直径线（及文字）穿过上方引出标注（环槽/退刀槽/倒角）文字：该标注反向书写（引线斜向另一侧）
     xl = {}
     for d in plan.dims:
@@ -4255,6 +4305,15 @@ def local_section_sheet(plan: "DrawingPlan", s) -> dict[str, Any] | None:
     h0, h1, d = s.path[0]
     z = s.bbox.zmax
     return {"boundary": out, "cut_points": [_p3(s.view, h0, d, z), _p3(s.view, h1, d, z)]}
+
+
+def _view_box(v: "ViewPlan") -> tuple[float, float, float, float] | None:
+    """视图本体包围框（图纸坐标）。"""
+    if not v.size_mm:
+        return None
+    cx, cy = v.origin_on_sheet
+    w, h = v.size_mm
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
 
 
 def view_overlaps(plan: "DrawingPlan", pad: float = 1.0) -> list[tuple[str, str]]:

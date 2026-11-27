@@ -68,8 +68,9 @@ def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None, over_at=
     ym = (ya + yb) / 2
     if tw > (yb - ya if room is None else room) - 2:
         if overflow == "down":
-            s.line(x, ya, x, ya - tw - 2, THIN)
-            ym = ya - 1 - tw / 2
+            y1_ = over_at + tw if over_at is not None else ya - 1  # 规划层移到下方尺寸行之下（_shaft_dia_lift）
+            s.line(x, ya, x, y1_ - tw - 1, THIN)
+            ym = y1_ - tw / 2
         else:  # 文字离轮廓 1 mm：上方尺寸行（轮廓上 14 mm）留得下较长的公差带代号
             y0 = over_at if over_at is not None else yb + 1  # 规划层抬到上方尺寸行之上（_shaft_dia_lift）
             s.line(x, yb, x, y0 + tw + 1, THIN)
