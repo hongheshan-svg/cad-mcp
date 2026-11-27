@@ -381,8 +381,13 @@ def tk_detail_ops(plan) -> list[NativeOp]:
                     "type": d.ref.split(":")[1].split("@")[0], "value": value, "diameter": str(zone).startswith("Φ"),
                     "datums": [x for x in datums[:3] if x]}))
             elif d.kind == "roughness":
-                ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": at, "pos": pos,
-                                                              "ra": d.value, "removal": "required"}))
+                if ex.get("rot"):  # 标在尺寸线上（转 90°，无被选边线，自由放置）
+                    ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": None, "pos": pos,
+                                                                  "ra": d.value, "removal": "required",
+                                                                  "angle": float(ex["rot"])}))
+                else:
+                    ops.append(NativeOp("tk.drw.surface_finish", {"drawing": D, "view": vw, "at": at, "pos": pos,
+                                                                  "ra": d.value, "removal": "required"}))
             else:  # 焊缝：TOOLKIT 无通用焊缝符号接口，用带引线注释
                 text = (f"{d.text}{'/' + d.text if ex.get('both_sides') else ''} ◣{' ○' if ex.get('all_around') else ''}"
                         f"  {ex.get('count', 1)}处  {ex.get('process', '')}").strip()

@@ -466,6 +466,10 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
             elif d.kind == "gtol":  # 轴上框格放到键槽尺寸行之上
                 x_ = d.extra["sheet_pos"][0]
                 render_gdt.fcf(s, x_, py, (0, 1), d.extra["cells"], reach=row - py, dx=d.extra.get("frame_dx", 0.0))
+            elif d.kind == "roughness" and d.extra.get("rot") and "sheet_at" in d.extra:  # 标在竖直尺寸线上（转 90°）
+                tx_, ty_ = d.extra["sheet_at"]
+                s.line(tx_, ty_ - 2.0, tx_, ty_, THIN)  # 尺寸线延长到符号尖端
+                render_gdt.roughness(s, tx_, ty_, (0, 1), d.text, rot=90)
             elif d.kind == "roughness" and d.extra.get("on_frame"):  # 标在框格上方（GB/T 131）
                 render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             else:

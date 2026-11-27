@@ -1516,7 +1516,7 @@ class SwExecutor:
         self.readback.setdefault("gdt_native", []).append(ref)
         return {"gcs": gcs, "attached": attached}
 
-    def op_surface_finish(self, view, ref, at, pos, fallback_text, at_model, ra, leader):
+    def op_surface_finish(self, view, ref, at, pos, fallback_text, at_model, ra, leader, angle=0.0):
         v = self.views.get(view)
         if v is None:
             raise OpFailed(f"view {view} not on sheet")
@@ -1532,6 +1532,11 @@ class SwExecutor:
             self._const(("swFILLED_ARROWHEAD", "swArrowFilled")) or 0, "", "", "", "", f"Ra {ra:g}", "", "")
         if not sf:
             return self._gdt_fallback(view, ref, fallback_text, at_model, "InsertSurfaceFinishSymbol3 failed")
+        if angle:  # 标在竖直尺寸线上：符号转 angle°（ISFSymbol.Angle，弧度）  TODO(实机核对) 旋转方向与基点
+            try:
+                sf.Angle = math.radians(angle)
+            except Exception as e:  # noqa: BLE001
+                self.readback.setdefault("warnings", []).append(f"{ref}: SFSymbol.Angle 设置失败 {e}")
         self.readback.setdefault("gdt_native", []).append(ref)
         return {}
 

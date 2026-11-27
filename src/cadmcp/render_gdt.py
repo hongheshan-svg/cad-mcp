@@ -69,8 +69,20 @@ def _cell(s, xc, y0, c) -> None:
     s.text(xc, y0 + 1.6, c, 3.5, "middle")
 
 
-def roughness(s, ax, ay, n, text, reach=None):
-    """表面结构符号：√ 尖端触及表面（或其延长线），上方横线写 Ra 值；非朝上的面用引线引出。"""
+def roughness(s, ax, ay, n, text, reach=None, rot: int = 0):
+    """表面结构符号：√ 尖端触及表面（或其延长线），上方横线写 Ra 值；非朝上的面用引线引出。
+    rot=90：整个符号逆时针转 90°（标在竖直尺寸线上，与竖写尺寸文字同向）。"""
+    if rot == 90:
+        h = 4.2
+        R = lambda dx, dy: (ax - dy, ay + dx)  # noqa: E731  图纸坐标（y 向上）逆时针 90°
+        w = len(text) * 2.0 + 2
+        for a, b in (((0, 0), (-h * 0.58, h)), ((-h * 0.58, h), (-h * 0.58 + 1.2, h)), ((0, 0), (2 * h * 0.58, 2 * h)),
+                     ((2 * h * 0.58, 2 * h), (2 * h * 0.58 + w, 2 * h))):
+            s.line(*R(*a), *R(*b), THIN)
+        tw = len(text) * 2.0  # 与横线上方文字同位置：起点 (2h·0.58 + 0.8, 2h − 3.6)，转后按中点放
+        cx, cy = R(2 * h * 0.58 + 0.8 + tw / 2, 2 * h - 3.6)
+        s.text(cx, cy, text, 3, "middle", -90)
+        return
     nx, ny = n
     if (nx, ny) != (0, 1):
         from .detailing import ra_reach

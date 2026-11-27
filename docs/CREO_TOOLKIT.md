@@ -84,7 +84,7 @@ C++ 端在该视图内找投影距离最近的模型边（容差 1.5 mm 图纸�
 | `drw.dim` | `view`, `kind`（`linear|diameter|radius|ordinate`）, `p1`, `p2`（被标注边上的点；diameter/radius 只用 p1；ordinate 的 p1 为基准轮廓边、p2 为要素边，孔量到圆心）, `at`（尺寸文字位置）, `orient`（`h|v|aligned`；ordinate 须 h/v）, `text`（覆盖文字，可空；如 `Φ20k6`）, `tol`（可选 `[上偏差, 下偏差]` mm，原生正负公差叠写显示；应答带 tol_set 布尔） → ordinate：同视图同方向同基准边共用一条基线（首个转 `ProDrawingOrdbaselineCreate`，其余 `ProDrawingDimToOrdinate`）；p2 与基准同一条边时只返回基线 |
 | `drw.datum` | `view`, `at`（贴边点）, `pos`（方框位置）, `label` |
 | `drw.gtol` | `view`, `at`（被测要素点，null 表示不带引线）, `pos`, `type`（flatness/position/... 与 IR 同名）, `value`, `diameter`（bool）, `datums`（≤3） |
-| `drw.surface_finish` | `view`, `at`, `pos`, `ra`, `removal`（`required|prohibited`） |
+| `drw.surface_finish` | `view`, `at`（可为 null：不选边、自由放在 `pos`）, `pos`, `ra`, `removal`（`required|prohibited`）, `angle`（可选，度，逆时针；标在竖直尺寸线上时 90） |
 | `drw.table` | `origin`（左下角）, `columns`（`[{"title","width"}]`）, `rows`（字符串二维表）, `row_height`（默认 6）, `header_bottom`（bool：GB 明细表表头在下） |
 | `drw.section` | `parent`（画剖切线的视图，显示剖切箭头；local 可空）, `replaces`（被设为剖视的已有视图）, `label`, `kind`（full/step/half/local）, `cut_points`（模型坐标折线，在零件顶面上；full/half/local 取前两点）, `center`（视图位置，仅校验）, `boundary`（local 必填：局部区域闭合折线，图纸 mm） → `ProXSectionOffsetCreate` 建剖截面（一段=平面剖，多段=阶梯剖）后 `ProDrawingView2DSectionSet`；half 的分界面为垂直剖切线的默认基准面 |
 | `drw.removed_section` | `view`（CREOSON 已建的沿轴线观察视图，如 V_SEC_A）, `label`（剖截面名，如 A）, `z`（剖切位置：IR Z 坐标=轴向，mm）, `parent`（画剖切箭头的视图，可空）, `half_span`（剖切线半长，默认 500） → 偏移剖截面（平面 IR z=const）+ 2D 剖视 + 只显示切面（`ProDrawingView2DSectionAreaSet`） |

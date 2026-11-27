@@ -735,8 +735,9 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
                                          "datums": datums[:3], "leader": ex.get("attach") != "callout"},
                                 "选中被测要素边线 → InsertGtol → SetFrameSymbols2/SetFrameValues2"))
         else:
+            rot_ = {"at": None, "leader": False, "angle": float(ex["rot"])} if ex.get("rot") else {}  # 标在尺寸线上
             ops.append(NativeOp("surface_finish", {**common, "ra": d.value,
-                                                   "leader": tuple(ex.get("normal", (0, 1))) != (0, 1)},
+                                                   "leader": tuple(ex.get("normal", (0, 1))) != (0, 1), **rot_},
                                 "选中边线 → IModelDocExtension.InsertSurfaceFinishSymbol3（去除材料，Ra 值）"))
     if plan.title_block.get("surface_finish") and plan.model_kind == "part":
         sf = plan.title_block["surface_finish"]

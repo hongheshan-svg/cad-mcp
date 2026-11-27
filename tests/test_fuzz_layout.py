@@ -132,6 +132,7 @@ SPECS = [
     '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 15, "diameter": 42}, {"length": 10, "diameter": 45}, {"length": 10, "diameter": 50}, {"length": 60, "diameter": 60}, {"length": 50, "diameter": 57}, {"length": 20, "diameter": 49}], "center_holes": {"type": "B"}, "cross_holes": [{"step": 4, "diameter": 6}]}, "features": [{"feature": "groove", "name": "G1", "type": "undercut", "step": 1}, {"feature": "groove", "name": "G2", "type": "circlip", "step": 2}, {"feature": "keyway", "name": "K3", "step": 3, "length": 45}]}',
     '{"name": "S20", "part_no": "S-20", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 10, "diameter": 50, "tolerance": "h7"}, {"length": 10, "diameter": 55}, {"length": 60, "diameter": 47}, {"length": 40, "diameter": 44, "tolerance": "js6"}, {"length": 30, "diameter": 41}, {"length": 50, "diameter": 38, "tolerance": "js6"}], "center_holes": {"type": "B"}}, "features": [{"feature": "groove", "name": "G0", "type": "circlip", "step": 0}, {"feature": "keyway", "name": "K2", "step": 2, "length": 45}]}',
     '{"name": "S44", "part_no": "S-44", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 10, "diameter": 30, "tolerance": "h7"}, {"length": 60, "diameter": 25}, {"length": 15, "diameter": 20, "tolerance": "h7"}, {"length": 10, "diameter": 15, "tolerance": "m6"}, {"length": 10, "diameter": 12}]}, "features": [{"feature": "groove", "name": "G1", "type": "grinding", "step": 1}, {"feature": "groove", "name": "G3", "type": "grinding", "step": 3}], "auto_precision": true}',
+    '{"name": "S236", "part_no": "S-236", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 25, "diameter": 30, "tolerance": "f7"}, {"length": 60, "diameter": 25, "tolerance": "js6"}], "bores": [{"diameter": 12, "tolerance": "H7"}]}, "features": [], "auto_precision": true}',
 ]
 
 
@@ -303,9 +304,28 @@ def test_crowded_circlip_goes_to_detail_view():
 
 def test_crowded_gtol_short_shaft_enlarges():
     """10 mm 轴承位上要放圆柱度 + 轴肩跳动等多个框格，1:1 排不开（会重叠）：放大到 2:1，框格不重叠。"""
-    spec = json.loads(SPECS[-1])
+    spec = json.loads('{"name": "S44", "part_no": "S-44", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 0, "steps": [{"length": 10, "diameter": 30, "tolerance": "h7"}, {"length": 60, "diameter": 25}, {"length": 15, "diameter": 20, "tolerance": "h7"}, {"length": 10, "diameter": 15, "tolerance": "m6"}, {"length": 10, "diameter": 12}]}, "features": [{"feature": "groove", "name": "G1", "type": "grinding", "step": 1}, {"feature": "groove", "name": "G3", "type": "grinding", "step": 3}], "auto_precision": true}')
     p = resolve_part(PartSpec.model_validate(spec))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     assert plan.scale == 2.0
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_bore_ra_on_dim_line():
+    """孔小、孔径文字伸出外轮廓：内孔 Ra 标在孔径尺寸线上（转 90°，尖端在尺寸线上、文字之后），
+    外圆框格引线让开；SW / Creo 都按自由放置 + 旋转 90° 下发。"""
+    from cadmcp.adapters.creo import drawing as CD
+    from cadmcp.adapters.solidworks import compile as SW
+    p = resolve_part(PartSpec.model_validate(json.loads('{"name": "S236", "part_no": "S-236", "title": "测试轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1.5, "steps": [{"length": 25, "diameter": 30, "tolerance": "f7"}, {"length": 60, "diameter": 25, "tolerance": "js6"}], "bores": [{"diameter": 12, "tolerance": "H7"}]}, "features": [], "auto_precision": true}')))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    ra = next(d for d in plan.dims if d.ref == "ra:bore:0")
+    dim = next(d for d in plan.dims if d.ref == "bore0_dia")
+    assert ra.extra["rot"] == 90 and ra.extra["sheet_at"][0] == dim.extra["sheet_pts"][0][0]
+    assert ra.extra["sheet_at"][1] > dim.extra["over_at"]
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    sw = next(o for o in SW.compile_drawing(plan, "m.sldprt") if o.op == "surface_finish" and o.args["ref"] == "ra:bore:0")
+    assert sw.args["angle"] == 90 and sw.args["at"] is None and sw.args["leader"] is False
+    cr = [o for o in CD.tk_detail_ops(plan) if o.op == "tk.drw.surface_finish" and o.args.get("angle") == 90]
+    assert len(cr) == 1 and cr[0].args["at"] is None

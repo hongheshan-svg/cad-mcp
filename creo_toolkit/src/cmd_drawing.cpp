@@ -135,7 +135,7 @@ struct SymVar { std::string name; std::string value; };
 
 // 在视图内放置库符号 symname；tip_sel/tip_mm 非空则带引线指向该边；vars 为符号可变文字
 int place_symbol(ProDrawing d, ProView view, const char* symname, const Pt& pos_mm, ProSelection tip_sel,
-                 const Pt* tip_mm, const std::vector<SymVar>& vars) {
+                 const Pt* tip_mm, const std::vector<SymVar>& vars, double angle_deg) {
     ProDtlsyminstdata data = nullptr;
     check(ProDtlsyminstdataAlloc((ProMdl)d, &data), "ProDtlsyminstdataAlloc");
 
@@ -169,6 +169,10 @@ int place_symbol(ProDrawing d, ProView view, const char* symname, const Pt& pos_
         check(ProDtlsyminstdataVartextAdd(data, vt), "ProDtlsyminstdataVartextAdd");
     }
 
+    if (angle_deg != 0.0) {
+        // 标在竖直尺寸线上：符号整体旋转（逆时针）。TODO(实机核对): ProDtlsyminstdataAngleSet 的角度单位（度/弧度）
+        check(ProDtlsyminstdataAngleSet(data, angle_deg), "ProDtlsyminstdataAngleSet");
+    }
     ProDtlsyminst inst;
     check(ProDtlsyminstCreate((ProMdl)d, data, &inst), "ProDtlsyminstCreate");
     check(ProDtlsyminstShow(&inst), "ProDtlsyminstShow");
@@ -479,7 +483,7 @@ json cmd_drw_datum(const json& a) {
     try {
         // TODO(实机核对): 系统库中的基准符号名（疑似 "datum_feat_sym"/"ref_datum"）与其可变文字名（如 "name"）；
         //   另一条路是模型侧 ProSetDatumTag + 图中 show annotation，但图纸里直接放符号更可控
-        id = place_symbol(d, view, "datum_feat_sym", pos, sel, &at, {{"name", label}});
+        id = place_symbol(d, view, "datum_feat_sym", pos, sel, &at, {{"name", label}}, 0.0);
     } catch (...) {
         ProSelectionFree(&sel);
         throw;
@@ -542,8 +546,8 @@ json cmd_drw_gtol(const json& a) {
 json cmd_drw_surface_finish(const json& a) {
     ProDrawing d = find_drawing(arg_str(a, "drawing"));
     ProView view = find_view(d, arg_str(a, "view"));
-    Pt at = arg_pt2(a, "at");
     Pt pos = arg_pt2(a, "pos");
+    Pt at = (has(a, "at") && !a["at"].is_null()) ? arg_pt2(a, "at") : pos;  // 无 at：标在尺寸线上（自由放置）
     double ra = arg_num(a, "ra");
     std::string removal = has(a, "removal") ? arg_str(a, "removal") : "required";
     if (removal != "required" && removal != "prohibited")
@@ -554,18 +558,20 @@ json cmd_drw_surface_finish(const json& a) {
     if (ra == std::floor(ra)) std::snprintf(buf, sizeof buf, "%d", (int)ra);
     else std::snprintf(buf, sizeof buf, "%g", ra);
 
-    ProSelection sel = pick_edge_at(d, view, at);
+    double angle = has(a, "angle") && a["angle"].is_number() ? a["angle"].get<double>() : 0.0;
+    // at 为空：标在尺寸线上，不选边线，符号自由放置在 pos（尖端）
+    ProSelection sel = (has(a, "at") && !a["at"].is_null()) ? pick_edge_at(d, view, at) : nullptr;
     int id;
     try {
         // TODO(实机核对): 系统符号库粗糙度符号名——常见 "machined"（去除材料）/"unmachined"（不去除）/"standard1"；
         //   可变文字名通常为 "roughness_height"。
         const char* sym = removal == "required" ? "machined" : "unmachined";
-        id = place_symbol(d, view, sym, pos, sel, &at, {{"roughness_height", buf}});
+        id = place_symbol(d, view, sym, pos, sel, sel ? &at : nullptr, {{"roughness_height", buf}}, angle);
     } catch (...) {
-        ProSelectionFree(&sel);
+        if (sel) ProSelectionFree(&sel);
         throw;
     }
-    ProSelectionFree(&sel);
+    if (sel) ProSelectionFree(&sel);
     return json{{"id", id}};
 }
 

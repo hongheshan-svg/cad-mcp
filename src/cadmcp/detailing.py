@@ -3235,9 +3235,17 @@ def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):
     if kind == "datum":
         return "front", (zd, -rb), (0, -1), {"reach": (r_out(zd) - rb) * sc + 7}
     if kind == "gtol":
-        zg = z0 + 0.3 * (z1 - z0)
-        if abs(zg - zd) * sc < 3:
-            zg = z0 + 0.7 * (z1 - z0)
+        # 框格引线避开孔径尺寸线及其左侧竖写文字（孔小、文字伸出时还接着转 90° 的 Ra 符号，再向左约 9 mm）；
+        # 框格从引线左 3.5 mm 向右展开：引线在孔径线右侧 ≥ 5 mm，或在左侧让出整个框格宽 + 10 mm
+        def ok_(zg):
+            return (zg - zd) * sc >= 5 or (zd - zg) * sc >= 40
+        fr_ = next((t for t in (0.3, 0.7, 0.15, 0.85, 0.5) if ok_(z0 + t * (z1 - z0))), None)
+        if fr_ is None:
+            zg = z0 + 0.3 * (z1 - z0)
+            if abs(zg - zd) * sc < 3:
+                zg = z0 + 0.7 * (z1 - z0)
+        else:
+            zg = z0 + fr_ * (z1 - z0)
         return "front", (zg, rb), (0, 1)
     vlines = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))] + \
              [bore_dia_place(p, i, sc) for i in range(len(p.shaft_bores))] + bore_steps(p)
@@ -3246,6 +3254,10 @@ def _bore_anchor(p: ResolvedPart, k: int, kind: str, sc: float):
         best = min(cands, key=lambda z: (sum(z - 3.5 / sc <= x <= z + 22 / sc for x in vlines), abs(z - (z0 + z1) / 2)))
         if not any(best - 3.5 / sc <= x <= best + 22 / sc for x in vlines):  # √ 左笔画伸出约 2.4 mm
             return "front", (best, -rb), (0, 1)
+    if bore_dia_overflow(p, k, sc, _dia_text(b["d"], b["tol"], True)) == "up":
+        # 孔小、孔径文字伸出到外轮廓上方：Ra 标在孔径尺寸线上（GB/T 131），符号转 90° 接在尺寸文字之后，
+        # 图纸位置由 _shaft_ra_on_dim 在孔径文字定位后确定
+        return "front", (zd, rb), (0, 1), {"on_dim": f"bore{k}_dia"}
     # 向下引出（零件下方、链式尺寸行之前）：避开孔径尺寸线上的基准符号、外圆直径线、轴肩线（链式尺寸界线）
     shoulders = [p.step_z(j)[1] for j in range(len(p.shaft_steps) - 1)] + [0.0, p.bbox.zmax - p.bbox.zmin]  # 含两端面
     obs = vlines + shoulders + [zd - 4 / sc, zd + 4 / sc]
@@ -3289,11 +3301,12 @@ def shaft_text_room(p: ResolvedPart, z: float, d: float) -> float:
     return 2 * rb if rb > 0 else d
 
 
-def bore_dia_place(p: ResolvedPart, k: int, sc: float) -> float:
-    """第 k 个内孔直径尺寸线的轴向位置：文字不压内台阶线、离外径尺寸线 ≥ 5 mm（图纸）、离孔口/孔底 ≥ 3 mm，尽量居中。"""
+def bore_dia_place(p: ResolvedPart, k: int, sc: float, with_outer: bool = True) -> float:
+    """第 k 个内孔直径尺寸线的轴向位置：文字不压内台阶线、离外径尺寸线 ≥ 5 mm（图纸）、离孔口/孔底 ≥ 3 mm，尽量居中。
+    with_outer=False：不看外圆直径线（几何公差框格排布用的粗位置，外圆直径线位置又依赖框格排布）。"""
     b = p.shaft_bores[k]
-    outer = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))]
-    others = [bore_dia_place(p, i, sc) for i in range(k)]
+    outer = [shaft_dia_z(p, j, sc) for j in range(len(p.shaft_steps))] if with_outer else []
+    others = [bore_dia_place(p, i, sc, with_outer) for i in range(k)]
     z0, z1 = b["z0"], b["z1"]
     cands = [z0 + (z1 - z0) * t / 40 for t in range(2, 39)]
 
@@ -3457,8 +3470,15 @@ def shaft_gtol_layout(p: ResolvedPart, sc: float) -> dict[str, tuple[float, int]
         info.append({"key": f"{g['type']}@{g['target']}", "w": w / sc, "ra": g["target"] in ra_steps,
                      "zf": p.step_z(int(g["target"][9:]))[1] if sh else None, "cands": cands(g)})
 
+    bore_up = []  # 伸出外轮廓上方的孔径尺寸线（左侧竖写文字，可能还接着转 90° 的 Ra）：引线与框格都让开
+    for k_, b_ in enumerate(p.shaft_bores):
+        tw_ = text_width(_dia_text(b_["d"], b_["tol"], True), 3.5)
+        if not b_.get("kw") and tw_ > b_["d"] * sc - 2:  # 孔里写不下（伸出方向按上方处理，宁可多让）
+            bore_up.append(bore_dia_place(p, k_, sc, with_outer=False))
+
     def solo(it, z, row, pref):  # 与其它框格无关的代价
         c = 4 * row + pref
+        c += sum(30 for zb in bore_up if zb - 10 / sc < z < zb + 5 / sc)
         c += sum(20 for fa, fb in flank if fa <= z <= fb)
         c += sum(3 for x in lines + shoulder_faces if abs(x - z) < 2.5 / sc)
         c += sum(3 for m, hw in texts if abs(m - z) < hw)
@@ -3953,6 +3973,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
     _shaft_short_text_side(plan, p)  # 余下放不下的短尺寸数字：在规划层定侧（预览与 CAD 共用 text_x）
     _shaft_num_dodge_datum(plan)  # 基准方框落进下方链式尺寸行（短轴段放不开）：数字偏到方框一侧或界线外
+    _shaft_ra_on_dim(plan)  # 标在孔径尺寸线上的 Ra：接在（已定位的）尺寸文字之后
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -4103,6 +4124,30 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+RA_ON_DIM_GAP = 3.0  # 尺寸文字末端到 Ra 符号尖端（√ 短边向文字一侧斜出约 2.4 mm）
+
+
+def ra_on_dim_len(text: str) -> float:
+    """标在竖直尺寸线上的 Ra 符号沿线占的长度（文字末端起：间隙 + 长边 + 横线）。"""
+    return RA_ON_DIM_GAP + 2 * 4.2 * 0.58 + len(text) * 2.0 + 2
+
+
+def _shaft_ra_on_dim(plan: "DrawingPlan") -> None:
+    """Ra 标在孔径尺寸线上（extra["on_dim"] = 尺寸 ref）：符号尖端在尺寸线上、文字末端之后 RA_ON_DIM_GAP，
+    转 90°（与竖写尺寸文字同向，从右往左看），写入 sheet_at = sheet_pos = 尖端、rot = 90。预览与 CAD 共用。"""
+    for r in plan.dims:
+        er = r.extra or {}
+        if r.kind != "roughness" or not er.get("on_dim"):
+            continue
+        d = next((o for o in plan.dims if o.ref == er["on_dim"] and o.view == "front"), None)
+        ex = (d.extra or {}) if d else {}
+        if d is None or ex.get("over_at") is None or "sheet_pts" not in ex:
+            continue
+        x = ex["sheet_pts"][0][0]
+        tip = (round(x, 2), round(ex["over_at"] + text_width(d.text, 3.5) + RA_ON_DIM_GAP, 2))
+        r.extra = {**er, "sheet_at": tip, "sheet_pos": tip, "rot": 90}
 
 
 def _shaft_num_dodge_datum(plan: "DrawingPlan") -> None:
@@ -4512,6 +4557,9 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
             return None, None, None
         x = ex["sheet_pts"][0][0]
         tw = text_width(d.text, 3.5)
+        ra = next((r for r in plan.dims if r.kind == "roughness" and (r.extra or {}).get("on_dim") == d.ref), None)
+        if ra is not None:  # 尺寸线上接着的 Ra 符号（转 90°）：与文字一起避让
+            return ov, (x - 8.9, ex["over_at"], x - 1.0, ex["over_at"] + tw + ra_on_dim_len(ra.text)), x
         return ov, (x - 4.5, ex["over_at"], x - 1.0, ex["over_at"] + tw), x
 
     for d in plan.dims:

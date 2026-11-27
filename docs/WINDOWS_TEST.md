@@ -591,3 +591,9 @@ Creo：`feat.round` edges 同样给点坐标。
   定位 `G*_pos`（外圆上方，选边点 `pick_pts` 为轴段端面与槽左壁）。槽宽写不进时箭头在外、数字移到槽深尺寸另一侧（`arrows_out`）。
   核对：SW `CreateDetailViewAt4` 的圆是否包住轴段端面、三个尺寸能否在放大图里选到边；Creo `tk.drw.detail_view` 同理。
   样例：`tests/test_fuzz_layout.py::test_crowded_circlip_goes_to_detail_view`。
+- 内孔 Ra 标在孔径尺寸线上（GB/T 131）：孔小、孔径文字伸出外轮廓上方时，Ra 符号转 90°（与竖写尺寸文字同向）、
+  尖端落在尺寸线上、接在文字末端之后 3 mm（`extra["on_dim"]`、`rot` = 90，`sheet_at` = 尖端）。
+  SW：`surface_finish` 带 `angle` = 90、`at` = None、无引线，插入后设 `ISFSymbol.Angle`（弧度）——核对旋转方向与基点（尖端）是否与预览一致。
+  Creo：`tk.drw.surface_finish` 的 `at` 为 null、`angle` = 90 → `ProDtlsyminstdataAngleSet`——核对角度单位（度/弧度）与旋转基点。
+  原生尺寸线不会自动延长到符号尖端（预览补了 2 mm 短线），记下实际观感。
+  样例：`tests/test_fuzz_layout.py::test_bore_ra_on_dim_line`。
