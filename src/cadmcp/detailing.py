@@ -3434,6 +3434,10 @@ def _xh_callout_flip(plan: "DrawingPlan") -> None:
             px, py = ex["sheet_pos"]
             hw = text_width(d.text, 3.5) / 2 + 0.5
             boxes.append((px - hw, py, px + hw, py + 4.5))
+        elif d.view == "front" and d.kind == "diameter" and ex.get("orient") == "v" and ex.get("sheet_pts"):
+            (x_, ya_), (_, yb_) = ex["sheet_pts"]  # 轴段直径：竖写文字在尺寸线旁（左右侧都算），居中
+            ym, hh = (ya_ + yb_) / 2, min(text_width(d.text, 3.5), abs(yb_ - ya_)) / 2
+            boxes.append((x_ - 4.5, ym - hh, x_ + 4.5, ym + hh))
     placed = [(lb["text_at"][0], lb["elbow"][1], lb["text_at"][0] + text_width(d.text, 3.5), lb["elbow"][1] + 4.5)
               for d in plan.dims if d.kind == "callout" and not d.ref.startswith("xh:") and d.view == "front"
               and (lb := (d.extra or {}).get("label"))]
