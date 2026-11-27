@@ -1272,11 +1272,16 @@ def _place_weld_symbols(plan: "DrawingPlan", main: "ViewPlan") -> None:
                  for dy in (12, 18, 26, 34, 42, 52, 62, -12, -18, -26, -34, -42, -52)]
         # 大视图里焊缝点四周都是构件：引到主视图外（上/下/左/右，逐行外推）
         t_, b_, l_, r_ = cy + vh / 2, cy - vh / 2, cx - vw / 2, cx + vw / 2
-        for k in range(4):
-            for dx in (10, -10 - WELD_SYM_W, 24, -24 - WELD_SYM_W):
+        for k in range(8):
+            for dx in (10, -10 - WELD_SYM_W, 24, -24 - WELD_SYM_W, 46, -46 - WELD_SYM_W):
                 cands += [(ax + dx, t_ + 8 + 9 * k), (ax + dx, b_ - 34 - 9 * k)]
-            for dy in (8, -8, 18, -18):
+            for dy in (8, -8, 18, -18, 30, -30):
                 cands += [(r_ + 22 + 12 * k, ay + dy), (l_ - 34 - WELD_SYM_W - 12 * k, ay + dy)]
+        for v in plan.views:  # 主视图四周都挤：放到别的视图外沿（右侧、上方）
+            ox, oy = v.origin_on_sheet
+            ow, oh = v.size_mm
+            cands += [(ox + ow / 2 + 6, ay + dy) for dy in (0, 10, -10, 20, -20, 35, -35)]
+            cands += [(ax + dx, oy + oh / 2 + 8) for dx in (10, 40, 80, -46, -90)]
         for pos in cands:
                 dx, dy = pos[0] - ax, pos[1] - ay
                 bx = weld_symbol_box((ax, ay), pos)
