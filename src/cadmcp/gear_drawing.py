@@ -62,7 +62,14 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     # 技术要求/标题栏一列时，下沿不低于该栏顶部
     n_notes = len(_notes_and_title(spec, p, sheet, scale, today)[0])
     lim = (5 + 56 + 14 + 5 * n_notes + 6 + 16 + 4) if ex + da * sc / 2 + 16 > W - 5 - 180 else MARGIN + 2
+    from .gear import param_rows
+    t_w, t_h = sum(w for _, w in TABLE_COLS), TABLE_ROW_H * (len(param_rows(g, g["accuracy"], g.get("mate"))) + 1)
+    if ex + da * sc / 2 + 16 > W - MARGIN - t_w - 2:  # 左视图（含右侧框格/键槽尺寸）伸进右上角参数表的横向范围：整体下移到表下
+        cy = min(cy, H - MARGIN - t_h - 4 - da * sc / 2 - 14)
     free = cy - da * sc / 2 - 26 - lim
+    if free < 0 and (spec.sheet in (None, "auto")) and sheet != list(SHEETS)[-1]:  # 本图幅放不下：换大一号
+        nxt = list(SHEETS)[list(SHEETS).index(sheet) + 1]
+        return plan_gear_drawing(spec.model_copy(update={"sheet": nxt}), p, today)
     if free > 4:
         cy -= round(free / 2, 1)
     main = ViewPlan("front", sc, (b * sc, da * sc), (x0 + b * sc / 2, cy))

@@ -265,3 +265,24 @@ def test_gear_mesh_in_assembly():
     bad = {**asm, "name": "GM2", "components": [asm["components"][0], {**asm["components"][1], "place": {"offset": [58, 0, 0]}}]}
     r2 = svc.build(AssemblySpec.model_validate(bad))
     assert any(f["rule"] == "A006" and "中心距 58" in f["message"] for f in r2["rules"]["findings"])
+
+
+def test_small_gear_views_below_param_table():
+    """A4 竖放的小齿轮：左视图横向伸进右上角参数表时，视图整体下移到表下，不被表盖住。"""
+    sp = {**GEAR, "base": {"type": "extrude", "profile": {"shape": "circle", "diameter": 48}, "thickness": 15},
+          "gear": {"module": 1.5, "teeth": 30},
+          "features": [{"feature": "hole", "name": "Bore", "type": "simple", "size": 20, "tolerance": "H7",
+                        "positions": [[0, 0]]},
+                       {"feature": "pocket", "name": "KW", "face": "top", "depth": "through",
+                        "profile": {"shape": "rect", "width": 6, "height": 4.8, "center": [0, 10.4]}}]}
+    p = _p(sp)
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    t = plan.gear_table
+    ox, oy = t["origin"]
+    w, h = t["size"]
+    for v in plan.views:
+        cx, cy = v.origin_on_sheet
+        vw, vh = v.size_mm
+        assert cx + vw / 2 < ox or cy + vh / 2 + 12 < oy - h
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

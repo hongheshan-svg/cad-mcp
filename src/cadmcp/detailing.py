@@ -3422,7 +3422,13 @@ def hub_keyway_symmetry_extra(hk: list, ex: float, ey: float, r_out: float) -> d
     框格在端视图外圆上方（避开 d+t2 竖直尺寸及其外移的文字）。hk = hub_keyway_dims 的结果；r_out = 外圆图上半径。"""
     xr, yw = hk[0].extra["sheet_pts"][1][0], hk[0].extra["sheet_pos"][1]
     xk = round(xr + 4, 2)
-    y_frame = round(max(ey + r_out + 6, yw + 6), 2)
+    y_frame = max(ey + r_out + 6, yw + 6)
+    if len(hk) > 1:  # d+t2 文字外移到槽底之上时（小齿轮/薄壁套），框格横向盖住它就再抬到文字之上
+        xt, ty = hk[1].extra["sheet_pos"]
+        half = text_width(hk[1].text, 3.5) / 2
+        if xk - 3.5 - 1 < xt + 1 and xt - 4.5 < xk - 3.5 + 36:
+            y_frame = max(y_frame, ty + half + 2)
+    y_frame = round(y_frame, 2)
     return {"sheet_at": (xr, yw), "normal": (0, 1), "elbow_h": {"from": (xr, yw), "to": (xk, yw)},
             "reach": round(y_frame - yw, 2), "sheet_pos": (xk, y_frame)}
 
