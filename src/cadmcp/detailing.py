@@ -3882,7 +3882,14 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         return
     sc = fv.scale
     cy = fv.origin_on_sheet[1]
-    obst = []
+    obst, leads = [], []
+    for v in plan.views:  # 局部放大图在主视图上的标号：引线 + 罗马数字
+        dt = getattr(v, "detail", None) or {}
+        if v.type == "detail" and "leader" in dt and "label_at" in dt:
+            a_, b_ = dt["leader"]
+            leads.append((tuple(a_), tuple(b_)))
+            lx, ly = dt["label_at"]
+            obst.append((lx - 1, ly - 0.5, lx + 4, ly + 5.5))
     for o in plan.dims:
         eo = o.extra or {}
         if o.view != "front":
@@ -3898,6 +3905,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if lb and "elbow" in lb and "end" in lb:
             (ex, ey), (nx, _) = lb["elbow"], lb["end"]
             obst.append((min(ex, nx), ey - 0.6, max(ex, nx), ey + 4.2))
+            if "anchor" in lb:
+                leads.append((tuple(lb["anchor"]), (ex, ey)))
     W, H = plan.sheet_size
     lines = []  # 向上伸出的直径线/文字：(x0, x1, 顶端 y)
     for d in plan.dims:
@@ -3911,6 +3920,8 @@ def _shaft_dia_lift(plan: "DrawingPlan", p: ResolvedPart) -> None:
         start = y0
         for _ in range(12):
             hit = [b for b in obst if b[0] < x1 + 0.3 and x0 - 0.3 < b[2] and b[1] < start + tw + 0.3 and start - 0.3 < b[3]]
+            tb_ = (x0 - 0.3, start - 0.3, x1 + 0.3, start + tw + 0.3)
+            hit += [(0, 0, 0, max(a_[1], e_[1]) + 0.5) for a_, e_ in leads if _seg_box(a_, e_, tb_)]  # 斜引线穿文字
             if not hit:
                 break
             start = max(b[3] for b in hit) + 1.0
