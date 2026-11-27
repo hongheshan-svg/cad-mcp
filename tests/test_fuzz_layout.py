@@ -37,3 +37,34 @@ def test_fuzz_layout_clean(js):
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+ASM_SPECS = [
+    '{"parts": [{"name": "PL0", "part_no": "PL-0", "title": "座板", "material": "Q235", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 80, "height": 80}, "thickness": 15}, "features": [{"feature": "hole", "name": "Pin0", "type": "simple", "size": 20, "tolerance": "H7", "positions": [[-13, 0]]}, {"feature": "hole", "name": "Pin1", "type": "simple", "size": 10, "tolerance": "H7", "positions": [[13, 0]]}]}, {"name": "PN0_0", "part_no": "PN-0-0", "title": "销", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 35, "diameter": 20, "tolerance": "h6"}, {"length": 8, "diameter": 26}]}}, {"name": "PN0_1", "part_no": "PN-0-1", "title": "销", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 35, "diameter": 10, "tolerance": "k6"}, {"length": 8, "diameter": 16}]}}], "asm": {"name": "A0", "part_no": "A-0", "title": "测试组件", "components": [{"id": "plate", "source": "part:PL0"}, {"id": "pin0", "source": "part:PN0_0", "place": {"offset": [-13, 0, -5]}}, {"id": "pin1", "source": "part:PN0_1", "place": {"offset": [13, 0, -10]}}]}}',
+    '{"parts": [{"name": "BS1", "part_no": "BS-1", "title": "轴", "material": "45#", "base": {"type": "shaft", "chamfer": 1, "steps": [{"length": 30, "diameter": 20, "tolerance": "k6"}, {"length": 10, "diameter": 27}]}}, {"name": "BH1", "part_no": "BH-1", "title": "轴承座板", "material": "HT200", "base": {"type": "extrude", "profile": {"shape": "rect", "width": 150, "height": 120}, "thickness": 14}, "features": [{"feature": "hole", "name": "Seat", "type": "simple", "size": 47, "tolerance": "H7", "positions": [[0, 0]]}]}], "asm": {"name": "A1", "part_no": "A-1", "title": "测试组件", "components": [{"id": "shaft", "source": "part:BS1"}, {"id": "brg", "source": "lib:BRG-6204", "place": {"offset": [0, 0, 5]}}, {"id": "seat", "source": "part:BH1", "place": {"offset": [0, 0, 5]}}]}}',
+]
+
+
+@pytest.mark.parametrize("js", ASM_SPECS)
+def test_fuzz_asm_layout_clean(js):
+    """装配图：薄座板小比例时配合代号与总体尺寸相撞（总体尺寸外移 / A3 放大一档）；就近一侧引出。"""
+    import tempfile
+
+    from cadmcp.detailing import plan_assembly_drawing
+    from cadmcp.gateway.service import CadService
+    from cadmcp.ir import AssemblySpec
+    d = json.loads(js)
+    svc = CadService.from_config(None, None, tempfile.mkdtemp())
+    svc.change_begin("F")
+    for p_ in d["parts"]:
+        svc.build(PartSpec.model_validate(p_))
+    svc.build(AssemblySpec.model_validate(d["asm"]))
+    a = svc._models()[d["asm"]["name"]].resolved
+    plan = plan_assembly_drawing(DrawingSpec(model=d["asm"]["name"]), a)
+    _, out = render(plan, a)
+    assert out["crossings"] == [] and out["collisions"] == []
+
+
+def test_scale_label_keeps_decimal():
+    from cadmcp.detailing import scale_label
+    assert scale_label(0.4) == "1:2.5" and scale_label(0.25) == "1:4" and scale_label(2.5) == "2.5:1"

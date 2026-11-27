@@ -1378,6 +1378,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                 continue
             if d.kind == "linear" and d.axis == ha and d.at is None:
                 yy = vy0 - (22 if has_ord_h or prec_below else 10)  # 坐标尺寸区、基准/框格之外
+                if (d.extra or {}).get("pushed"):  # 规划层外移（让开配合尺寸文字）
+                    yy = d.extra["sheet_pos"][1]
                 s.line(vx0, yy, vx1, yy)
                 s.line(vx0, vy0 - 2, vx0, yy - 1.5)
                 s.line(vx1, vy0 - 2, vx1, yy - 1.5)
@@ -1390,6 +1392,8 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     s.text((vx0 + vx1) / 2, yy + 1, d.text, 3.5, "middle")
             elif d.kind == "linear" and d.axis == va and d.at is None:
                 xx = vx0 - (22 if prec_left else 10)  # 纵向坐标尺寸画在右侧；左侧让开基准符号
+                if (d.extra or {}).get("pushed"):
+                    xx = d.extra["sheet_pos"][0]
                 s.line(xx, vy0, xx, vy1)
                 s.line(vx0 - 2, vy0, xx - 1.5, vy0)
                 s.line(vx0 - 2, vy1, xx - 1.5, vy1)

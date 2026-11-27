@@ -57,7 +57,8 @@ def hole_view(face: str, vtypes: set[str]) -> str | None:
 
 
 def scale_label(s: float) -> str:
-    return f"{int(s)}:1" if s >= 1 else f"1:{int(round(1 / s))}"
+    # GB/T 14690：1:2.5、2.5:1 等带小数的比例照写（不能取整）
+    return f"{round(s, 2):g}:1" if s >= 1 else f"1:{round(1 / s, 2):g}"
 
 
 def _extent(b: Box, axis: str) -> float:
@@ -215,7 +216,13 @@ def _choose(b: Box, col_w, row_h, sheet: str | None, min_feature: float, kind: s
                     if _fits(sh, s, col_w, row_h, notes_h) and (min_feature <= 0 or min_feature * s >= MIN_FEATURE_ON_PAPER
                                                         or s <= 1 and min_feature * s >= 1.0):
                         return sh, s
-    # 装配：最小的图幅，要求比例不小于 1:5 且填充率达标（给明细表留位）
+    # 装配：最小的图幅，要求比例不小于 1:5 且填充率达标（给明细表留位）；
+    # 但 A4 只能缩小画、A3 能放大一档比例时用 A3（A3 是常用图幅，小件不缩小画）
+    if kind != "part" and (sheet is None or sheet == "auto"):
+        s4 = next((s for s in SCALES if s <= 1 and _fits("A4", s, col_w, row_h, notes_h)), None)
+        s3 = next((s for s in SCALES if s <= 1 and _fits("A3", s, col_w, row_h, notes_h)), None)
+        if s4 is not None and s3 is not None and s4 < 1 and s3 > s4 and s3 >= 0.2:
+            sheets = [s_ for s_ in sheets if s_ != "A4"]
     candidates = []
     for sh in sheets:
         s = next((s for s in SCALES if s <= 1 and _fits(sh, s, col_w, row_h, notes_h)), None)
@@ -1568,7 +1575,44 @@ def plan_assembly_drawing(spec: DrawingSpec, a: ResolvedAssembly, today: date | 
     plan.asm_section = plan_asm_section(a, views)
     plan.axes = asm_axes(a, views)
     overall_dim_sheet(plan, a)
+    _push_overall_past_fits(plan)
     return plan
+
+
+def _fit_text_box(d: "Dim") -> tuple[float, float, float, float]:
+    px_, py_ = d.extra["sheet_pos"]
+    tw_ = text_width(d.text, 3.5)
+    return (px_ - 1, py_ - 1, px_ + tw_ + 1, py_ + 4.5) if d.extra["orient"] == "h" else \
+        (px_ - 4.5, py_ - 1, px_ + 1, py_ + tw_ + 1)
+
+
+def _push_overall_past_fits(plan: "DrawingPlan") -> None:
+    """配合尺寸文字落在总体尺寸带上（薄件小比例时，向左/向下伸出的配合代号）→ 该总体尺寸整体外移到配合文字之外
+    （extra["pushed"]，预览与 CAD 都按 sheet_pos 画）。外移后出图框则不动。"""
+    W, H = plan.sheet_size
+    for v in plan.views:
+        fits = [_fit_text_box(d) for d in plan.dims if d.view == v.type and (d.extra or {}).get("fit")]
+        if not fits:
+            continue
+        for d in plan.dims:
+            ex = d.extra or {}
+            if d.view != v.type or d.kind != "linear" or d.at is not None or "sheet_pos" not in ex \
+                    or ex.get("fit") or ex.get("install") or ex.get("pitch"):
+                continue
+            (ax_, ay_), (bx_, by_) = ex["sheet_pts"]
+            px_, py_ = ex["sheet_pos"]
+            if ex["orient"] == "v":
+                band = (px_ - 5, min(ay_, by_), px_ + 1.5, max(ay_, by_))
+                hits = [b for b in fits if _box_hit(b, band) > 0]
+                nx = min((b[0] for b in hits), default=px_) - 2
+                if hits and nx - 5 > MARGIN + 2:
+                    d.extra = {**ex, "sheet_pos": (round(nx, 2), py_), "pushed": True}
+            else:
+                band = (min(ax_, bx_), py_ - 1.5, max(ax_, bx_), py_ + 5)
+                hits = [b for b in fits if _box_hit(b, band) > 0]
+                ny = min((b[1] for b in hits), default=py_) - 6
+                if hits and ny - 2 > MARGIN + 2:
+                    d.extra = {**ex, "sheet_pos": (px_, round(ny, 2)), "pushed": True}
 
 
 def asm_notes(a: ResolvedAssembly) -> list[str]:
@@ -1912,7 +1956,10 @@ def _fit_dims(a, views, balloons, sheet_size, ts) -> tuple[list[Dim], int]:
                 others.append((ox - ow / 2 - 16, oy - oh / 2, ox - ow / 2 - 2, oy + oh / 2))
                 others.append((ox - ow / 2, oy - oh / 2 - 16, ox + ow / 2, oy - oh / 2 - 2))
             W_, H_ = sheet_size
-            cands = [(t_, push, side) for push in (0.0, 1.0, 2.0) for side in (1, -1)
+            # 先试离配合处近的一侧（左半边的孔往左引，右半边往右），免得尺寸线横穿别的零件
+            near = (p0[0] + p1[0]) / 2 < cx if vertical_axis else (p0[1] + p1[1]) / 2 < cy
+            sides = (-1, 1) if near else (1, -1)
+            cands = [(t_, push, side) for push in (0.0, 1.0, 2.0) for side in sides
                      for t_ in ts]
             for t_, push, side in cands:
                 mx, my = p0[0] + (p1[0] - p0[0]) * t_, p0[1] + (p1[1] - p0[1]) * t_
