@@ -2904,6 +2904,11 @@ def _detail_plan(p: ResolvedPart, front: "ViewPlan", v: "ViewPlan", Ltot: float,
     # 标号避开主视图上方的竖线（键槽/环槽等定位尺寸的界线、轴肩线）：引线长 5/9/13 mm，自由侧优先
     vlines = [shaft_sx(front, Ltot, z) for d in (others or []) if d.view == "front" and d.kind == "linear"
               and d.axis == "z" and d.at is not None for z in d.at]
+    for d in others or []:  # 向上伸出轮廓的直径线（偏差写全的长文字）会穿过上方标号
+        if d.view == "front" and d.kind == "diameter" and d.ref.startswith("step"):
+            j = int(d.ref[4:].split("_")[0])
+            if shaft_dia_overflow(p, j, sc, d.text) == "up":
+                vlines.append(shaft_sx(front, Ltot, shaft_dia_z(p, j, sc)))
     tw_l = text_width(v.label, 3.5)
     best = None
     for n_, (sg, L_) in enumerate([(sx, 5), (sx, 9), (sx, 13), (-sx, 5), (-sx, 9)]):
