@@ -425,6 +425,9 @@ def render_shaft(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> N
                     lb_ = (d2.extra or {}).get("label") or {}
                     if d2.view == "front" and d2.kind == "callout" and "elbow" in lb_:
                         (x1_, y1_), (x2_, y2_) = lb_["anchor"], lb_["elbow"]
+                        (lx1_, ly_), (lx2_, _) = lb_["elbow"], lb_.get("end", lb_["elbow"])
+                        if y + 0.3 < ly_ + 4.0 and ly_ - 0.3 < y + 3.4:  # 标注文字与水平线在本行高度
+                            row_.append((min(lx1_, lx2_), max(lx1_, lx2_)))
                         for yy_ in (y + 0.8, y + 4.3):
                             if min(y1_, y2_) <= yy_ <= max(y1_, y2_) and abs(y2_ - y1_) > 1e-6:
                                 xx_ = x1_ + (x2_ - x1_) * (yy_ - y1_) / (y2_ - y1_)

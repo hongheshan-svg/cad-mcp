@@ -3828,6 +3828,7 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
                 oc = eo.get("text_x", (oa + ob) / 2)
                 row += [(oc - ot / 2, oc + ot / 2), (oa - 0.3, oa + 0.3), (ob - 0.3, ob + 0.3)]
             row += [(x2 - 4.5, x2 + 4.5) for x2, ov2 in lines if (ov2 == "down") == below]
+            row += _label_row_spans(plan, ex["sheet_pos"][1])
             for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2):
                 if not any(lo < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi for lo, hi in row):
                     ok = [c]
@@ -3835,6 +3836,16 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+def _label_row_spans(plan: "DrawingPlan", py: float) -> list[tuple[float, float]]:
+    """主视图引出标注（倒角/环槽/横孔/中心孔）文字与水平线在尺寸行 py（数字 py..py+4.3）高度占的 x 区间。"""
+    out = []
+    for o in plan.dims:
+        lb = (o.extra or {}).get("label") or {}
+        if o.view == "front" and "elbow" in lb and "end" in lb and py + 0.3 < lb["elbow"][1] + 4.0 and lb["elbow"][1] - 0.3 < py + 3.4:
+            out.append((min(lb["elbow"][0], lb["end"][0]), max(lb["elbow"][0], lb["end"][0])))
+    return out
 
 
 def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
@@ -3878,8 +3889,10 @@ def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
                 [(q[0] - 0.3, q[0] + 0.3) for q in eo["sheet_pts"]]
         cands = [c for c in (lo - tw / 2 - 1.2, hi + tw / 2 + 1.2) if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8]
         cands += [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间偏不开：移到界线外（先界线之间）
+        lrow = _label_row_spans(plan, py)  # 界线外的位置还要避开引出标注的文字/水平线
         cands = [c for c in cands if not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs)
-                 and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row)]
+                 and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row)
+                 and (xa < c < xb or not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in lrow))]
         if cands:
             c = min(cands, key=lambda c_: (not xa < c_ < xb, abs(c_ - c0)))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
@@ -3908,6 +3921,7 @@ def _shaft_num_dodge_vlines(plan: "DrawingPlan", vlines: list[tuple[float, float
             ot = text_width(o.text, 3.5)
             oc = eo.get("text_x", eo["sheet_pos"][0])
             row.append((oc - ot / 2, oc + ot / 2))
+        row += _label_row_spans(plan, py)
         xs_all = [x for x, ylo, yhi in vlines if ylo < py + 4.2 and py < yhi]
         inside = [c for c in (min(crossing) - tw / 2 - 0.6, max(crossing) + tw / 2 + 0.6) if xa + tw / 2 + 0.3 <= c <= xb - tw / 2 - 0.3]
         outside = [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间放不下：移到界线外
