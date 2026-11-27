@@ -4327,23 +4327,26 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
 
 
 def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
-    """齿面 Ra 两侧分度线延长线都被更粗的轴段挡住、段内又放不下（只能硬放在右侧相邻段上）时，改为带箭头的引线
+    """齿面 Ra 两侧分度线延长线都被更粗的轴段挡住、段内又放不下（只能硬放在右侧相邻段上），或延长线位置压了别的标注时，改为带箭头的引线
     指向齿段内的分度线（GB/T 131：符号立在引线的水平折线上；GB/T 4459.2：注在分度线上）。
     候选：箭头在齿段 1/4、1/2、3/4 处的上/下分度线，引线 60° 向右/左引到轮廓外的折线高度；逐个用预览出图检查
     文字压线/压字的数目，取最少的（不比原位置好则不改）。结果 extra["leader_pts"] = [箭头, 折点, 折线端]、
     sheet_at = 符号尖端（立在折线上），预览/SW/Creo 共用。"""
-    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:flank:") and (d.extra or {}).get("forced")]
+    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:flank:")]
     fv = next((v for v in plan.views if v.type == "front"), None)
     if not ds or fv is None:
         return
     from .render_svg import render
 
-    def bad() -> int:
+    def bad(text=None) -> int:
         try:
             _, out = render(plan, p)
         except Exception:  # noqa: BLE001
             return 10 ** 6
-        return len(out["crossings"]) + len(out["collisions"])
+        allc = out["crossings"] + out["collisions"]
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc):
+            return 0  # 冲突与这个 Ra 无关：不动它
+        return len(allc)
     sc, cy = fv.scale, fv.origin_on_sheet[1]
     R = max(dd for _, dd in p.shaft_steps) / 2 * sc
     y_top, y_bot = cy + R, cy - R
@@ -4351,20 +4354,27 @@ def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         f = next(g for g in p.shaft_features if g["kind"] == "gear" and d.ref == f"ra:flank:{g['name']}")
         w = _flank_ra_w(d.text)
         orig = dict(d.extra)
+        if not orig.get("forced") and bad(d.text) == 0:  # 延长线位置可用且没压到东西：照常
+            continue
         best = (bad(), orig)
         if best[0] == 0:
             continue
         cands = []
-        for t in (0.5, 0.25, 0.75):
+        xdia = shaft_sx(fv, None, shaft_dia_z(p, f["step"], sc))
+        for t in (0.5, 0.25, 0.75, 0.35, 0.65):
             ax = shaft_sx(fv, None, f["z0"] + t * (f["z1"] - f["z0"]))
-            for side, ys in ((1, (y_top + 2.0, y_top + 4.0)), (-1, (y_bot - 9.5, y_bot - 12.0))):
+            if abs(ax - xdia) < 3.0:  # 箭头别贴着齿顶圆直径尺寸线的箭头
+                continue
+            for side, ys in ((1, (y_top + 2.0, y_top + 4.0, y_top + 6.0)), (-1, (y_bot - 9.5, y_bot - 12.0))):
                 ay = cy + side * f["pd"] / 2 * sc
                 for ye in ys:
                     h = abs(ye - ay)
+                    if h < 5.0:  # 引线太短：箭头（3 mm）占满
+                        continue
                     for g in (1, -1):
                         bx = ax + g * h * 0.577
-                        cx_ = bx + g * (w + 1.0)
-                        vx = bx + 2.5 if g > 0 else cx_ + 1.5
+                        cx_ = bx + g * 6.5  # 水平折线只托住符号（不伸到文字下）
+                        vx = bx + 2.5 if g > 0 else bx - 4.0
                         cands.append({"leader_pts": [(round(ax, 2), round(ay, 2)), (round(bx, 2), round(ye, 2)),
                                                      (round(cx_, 2), round(ye, 2))],
                                       "sheet_at": (round(vx, 2), round(ye, 2)), "sheet_pos": (round(vx, 2), round(ye, 2))})
