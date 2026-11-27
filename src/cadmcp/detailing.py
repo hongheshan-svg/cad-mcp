@@ -297,15 +297,21 @@ _SLOT = {"datum": 0.22, "roughness": 0.5, "gtol": 0.78}  # 同一面上三类符
 OPPOSITE = {"top": "bottom", "bottom": "top", "front": "back", "back": "front", "left": "right", "right": "left"}
 
 
-def _face_gaps(face: str, p: ResolvedPart | None, axis: str) -> list[tuple[float, float]]:
-    """面上被孔口/型腔打断的区间（沿 axis，模型坐标）：符号引线不得指到空处。通孔也打断对面。"""
+def _face_gaps(face: str, p: ResolvedPart | None, axis: str, depth: str | None = None) -> list[tuple[float, float]]:
+    """面上被孔口/型腔打断的区间（沿 axis，模型坐标）：符号引线不得指到空处。通孔也打断对面。
+    depth = 视图深度方向的模型轴：给了就只算被过零件中心的剖切面切到的孔（全剖视图上真正打断边线的）。"""
     if p is None:
         return []
     out = []
+    dc = None
+    if depth is not None:
+        lo_, hi_ = vrange(p.bbox, depth)
+        dc = (lo_ + hi_) / 2
     for h in p.holes:
         if h.face == face or (h.through and OPPOSITE.get(h.face) == face):
             r = h.max_dia / 2 if h.face == face else h.drill / 2
-            out += [(vc(i.xyz, axis) - r, vc(i.xyz, axis) + r) for i in h.instances]
+            out += [(vc(i.xyz, axis) - r, vc(i.xyz, axis) + r) for i in h.instances
+                    if dc is None or abs(vc(i.xyz, depth) - dc) < r]
     for pk in p.pockets:
         if (pk["face"] == face or (pk.get("through") and OPPOSITE.get(pk["face"]) == face)) \
                 and pk["face"] in ("top", "bottom") and axis[-1] in "xy":
@@ -348,21 +354,32 @@ def _face_anchor(face: str, views: list[ViewPlan], b: Box, kind: str, p: Resolve
         f = _SLOT[kind] if frac is None else frac
         ti = 0 if comp[0] == 0 else 1  # 沿边方向
         lo, hi = (u0, u1) if ti == 0 else (w0, w1)
-        gaps = _face_gaps(face, p, (ha, va)[ti])
+        m_ = 2.0 / v.scale  # 离外轮廓角点（总体尺寸的尺寸界线）至少 2 mm；太短（< 1 mm）的实体段不放符号
 
-        # 实体段 = 边线减去空处（各留 2 mm），按 f 在实体段总长上取点：各类符号保持顺序且彼此错开
-        segs = [(lo, hi)]
-        for a, b_ in sorted(gaps):
-            nxt = []
-            for s0, s1 in segs:
-                if b_ + 2 <= s0 or a - 2 >= s1:
-                    nxt.append((s0, s1))
-                    continue
-                if a - 2 > s0:
-                    nxt.append((s0, a - 2))
-                if b_ + 2 < s1:
-                    nxt.append((b_ + 2, s1))
-            segs = nxt
+        def solid(gaps):  # 实体段 = 边线减去空处（各留 2 mm）
+            segs = [(lo, hi)]
+            for a, b_ in sorted(gaps):
+                nxt = []
+                for s0, s1 in segs:
+                    if b_ + 2 <= s0 or a - 2 >= s1:
+                        nxt.append((s0, s1))
+                        continue
+                    if a - 2 > s0:
+                        nxt.append((s0, a - 2))
+                    if b_ + 2 < s1:
+                        nxt.append((b_ + 2, s1))
+                segs = nxt
+            ok = [(max(s0, lo + m_), min(s1, hi - m_)) for s0, s1 in segs]
+            return segs, [(s0, s1) for s0, s1 in ok if (s1 - s0) * v.scale >= 1.0]
+        gaps = _face_gaps(face, p, (ha, va)[ti])
+        segs, segs2 = solid(gaps)
+        if gaps and not segs2:  # 孔口盖满了整条边（分布孔投影重叠）：只算剖切面切到的孔
+            dep = next((a_ for a_ in "xyz" if a_ not in (ha[-1], va[-1])), None)
+            gaps = _face_gaps(face, p, (ha, va)[ti], depth=dep)
+            segs, segs2 = solid(gaps)
+        # 按 f 在实体段总长上取点：各类符号保持顺序且彼此错开
+        if gaps and segs2:
+            segs = segs2
         total = sum(s1 - s0 for s0, s1 in segs)
         t_ = lo + f * (hi - lo)
         if gaps and total > 0:
@@ -1019,11 +1036,19 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
         if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc + dash):
             return 0
         return 10 * len(allc) + len(dash)
+    titled = {sec.view for sec in plan.sections if sec.kind != "local" and sec.label}
+
+    def under_title(d_, ex_) -> bool:  # 符号在剖视图标题（视图上方居中 "A-A"）正下方
+        if d_.view not in titled or tuple(ex_.get("normal", ())) != (0, 1):
+            return False
+        cx_ = vmap[d_.view].origin_on_sheet[0]
+        tw_ = text_width(f"{next(sec.label for sec in plan.sections if sec.view == d_.view)}-X", 5)
+        return abs(ex_["sheet_at"][0] - cx_) < tw_ / 2 + 4
     for d in ds:
         face = face_of(d)
         v = vmap[d.view]
         at0, ex0 = d.at, dict(d.extra)
-        best = (bad(), at0, ex0)
+        best = (bad() + 5 * under_title(d, ex0), at0, ex0)  # 剖视标题正下方：即使没压上也贴得太近，罚分
         if best[0] == 0:
             continue
         for k in range(1, 20):
@@ -1035,7 +1060,11 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
             d.at = a[1]
             d.extra = {**ex0, "sheet_at": (round(sx, 2), round(sy, 2)),
                        "sheet_pos": (round(ex0["sheet_pos"][0] + dx_, 2), round(ex0["sheet_pos"][1] + dy_, 2))}
-            n = bad()
+            if any(o is not d and o.view == d.view and "sheet_at" in (o.extra or {})
+                   and tuple(o.extra.get("normal", ())) == tuple(d.extra.get("normal", ()))
+                   and abs(o.extra["sheet_at"][0] - sx) + abs(o.extra["sheet_at"][1] - sy) < 6 for o in plan.dims):
+                continue  # 与同边上的别的符号同一点（箭头叠在 Ra 尖端上）
+            n = bad() + 5 * under_title(d, d.extra)
             if n < best[0]:
                 best = (n, d.at, dict(d.extra))
                 if n == 0:

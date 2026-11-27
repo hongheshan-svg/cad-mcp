@@ -66,3 +66,29 @@ def test_small_disc_keyway_callouts_retry_clean():
         assert not any("_alts" in (d.extra or {}) for d in plan.dims)
         _, out = render(plan, p)
         assert out["crossings"] == [] and out["collisions"] == []
+
+
+HOLEY_DISC = {'name': 'D89', 'part_no': 'D-89', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 80}, 'thickness': 15}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 35, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 10, 'height': 5.3, 'center': [0, 18.15]}}, {'feature': 'hole', 'name': 'PC', 'type': 'simple', 'size': 16, 'pattern': {'kind': 'circular', 'radius': 32, 'count': 6, 'start_angle': 22.5}}], 'auto_precision': True}
+TITLED_PLATE = {'name': 'F182', 'part_no': 'F-182', 'title': '测试板', 'material': 'Q235', 'base': {'type': 'extrude', 'profile': {'shape': 'rect', 'width': 60, 'height': 120}, 'thickness': 20}, 'features': [{'feature': 'hole', 'name': 'H0', 'type': 'countersink', 'size': 'M8', 'positions': [[-15, -45], [-15, 45], [15, -45], [15, 45]]}], 'datums': [{'name': 'A', 'target': 'face:bottom'}], 'tolerances': [{'type': 'flatness', 'value': 0.02, 'target': 'face:top', 'datums': []}], 'roughness': [{'target': 'face:top', 'ra': 1.6}]}
+
+
+def test_face_symbols_off_corner_and_section_title():
+    """端面符号：分布孔投影盖满整条边时只按剖切面切到的孔避让，不落在外角（总体尺寸界线）上；
+    剖视图顶面的 Ra / 框格不放在标题 "A-A" 正下方，同一边上的两个符号不叠在一点。"""
+    for spec in (HOLEY_DISC, TITLED_PLATE):
+        p, plan = _plan(spec)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == []
+        v = next(v_ for v_ in plan.views if v_.type == "front")
+        x0, x1 = v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2
+        sym = [d for d in plan.dims if d.view == "front" and d.kind in ("gtol", "roughness", "datum")]
+        for d in sym:
+            assert x0 + 1.5 < d.extra["sheet_at"][0] < x1 - 1.5, d
+        for i, a_ in enumerate(sym):
+            for b_ in sym[i + 1:]:
+                if a_.extra["normal"] == b_.extra["normal"]:
+                    assert abs(a_.extra["sheet_at"][0] - b_.extra["sheet_at"][0]) >= 6
+    p, plan = _plan(TITLED_PLATE)
+    cx = next(v_ for v_ in plan.views if v_.type == "front").origin_on_sheet[0]
+    assert all(abs(d.extra["sheet_at"][0] - cx) > 8 for d in plan.dims
+               if d.view == "front" and tuple(d.extra.get("normal", ())) == (0, 1))
