@@ -197,3 +197,20 @@ def test_short_step_keeps_deviations():
     over = d0.extra["over_at"]
     rows = [d.extra["sheet_pos"][1] for d in plan.dims if d.view == "front" and (d.extra or {}).get("orient") == "h"]
     assert over > max(y for y in rows if y < over)  # 在上方尺寸行之上
+
+
+@pytest.mark.parametrize("js", SPECS)
+def test_fuzz_specs_compile_both_adapters(js):
+    """排布回归样例同时走 SolidWorks / Creo 编译（零件 + 工程图），防止规划层坐标改动弄坏适配器翻译。"""
+    from cadmcp.adapters.creo import compile as CC, drawing as CD
+    from cadmcp.adapters.solidworks import compile as SW
+    from cadmcp.errors import CadError
+    spec = PartSpec.model_validate(json.loads(js))
+    p = resolve_part(spec)
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert SW.compile_part(spec, p) and SW.compile_drawing(plan, "m.sldprt")
+    assert CD.compile_drawing(plan, "m.prt")
+    try:
+        assert CC.compile_part_tk(spec, p)
+    except CadError as e:  # Creo TOOLKIT 首期不支持钣金/焊接件（文档已注明）
+        assert e.code == "CAPABILITY_UNSUPPORTED" and json.loads(js)["base"]["type"] in ("sheet_metal", "weldment")
