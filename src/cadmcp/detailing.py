@@ -1359,6 +1359,25 @@ def plan_shaft_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = 
         if plan.scale <= s_ or not _shaft_hits_notes(plan):
             break
         plan = _plan_shaft(spec, p, today, max_scale=s_)
+    if _shaft_hits_notes(plan) and any(v.type in ("section", "detail") for v in plan.views):
+        # 大直径的断面图伸进技术要求：主视图下方尺寸带（两道约 31 mm）与断面行之间的留白收紧再排
+        for g_ in (40.0, 37.0, 34.0, 31.0):
+            p4 = _plan_shaft(spec, p, today, max_scale=plan.scale, sec_gap=g_)
+            low = min([(d.extra or {})["sheet_pos"][1] for d in p4.dims if d.view == "front" and d.kind == "linear"
+                       and isinstance((d.extra or {}).get("sheet_pos"), (tuple, list))], default=1e9)
+            # 断面标题在圆心上方 r + 12（字高 4），放大图标题在框顶 + 8.5（字高 3.5），同 render_shaft
+            title_top = max(v.origin_on_sheet[1] + v.size_mm[1] / 2 + (16.5 if v.type == "section" else 12.5)
+                            for v in p4.views if v.type in ("section", "detail"))
+            if title_top > low - 1.5 or getattr(p4, "_lift_need", 0.0) > 0:
+                break  # 再收紧断面标题就碰主视图下方尺寸
+            if not _shaft_hits_notes(p4):
+                plan = p4
+                break
+    nxt = {"A4": "A3", "A3": "A2"}
+    if _shaft_hits_notes(plan) and spec.sheet in (None, "auto") and plan.sheet in nxt:  # 仍压技术要求：换大一号图纸
+        p5 = _plan_shaft(spec.model_copy(update={"sheet": nxt[plan.sheet]}), p, today, max_scale=plan.scale)
+        if not _shaft_hits_notes(p5) and getattr(p5, "_lift_need", 0.0) <= 0:
+            plan = p5
     return plan
 
 
@@ -1380,7 +1399,7 @@ def _shaft_hits_notes(plan: "DrawingPlan") -> bool:
 
 
 def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
-                max_scale: float | None = None, top_extra: float = 0.0) -> DrawingPlan:
+                max_scale: float | None = None, top_extra: float = 0.0, sec_gap: float = 44.0) -> DrawingPlan:
     """轴类按工程师习惯：主视图轴线水平、键槽朝前；每个键槽一个移出断面图（A-A、B-B…）放在主视图下方。
     尺寸：各轴段长度（链式）+ 总长、各段直径（带公差带）、键槽长度与定位、断面上的键宽和 d-t1、环槽标注、端部倒角。"""
     b = p.bbox
@@ -1420,7 +1439,7 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         views.append(ViewPlan("left", scale, (D * scale, D * scale), (x0 + wv + GAP + 4 + D * scale / 2, cy_main)))
     dgeo = [detail_geom(f, scale) for f in dets]
     row_half = max([sec_d * scale / 2] + [ds_ * rm_ for ds_, rm_ in dgeo])
-    cy_sec = cy_main - D * scale / 2 - 44 - row_half - 6
+    cy_sec = cy_main - D * scale / 2 - sec_gap - row_half - 6
     # 剖切字母不得与基准字母重复（GB/T 4458.6），并跳过 I、O
     used = {d["name"] for d in p.datums} | {"I", "O"}
     letters = [c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in used]
