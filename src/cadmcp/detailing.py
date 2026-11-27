@@ -390,8 +390,21 @@ def _precision_dims(p: ResolvedPart, views: list[ViewPlan], vtypes: set[str], sh
             frac = shaft_gtol_fracs(p, views[0].scale if views else 1.0).get(gkey, 0.3)
         if kind == "datum":  # 基准符号画在轴下方，避开键槽剖切符号（剖切线在键槽中点）
             cuts = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "keyway" and f["step"] == i]
-            if cuts:
-                frac = max((0.5, 0.2, 0.8), key=lambda t: min(abs(z0 + t * (z1 - z0) - c) for c in cuts))
+            sc_ = views[0].scale if views else 1.0
+            R_ = max(dd for _, dd in p.shaft_steps) / 2
+            # 轮廓下沿到链式长度尺寸线 (R − d/2)·sc + 15；三角形 2.6 + 引线 7 + 方框 6 + 数字 4.5 放不下时方框会落进该行：
+            # 避开段中点的链式长度数字与两端尺寸界线
+            low = (R_ - d / 2) * sc_ + 15 < 2.6 + 7 + 6 + 4.5
+            hw_ = (text_width(f"({z1 - z0:g})", 3.5) / 2 + 3.5) / sc_
+
+            def dcost(t):
+                z = z0 + t * (z1 - z0)
+                c = -min([abs(z - c_) for c_ in cuts] or [1e9]) if cuts else 0.0
+                if low:
+                    c += 100 * (abs(z - (z0 + z1) / 2) < hw_) + 100 * (min(z - z0, z1 - z) * sc_ < 4.0)
+                return c + 0.01 * abs(t - 0.5)
+            if cuts or low:
+                frac = min((0.5, 0.2, 0.8, 0.3, 0.7, 0.15, 0.85, 0.1, 0.9), key=dcost)
         elif kind == "roughness":  # 环槽等的引线从槽口斜向右上：符号（文字在右）避开，离槽越远越好
             grooves = [(f["z0"] + f["z1"]) / 2 for f in p.shaft_features if f["kind"] == "groove"
                        and z0 - 1 <= (f["z0"] + f["z1"]) / 2 <= z1 + 1]
@@ -3870,6 +3883,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_dia_lift(plan, p)
     _shaft_leader_dodge_nums(plan)  # 直径线让位挪过数字后，引线再避一次
     _shaft_short_text_side(plan, p)  # 余下放不下的短尺寸数字：在规划层定侧（预览与 CAD 共用 text_x）
+    _shaft_num_dodge_datum(plan)  # 基准方框落进下方链式尺寸行（短轴段放不开）：数字偏到方框一侧或界线外
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -4020,6 +4034,52 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+def _shaft_num_dodge_datum(plan: "DrawingPlan") -> None:
+    """轴下方的基准方框（sheet_pos 为引线末端，方框在其下 6 mm）压到链式长度数字时：
+    数字先在两界线之间偏到方框一侧，不行再移到界线外（不压同行数字/界线），写入 text_x。"""
+    boxes = []
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view == "front" and o.kind == "datum" and tuple(eo.get("normal", (0, 1))) == (0, -1) and "sheet_pos" in eo:
+            bx, by = eo["sheet_pos"]
+            boxes.append((bx - 3.3, by - 6.3, bx + 3.3, by + 0.3))
+    if not boxes:
+        return
+    row_dims = [d for d in plan.dims if d.view == "front" and d.kind == "linear" and d.ref.startswith("step")
+                and "sheet_pts" in (d.extra or {})]
+    for d in row_dims:
+        ex = d.extra
+        y = ex["sheet_pos"][1]
+        tw = text_width(d.text, 3.5)
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        xc = ex.get("text_x", ex["sheet_pos"][0])
+
+        def hit(c):
+            return any(b[0] < c + tw / 2 and c - tw / 2 < b[2] and b[1] < y + 4.3 and y + 0.3 < b[3] for b in boxes)
+        if not hit(xc):
+            continue
+        row = []
+        for o in row_dims:
+            if o is d or abs(o.extra["sheet_pos"][1] - y) > 1:
+                continue
+            oa, ob = sorted(q[0] for q in o.extra["sheet_pts"])
+            ot = text_width(o.text, 3.5)
+            oc = o.extra.get("text_x", o.extra["sheet_pos"][0])
+            row += [(oc - ot / 2, oc + ot / 2), (oa - 0.3, oa + 0.3), (ob - 0.3, ob + 0.3)]
+        row += _label_row_spans(plan, y)
+        cands = []
+        for b in boxes:
+            cands += [b[0] - tw / 2 - 0.5, b[2] + tw / 2 + 0.5]
+        inside = [c for c in cands if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8 and not hit(c)]
+        outside = [c for c in (xb + 1.5 + tw / 2, xa - 1.5 - tw / 2)
+                   if 5.5 < c - tw / 2 and c + tw / 2 < plan.sheet_size[0] - 5.5 and not hit(c)
+                   and not any(lo < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi for lo, hi in row)]
+        ok = inside or outside
+        if ok:
+            c = min(ok, key=lambda c_: abs(c_ - xc))
+            d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), y)}
 
 
 def shaft_open_step(p: ResolvedPart) -> int | None:
