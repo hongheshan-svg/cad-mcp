@@ -3542,6 +3542,7 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _xh_callout_flip(plan, p)
     _shaft_section_dim_sheet(plan, p)
     _shaft_num_dodge(plan, p, X, y_top, y_bot, sc)
+    _shaft_num_dodge_leaders(plan)
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -3610,6 +3611,51 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - xc))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), ex["sheet_pos"][1])}
+
+
+def _shaft_num_dodge_leaders(plan: "DrawingPlan") -> None:
+    """环槽/退刀槽/倒角引出标注的斜引线穿过上方尺寸行（键槽/环槽定位）的数字：数字在自己的尺寸线上偏到引线一侧。"""
+    leads = []
+    for d in plan.dims:
+        lb = (d.extra or {}).get("label") or {}
+        if d.view == "front" and d.kind == "callout" and "elbow" in lb and "anchor" in lb:
+            leads.append((tuple(lb["anchor"]), tuple(lb["elbow"])))
+    if not leads:
+        return
+
+    def x_at(seg, y):
+        (x1, y1), (x2, y2) = seg
+        if abs(y2 - y1) < 1e-6 or not min(y1, y2) <= y <= max(y1, y2):
+            return None
+        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
+    for d in plan.dims:
+        ex = d.extra or {}
+        if d.view != "front" or d.kind != "linear" or d.axis != "z" or "sheet_pts" not in ex or "sheet_pos" not in ex \
+                or d.ref == "overall_z" or d.ref.startswith("step"):
+            continue
+        xa, xb = sorted(q[0] for q in ex["sheet_pts"])
+        tw = text_width(d.text, 3.5)
+        c0, py = ex["sheet_pos"]
+        xs = [x for sg in leads for y in (py + 0.5, py + 2, py + 3.8) if (x := x_at(sg, y)) is not None]
+        if not any(c0 - tw / 2 - 0.6 < x < c0 + tw / 2 + 0.6 for x in xs):
+            continue
+        lo, hi = min(xs), max(xs)
+        row = []  # 同一行别的数字与界线
+        for o in plan.dims:
+            eo = o.extra or {}
+            if o is d or o.view != "front" or o.kind != "linear" or o.axis != "z" or "sheet_pos" not in eo \
+                    or "sheet_pts" not in eo or abs(eo["sheet_pos"][1] - py) > 1:
+                continue
+            ot = text_width(o.text, 3.5)
+            row += [(eo["sheet_pos"][0] - ot / 2, eo["sheet_pos"][0] + ot / 2)] + \
+                [(q[0] - 0.3, q[0] + 0.3) for q in eo["sheet_pts"]]
+        cands = [c for c in (lo - tw / 2 - 1.2, hi + tw / 2 + 1.2) if xa + tw / 2 + 0.8 <= c <= xb - tw / 2 - 0.8]
+        cands += [xb + 1.5 + tw / 2, xa - 1.5 - tw / 2]  # 界线之间偏不开：移到界线外（先界线之间）
+        cands = [c for c in cands if not any(c - tw / 2 - 0.6 < x < c + tw / 2 + 0.6 for x in xs)
+                 and not any(lo_ < c + tw / 2 + 0.5 and c - tw / 2 - 0.5 < hi_ for lo_, hi_ in row)]
+        if cands:
+            c = min(cands, key=lambda c_: (not xa < c_ < xb, abs(c_ - c0)))
+            d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), py)}
 
 
 def _seg_cross(p1, p2, q1, q2) -> bool:
