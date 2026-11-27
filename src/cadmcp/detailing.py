@@ -3326,6 +3326,23 @@ def shaft_sx(v: "ViewPlan", Ltot: float | None, z: float) -> float:
     return x
 
 
+def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str) -> tuple[float, float, float, float]:
+    """第 i 段直径竖写文字在图纸上的占位框（与 render_shaft._vdim 一致：文字在尺寸线左/右侧，放不下时伸出轮廓）。"""
+    sc = front.scale
+    z, side = shaft_dia_place(p, i, sc)
+    x = shaft_sx(front, None, z)
+    d = p.shaft_steps[i][1]
+    cy = front.origin_on_sheet[1]
+    ya, yb = cy - d / 2 * sc, cy + d / 2 * sc
+    tw = text_width(text, 3.5)
+    room = 0.0 if shaft_dia_blocked(p, i, sc) else shaft_text_room(p, z, d) * sc
+    ym = (ya + yb) / 2
+    if tw > room - 2:
+        ym = ya - 2 - tw / 2 if (shaft_dia_overflow(p, i, sc, text) or "up") == "down" else yb + 2 + tw / 2
+    x0 = x - 4.5 if side == "left" else x + 1
+    return (x0, ym - tw / 2, x0 + 3.5, ym + tw / 2)
+
+
 def shaft_dia_z(p: ResolvedPart, i: int, sc: float = 1.0) -> float:
     """第 i 段直径尺寸线的轴向位置（SVG 与原生标注共用），见 shaft_dia_place。"""
     return shaft_dia_place(p, i, sc)[0]
@@ -3677,6 +3694,12 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
             px, py = ex["sheet_pos"]
             hw = text_width(d.text, 3.5) / 2 + 0.5
             boxes.append((px - hw, py, px + hw, py + 4.5))
+        elif p is not None and d.view == "front" and d.kind == "diameter" and d.ref.startswith("step") \
+                and (fv := next((v for v in plan.views if v.type == "front"), None)) is not None:
+            try:
+                boxes.append(shaft_dia_text_box(p, int(d.ref[4:].split("_")[0]), fv, d.text))
+            except (ValueError, IndexError):
+                pass
         elif d.view == "front" and d.kind == "diameter" and ex.get("orient") == "v" and ex.get("sheet_pts"):
             (x_, ya_), (_, yb_) = ex["sheet_pts"]  # 轴段直径：竖写文字在尺寸线旁（左右侧都算），居中
             ym, hh = (ya_ + yb_) / 2, min(text_width(d.text, 3.5), abs(yb_ - ya_)) / 2
@@ -3700,10 +3723,9 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
               for d in plan.dims if d.kind == "callout" and not d.ref.startswith("xh:") and d.view == "front"
               and (lb := (d.extra or {}).get("label"))]
 
-    def hits(a, b, bxs):
-        return sum(1 for x0, y0, x1, y1 in bxs
-                   if any(x0 <= a[0] + (b[0] - a[0]) * t / 20 <= x1 and y0 <= a[1] + (b[1] - a[1]) * t / 20 <= y1
-                          for t in range(21)))
+    def hits(a, b, bxs):  # 线段与框相交（精确；窄的竖写文字框采样会漏）
+        return sum(1 for bx in bxs if _seg_box(a, b, bx)
+                   or bx[0] <= a[0] <= bx[2] and bx[1] <= a[1] <= bx[3] or bx[0] <= b[0] <= bx[2] and bx[1] <= b[1] <= bx[3])
     xs = sorted((d for d in plan.dims if d.kind == "callout" and d.ref.startswith("xh:") and (d.extra or {}).get("label")),
                 key=lambda d: d.extra["label"]["anchor"][0])
     lines_: list = []
@@ -3712,7 +3734,7 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
         (ax, ay), (ex0, ty0) = lb["anchor"], lb["elbow"]
         w = lb["end"][0] - ex0
         best = None
-        cands = [(sg, dy, f) for f in (1.0, 0.577) for dy in (0, 7) for sg in (1, -1)]  # 45° / 60° 引线
+        cands = [(sg, dy, f) for f in (1.0, 0.577) for dy in (0, 7, 14) for sg in (1, -1)]  # 45° / 60° 引线
         for k, (sg, dy, f) in enumerate(cands):
             ty = ty0 + dy
             ex_ = ax + sg * (ty - ay) * f
@@ -3721,7 +3743,8 @@ def _xh_callout_flip(plan: "DrawingPlan", p: ResolvedPart | None = None) -> None
             over = sum(1 for x0, y0, x1, y1 in placed if tbox[0] < x1 and x0 < tbox[2] and tbox[1] < y1 and y0 < tbox[3])
             segs_ = [((ax, ay), (ex_, ty)), ((ex_, ty), (ex_ + sg * w, ty))]
             xing = sum(1 for p1, p2 in segs_ for q1, q2 in lines_ if _seg_cross(p1, p2, q1, q2))
-            cost = 10 * (hits((ax, ay), (ex_, ty), boxes + placed) + over) + 5 * xing + k
+            out_ = tbox[0] < 6 or tbox[2] > plan.sheet_size[0] - 6 or ty + 4.5 > plan.sheet_size[1] - 6  # 出图框
+            cost = 100 * out_ + 10 * (hits((ax, ay), (ex_, ty), boxes + placed) + over) + 5 * xing + k
             if best is None or cost < best[0]:
                 best = (cost, sg, ty, ex_, tbox)
         _, sg, ty, ex_, tbox = best
