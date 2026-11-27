@@ -812,8 +812,6 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
             return 0
         return len(allc)
     for d in ds:
-        if bad(d.text) == 0:
-            continue
         face = d.ref[len("ra:face:"):]
         v = vmap[d.view]
         at0, ex0 = d.at, dict(d.extra)
