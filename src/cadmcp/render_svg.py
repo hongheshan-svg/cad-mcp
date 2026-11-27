@@ -944,9 +944,11 @@ def _iso_top_features(s, iso, part, ztop):
         if not (pk["face"] == "top" or (pk.get("through") and pk["face"] == "bottom")):
             continue
         pts = pk["profile"].drawn()
-        s.poly([iso(x, y, ztop) for x, y in pts], THICK)
+        zt_ = pk["at"] if pk.get("at") is not None and pk["face"] == "top" else ztop  # 有凸台时型腔在板面上
+        s.poly([iso(x, y, zt_) for x, y in pts], THICK)
         if pk["face"] == "top" and not pk.get("through"):
             # 盲型腔：侧壁竖直、口部为凸多边形时，底面上的点可见 ⇔ 其投影落在口部投影之内（视线从口部进入）
+            ztop = zt_
             zb = ztop - pk["depth"]
             mouth = [iso(x, y, ztop) for x, y in pts]
             n = len(pts)

@@ -163,8 +163,10 @@ def test_hole_off_boss_needs_at():
     b = {"feature": "boss", "name": "B", "height": 15, "profile": {"shape": "circle", "diameter": 30, "center": [0, 0]}}
     t = lambda pos, **k: {"feature": "hole", "name": "T", "type": "tapped", "size": "M6", "depth": 8,  # noqa: E731
                           "positions": [pos], **k}
-    assert ("R014", "T[0]", "error") in _rules([b, t([35, 25])], t=10)  # 板面上的孔从凸台顶起算：悬空
+    assert not any(r[0] == "R014" for r in _rules([b, t([35, 25])], t=10))  # 板面上的孔自动从板面起算
     assert not any(r[0] == "R014" for r in _rules([b, t([35, 25], at=10)], t=10))
+    two = {**t([35, 25]), "positions": [[35, 25], [0, 0]]}  # 同组孔一个在板面、一个在凸台顶：须拆组
+    assert ("R014", "T[0]", "error") in _rules([b, two], t=10) or ("R014", "T[1]", "error") in _rules([b, two], t=10)
     assert not any(r[0] == "R014" for r in _rules([b, t([0, 0])], t=10))  # 凸台顶上的孔
     assert ("R014", "T[0]", "error") in _rules([b, t([15, 0])], t=10)  # 骑在凸台边上
     assert ("R014", "T[0]", "error") in _rules([b, t([0, 0], at=10)], t=10)  # 凸台上的孔从板面起算：埋在凸台里
@@ -225,3 +227,37 @@ def test_boss_section_no_seam():
             if abs(float(m[1]) - y_seam) < 0.1 and abs(float(m[3]) - y_seam) < 0.1
             and min(float(m[0]), float(m[2])) < x_hi and max(float(m[0]), float(m[2])) > x_lo]
     assert seam == []
+
+
+def test_boss_auto_surface():
+    """有凸台：未写 at 的孔/型腔从所在处的实际表面起算（与 CAD 射线选面一致）。"""
+    spec = {"name": "P", "part_no": "P-01", "title": "块", "material": "45#", "surface_treatment": "发黑",
+            "base": {"type": "extrude", "profile": {"shape": "rect", "width": 160, "height": 100}, "thickness": 15},
+            "features": [{"feature": "boss", "name": "B", "height": 10,
+                          "profile": {"shape": "circle", "diameter": 30, "center": [-40, 0]}},
+                         {"feature": "pocket", "name": "PK", "depth": 6,
+                          "profile": {"shape": "rect", "width": 40, "height": 30, "center": [40, 0]}},
+                         {"feature": "hole", "name": "T1", "type": "tapped", "size": "M6", "depth": 8,
+                          "positions": [[60, 40], [-60, 40]]},
+                         {"feature": "hole", "name": "T2", "type": "tapped", "size": "M6", "depth": 8,
+                          "positions": [[-40, 0]]}]}
+    p = resolve_part(PartSpec.model_validate(spec))
+    assert p.pockets[0]["at"] == 15
+    h = {x.name: x for x in p.holes}
+    assert h["T1"].instances[0].xyz[2] == 15 and h["T2"].instances[0].xyz[2] == 25
+
+
+def test_sw_boss_sketch_on_own_base():
+    """SolidWorks：凸台草图射线打在凸台自己的位置、底面高度（第二个凸台不落到第一个凸台顶上）。"""
+    from cadmcp.adapters.solidworks.compile import compile_part
+    spec = PartSpec.model_validate({
+        "name": "P", "part_no": "P-01", "title": "块", "material": "45#", "surface_treatment": "发黑",
+        "base": {"type": "extrude", "profile": {"shape": "rect", "width": 160, "height": 100}, "thickness": 15},
+        "features": [{"feature": "boss", "name": "B1", "height": 10,
+                      "profile": {"shape": "circle", "diameter": 40, "center": [0, 0]}},
+                     {"feature": "boss", "name": "B2", "height": 5,
+                      "profile": {"shape": "rect", "width": 20, "height": 20, "center": [50, 20]}}]})
+    ops = compile_part(spec, resolve_part(spec))
+    sk = {o.args["sketch"]: o.args for o in ops if o.op == "sketch_on_face"}
+    assert sk["SK_B1"]["plane_coord"] == 15 and sk["SK_B2"]["plane_coord"] == 15
+    assert sk["SK_B2"]["ray_from"][:2] == (50, 20)

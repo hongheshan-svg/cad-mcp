@@ -548,6 +548,28 @@ def _hole_volume(h: ResolvedHole) -> float:
 
 
 # ---------------- part ----------------
+def _top_surface(pts: list[tuple[float, float]], r: float, bosses: list[dict[str, Any]], plate_top: float) -> float | None:
+    """顶面上一组点（孔心 + 半径 r，或型腔轮廓顶点）所在的实际表面高度：都在某凸台顶面内 → 凸台顶；
+    都在所有凸台之外 → 板面；跨凸台边或分属不同表面 → None（由规则 R014 报出）。"""
+    tops = []
+    for q in pts:
+        z = plate_top
+        for b in bosses:
+            if b["face"] != "top":
+                continue
+            d = dist_to_outline(q, list(b["profile"].outline))
+            if abs(d) < r - 1e-9 or (r == 0 and abs(d) < 1e-9):
+                return None
+            if d > 0:
+                z = max(z, b["z0"] + b["height"])
+        tops.append(z)
+    if r == 0:  # 型腔：凸台整个落在型腔轮廓内也算跨
+        for b in bosses:
+            if any(point_in_polygon(c, pts) for c in b["profile"].outline):
+                return None
+    return tops[0] if tops and all(abs(t - tops[0]) < 1e-9 for t in tops) else None
+
+
 def resolve_part(spec: PartSpec) -> ResolvedPart:
     params = resolve_parameters(spec.parameters)
 
@@ -842,6 +864,7 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
             volume += pr.area * hgt
             z0 = ev(f.at) if f.at is not None else box.zmax
             bosses.append({"name": f.name, "face": f.face, "profile": pr, "height": hgt, "z0": z0})
+    plate_top = box.zmax
     for b in bosses:
         box.zmax = max(box.zmax, b["z0"] + b["height"])
 
@@ -875,6 +898,11 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         if isinstance(f, Hole):
             section = profile.outline if (isinstance(base, (ExtrudeBase, SheetMetalBase)) and profile) else None
             rh = resolve_hole(f, ev, box, section if isinstance(base, ExtrudeBase) else None)
+            if f.at is None and f.face == "top" and bosses:  # 有凸台：孔从所在处的实际表面（板面/凸台顶）起算
+                zs = {_top_surface([i.uv], rh.max_dia / 2, bosses, plate_top) for i in rh.instances}
+                if len(zs) == 1 and None not in zs and abs(next(iter(zs)) - box.zmax) > 1e-9:
+                    rh = resolve_hole(f.model_copy(update={"at": next(iter(zs))}), ev, box,
+                                      section if isinstance(base, ExtrudeBase) else None)
             if isinstance(base, SheetMetalBase):
                 _sheet_hole(rh, bends, thickness, box)
             volume -= _hole_volume(rh)
@@ -882,6 +910,10 @@ def resolve_part(spec: PartSpec) -> ResolvedPart:
         elif isinstance(f, Pocket):
             pr = resolve_profile(f.profile, ev)
             at = ev(f.at) if f.at is not None else None
+            if at is None and f.face == "top" and bosses:  # 有凸台：型腔从所在处的实际表面起算
+                z_ = _top_surface(list(pr.outline), 0.0, bosses, plate_top)
+                if z_ is not None and abs(z_ - box.zmax) > 1e-9:
+                    at = z_
             depth = face_depth(f.face, box, at) if f.depth == "through" else ev(f.depth)
             volume -= pr.area * depth
             pockets.append({"name": f.name, "face": f.face, "profile": pr, "depth": depth, "through": f.depth == "through",

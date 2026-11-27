@@ -290,7 +290,8 @@ def compile_part(spec: PartSpec, p: ResolvedPart, template: str = "", holes_via:
 
     for b in p.bosses:
         sk = f"SK_{b['name']}"
-        ops.append(_face_sketch(b["face"], p.bbox, sk))
+        c = b["profile"].bbox2d  # 射线打在凸台自己的位置、凸台底面高度（多个凸台时不落到别的凸台顶上）
+        ops.append(_face_sketch(b["face"], p.bbox, sk, b["z0"], ((c[0] + c[1]) / 2, (c[2] + c[3]) / 2)))
         ops += _profile_ops(b["profile"], sk)
         ops.append(NativeOp("extrude_boss", {"feature": b["name"], "sketch": sk, "depth": b["height"]}))
     for pk in p.pockets:
