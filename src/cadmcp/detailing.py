@@ -1858,7 +1858,55 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
     if p.gear:  # 齿轮轴：参数表（右上角）
         from .gear_drawing import param_table
         plan.gear_table = param_table(plan, p)
+        _gear_table_place(plan)
     return plan
+
+
+def _annot_boxes(plan: "DrawingPlan") -> list[tuple[float, float, float, float]]:
+    """主视图等的标注与视图本体占位（图纸坐标，近似）：视图包围框、尺寸线与数字、符号、引出标注的引线/水平线/文字。"""
+    out = [b for b in (_view_box(v) for v in plan.views) if b]
+    for d in plan.dims:
+        ex = d.extra or {}
+        pts = [tuple(q) for q in ex.get("sheet_pts") or []]
+        for k in ("sheet_pos", "sheet_at"):
+            if isinstance(ex.get(k), (tuple, list)) and len(ex[k]) == 2:
+                pts.append(tuple(ex[k]))
+        if pts:
+            xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+            out.append((min(xs) - 2, min(ys) - 2, max(xs) + 2, max(ys) + 4))
+        if d.kind == "gtol" and "sheet_pos" in ex and "cells" in ex:  # 框格
+            from .render_gdt import _widths
+            x0 = gtol_frame_pos(ex)[0] - 3.5
+            out.append((x0, ex["sheet_pos"][1], x0 + sum(_widths(ex["cells"])), ex["sheet_pos"][1] + 6))
+        if d.kind == "roughness" and "sheet_at" in ex:  # Ra 符号（尖端起向右上）
+            rx, ry = ex["sheet_at"]
+            out.append((rx - 3, ry, rx + 8 + len(d.text) * 2.0, ry + 9))
+        lb = ex.get("label") or {}
+        if "elbow" in lb and "end" in lb:
+            (ex_, ey_), (nx_, _) = lb["elbow"], lb["end"]
+            out.append((min(ex_, nx_), ey_ - 0.5, max(ex_, nx_), ey_ + 4.5))
+            if "anchor" in lb:
+                ax_, ay_ = lb["anchor"]
+                out.append((min(ax_, ex_), min(ay_, ey_), max(ax_, ex_), max(ay_, ey_)))
+    return out
+
+
+def _gear_table_place(plan: "DrawingPlan") -> None:
+    """齿轮参数表默认在图框右上角；该处压到视图或标注时，依次改放右侧技术要求栏之上、图框左上角，取第一个不压的。
+    斜引线用其包围框近似（宁可多让）。"""
+    t = plan.gear_table
+    W, H = plan.sheet_size
+    w, h = t["size"]
+    col_top = right_column_bottom(plan) + 2  # 右侧栏（标题栏、技术要求、"其余"粗糙度）顶部
+    cands = [(W - MARGIN - w, H - MARGIN), (W - MARGIN - w, col_top + h + 2), (MARGIN + 3, H - MARGIN)]
+    boxes = _annot_boxes(plan)
+    for ox, oy in cands:
+        if oy > H - MARGIN + 1e-6 or oy - h < col_top - 1e-6 and ox > W / 2:
+            continue
+        tb = (ox - 1, oy - h - 1, ox + w + 1, oy + 1)
+        if not any(_box_hit(tb, b) > 0 for b in boxes):
+            t["origin"] = (round(ox, 2), round(oy, 2))
+            return
 
 def _fit_iso_beside_column(plan: "DrawingPlan") -> None:
     """装配图轴测图伸进右侧栏（标题栏 + 技术要求 + 明细表）：轴测图是辅助视图，保持左上角单独缩小比例
