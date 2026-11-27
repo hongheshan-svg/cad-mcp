@@ -68,11 +68,11 @@ def _vdim(s, x, ya, yb, text, text_left=True, overflow="up", room=None):
     ym = (ya + yb) / 2
     if tw > (yb - ya if room is None else room) - 2:
         if overflow == "down":
-            s.line(x, ya, x, ya - tw - 3, THIN)
-            ym = ya - 2 - tw / 2
-        else:
-            s.line(x, yb, x, yb + tw + 3, THIN)
-            ym = yb + 2 + tw / 2
+            s.line(x, ya, x, ya - tw - 2, THIN)
+            ym = ya - 1 - tw / 2
+        else:  # 文字离轮廓 1 mm：上方尺寸行（轮廓上 14 mm）留得下较长的公差带代号
+            s.line(x, yb, x, yb + tw + 2, THIN)
+            ym = yb + 1 + tw / 2
     s.line(x, ya, x, yb, THIN)
     _arrow(s, x, ya, 0, -1)
     _arrow(s, x, yb, 0, 1)

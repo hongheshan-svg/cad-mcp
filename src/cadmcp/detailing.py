@@ -3338,7 +3338,7 @@ def shaft_dia_text_box(p: ResolvedPart, i: int, front: "ViewPlan", text: str) ->
     room = 0.0 if shaft_dia_blocked(p, i, sc) else shaft_text_room(p, z, d) * sc
     ym = (ya + yb) / 2
     if tw > room - 2:
-        ym = ya - 2 - tw / 2 if (shaft_dia_overflow(p, i, sc, text) or "up") == "down" else yb + 2 + tw / 2
+        ym = ya - 1 - tw / 2 if (shaft_dia_overflow(p, i, sc, text) or "up") == "down" else yb + 1 + tw / 2
     x0 = x - 4.5 if side == "left" else x + 1
     return (x0, ym - tw / 2, x0 + 3.5, ym + tw / 2)
 
@@ -3586,10 +3586,16 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
     """伸出轮廓的直径尺寸线（竖直）正好穿过上方键槽/环槽尺寸行或下方链式尺寸行的数字时，
     该数字在自己的尺寸线上偏到直径线一侧（GB/T 4458.4 允许数字不居中），写入 extra["text_x"]。"""
     lines = []  # (x, 方向)
+    bands = {}  # x → 直径线连同竖写文字的横向占位
+    fv = next((v for v in plan.views if v.type == "front"), None)
     for j, (_, d_) in enumerate(p.shaft_steps):
         ov = shaft_dia_overflow(p, j, sc, _shaft_dia_label(p, j))
         if ov:
-            lines.append((X(shaft_dia_z(p, j, sc)), ov))
+            x_ = X(shaft_dia_z(p, j, sc))
+            lines.append((x_, ov))
+            if fv is not None:
+                tb = shaft_dia_text_box(p, j, fv, _shaft_dia_label(p, j))
+                bands[x_] = (min(tb[0], x_ - 0.6), max(tb[2], x_ + 0.6))
     if not lines:
         return
     for d in plan.dims:
@@ -3603,7 +3609,7 @@ def _shaft_num_dodge(plan: "DrawingPlan", p: ResolvedPart, X, y_top: float, y_bo
             continue  # 放不下的数字已移到界线外
         xc = (xa + xb) / 2
         # 直径线连同其左侧竖写文字的占位 (x − 4.8, x + 0.6)
-        band = lambda x_: (x_ - 4.8, x_ + 0.6)  # noqa: E731
+        band = lambda x_: bands.get(x_, (x_ - 4.8, x_ + 0.6))  # noqa: E731
         hit = [x for x, ov in lines if (ov == "down") == below
                and band(x)[0] - 0.5 < xc + tw / 2 and xc - tw / 2 < band(x)[1] + 0.5]
         if not hit:
