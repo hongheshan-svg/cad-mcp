@@ -932,6 +932,16 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
                     return True
         return False
 
+    def leader_through(d, dx):  # 平移后，上面行框格的竖引线（落到轮廓）穿过本框格
+        a_, b_ = span(d, dx)
+        y_ = d.extra["sheet_pos"][1]
+        for o in frames:
+            if o is not d and o.extra["sheet_pos"][1] > y_ + 1:
+                lx = o.extra["elbow"]["x_leader"] if o.extra.get("elbow") else o.extra["sheet_pos"][0]
+                if a_ - 0.5 <= lx <= b_ + 0.5:
+                    return True
+        return False
+
     def hits_dia(d, dx):
         a_, b_ = span(d, dx)
         for r in plan.dims:  # 框格上方的 Ra（随框格平移）：√ 起点在框格左端附近，横线向右约 21 mm
@@ -958,11 +968,15 @@ def _shaft_gtol_frame_dx(plan: "DrawingPlan", p: ResolvedPart | None = None) -> 
             if min(a0, ra_l) - 0.5 < x < max(b0, ra_r) + 4.6:
                 cands += [round(max(b0, ra_r) - (x - 4.7), 2), round(min(a0, ra_l) - (x + 0.5), 2)]  # 移到直径文字左侧 / 直径线右侧
         ok = [c for c in cands if -2.5 <= c <= tot - 4.0 and span(d, c)[1] <= lim and span(d, c)[0] >= 12
-              and not clash_other(d, c) and not hits_dia(d, c)]
+              and not clash_other(d, c) and not hits_dia(d, c) and not leader_through(d, c)]
+        if not ok and need_r:  # 右端出框：在可平移范围内找不穿引线的位置
+            ok = [c for c in (cands[0] + 0.5 * k for k in range(1, 30))
+                  if c <= tot - 4.0 and span(d, c)[0] >= 12 and not clash_other(d, c) and not hits_dia(d, c)
+                  and not leader_through(d, c)][:1]
         if not ok:
             if need_r:
                 c = cands[0]
-                if clash_other(d, c):
+                if clash_other(d, c) or leader_through(d, c):
                     plan._xh_bad = True  # A4 时由 plan_shaft_drawing 换 A3 重排
                     continue
                 ok = [c]
