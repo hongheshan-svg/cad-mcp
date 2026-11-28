@@ -166,7 +166,7 @@ def compile_drawing(plan, model_file: str, templates: dict[str, str] | None = No
     texts = list(plan.notes)
     sf = plan.title_block.get("surface_finish")
     if sf and plan.model_kind == "part":
-        texts.insert(0, "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)")
+        texts.insert(0, "其余 ∅√（不去除材料）" if sf in ("cast", "asis") else f"其余 √{sf} (√)")
     if texts:
         ops.append(NativeOp("ext.cadmcp_note", {"drawing": "$drawing", "text": "\n".join(texts),
                                                 "anchor": "above_title_block"}, "技术要求 / 其余粗糙度"))
@@ -435,7 +435,7 @@ def tk_detail_ops(plan) -> list[NativeOp]:
     if sf and plan.model_kind == "part":
         gx, gy = general_roughness_at(plan)
         ops.append(NativeOp("tk.drw.note", {"drawing": D, "at": [gx, gy + 1],
-                                            "text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)"},
+                                            "text": "其余 ∅√（不去除材料）" if sf in ("cast", "asis") else f"其余 √{sf} (√)"},
                             "其余表面粗糙度"))
     if plan.cut_list:
         rows = []

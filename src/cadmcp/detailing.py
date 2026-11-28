@@ -575,7 +575,9 @@ def _notes_and_title(spec: DrawingSpec, p: ResolvedPart, sheet: str, scale: floa
     tb = {
         "name": p.title, "part_no": p.part_no, "material": p.material, "scale": scale_label(scale),
         "mass": f"{p.mass_kg:.3f} kg", "sheet": sheet, "projection": "第一角" if spec.projection == "first_angle" else "第三角",
-        "surface_finish": ("" if p.casting.get("blank") else "cast") if p.casting else (spec.surface_finish or ""),
+        # 钣金（冷轧板原表面）：其余表面不去除材料（用户确认）；出图规格显式改了其余粗糙度时按规格
+        "surface_finish": ("" if p.casting.get("blank") else "cast") if p.casting else
+        ("asis" if p.base_type == "sheet_metal" and spec.surface_finish == "Ra 3.2" else (spec.surface_finish or "")),
         "designer": "", "checker": "", "approver": "",
         "date": (today or date.today()).isoformat(),
     }

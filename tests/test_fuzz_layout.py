@@ -691,3 +691,21 @@ def test_shaft_label_leader_dodges_section_letter():
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+SHEET_BRACKET = {'name': 'SM1', 'part_no': 'SM-1', 'title': '安装支架', 'material': 'SPCC', 'category': 'sheet_metal', 'base': {'type': 'sheet_metal', 'profile': {'shape': 'rect', 'width': 150, 'height': 80}, 'thickness': 2, 'flanges': [{'edge': 'front', 'length': 20}, {'edge': 'back', 'length': 20}]}, 'features': [{'feature': 'hole', 'name': 'H', 'type': 'clearance', 'size': 'M5', 'positions': [[-50, -20], [50, -20], [50, 20], [-50, 20]]}]}
+
+
+def test_sheet_metal_general_finish_as_supplied():
+    """钣金件其余表面：不去除材料符号（用户确认），SW/Creo 注释同；出图规格显式给了其余粗糙度时按规格。"""
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    p = resolve_part(PartSpec.model_validate(SHEET_BRACKET))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert plan.title_block["surface_finish"] == "asis"
+    ops = compile_drawing(plan, "x.SLDPRT")
+    assert any("不去除材料" in (o.args.get("text") or "") for o in ops if o.op == "note")
+    plan2 = plan_part_drawing(DrawingSpec(model=p.name, surface_finish="Ra 6.3"), p)
+    assert plan2.title_block["surface_finish"] == "Ra 6.3"

@@ -103,15 +103,16 @@ def roughness(s, ax, ay, n, text, reach=None, rot: int = 0):
 
 def general_roughness(s, x, y, ra_text):
     """"其余"表面结构（标题栏附近，GB/T 131）：其余 √Ra 3.2 (√)，x 为左端。
-    ra_text="cast"：铸件其余表面不去除材料（√ 内加圆）。"""
+    ra_text="cast"：铸件其余表面不去除材料（√ 内加圆）；"asis"：钣金原材料表面，同一符号、不加说明。"""
     s.text(x, y + 1, "其余", 3.5)
-    if ra_text == "cast":
+    if ra_text in ("cast", "asis"):
         h = 4.2
         ax, ay = x + 13, y
         s.line(ax, ay, ax - h * 0.58, ay + h, THIN)
         s.line(ax, ay, ax + 2 * h * 0.58, ay + 2 * h, THIN)
         s.circle(ax, ay + h * 0.62, h * 0.36, THIN)
-        s.text(x + 22, y + 1, "（铸造面）", 3)
+        if ra_text == "cast":
+            s.text(x + 22, y + 1, "（铸造面）", 3)
         return
     roughness(s, x + 13, y, (0, 1), ra_text)
     s.text(x + 40, y + 1, "(√)", 3.5)

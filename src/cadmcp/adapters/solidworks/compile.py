@@ -768,7 +768,7 @@ def compile_drawing(plan, model_file: str, sheet_templates: dict[str, str] | Non
         sf = plan.title_block["surface_finish"]
         from ...detailing import general_roughness_at
         gx, gy = general_roughness_at(plan)
-        ops.append(NativeOp("note", {"text": "其余 ∅√（不去除材料）" if sf == "cast" else f"其余 √{sf} (√)",
+        ops.append(NativeOp("note", {"text": "其余 ∅√（不去除材料）" if sf in ("cast", "asis") else f"其余 √{sf} (√)",
                                      "anchor": "above_notes", "at": [gx, gy + 4.5]}, "位置避开视图（与 SVG 同）"))
     from ...detailing import notes_origin
     nx, ny = notes_origin(plan)
