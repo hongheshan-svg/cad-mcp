@@ -676,3 +676,18 @@ def test_shaft_groove_label_avoids_frame_row():
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     _, out = render(plan, p)
     assert out["crossings"] == [] and out["collisions"] == []
+
+
+XH_LEADER_OVER_LETTER = {'name': 'S23', 'part_no': 'S-23', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 0.5, 'steps': [{'length': 20, 'diameter': 40, 'tolerance': 'm6'}, {'length': 30, 'diameter': 35, 'tolerance': 'm6'}, {'length': 40, 'diameter': 27}, {'length': 50, 'diameter': 24}], 'center_holes': {'type': 'B'}, 'cross_holes': [{'step': 0, 'diameter': 4}]}, 'features': [{'feature': 'keyway', 'name': 'K1', 'step': 1, 'length': 22, 'offset': 2}]}
+
+
+def test_shaft_label_leader_dodges_section_letter():
+    """横孔 Φ4 的 45° 引线穿过键槽剖切字母 A：压的是别人的字，第二轮挪这个标注的折点。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate(XH_LEADER_OVER_LETTER))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []

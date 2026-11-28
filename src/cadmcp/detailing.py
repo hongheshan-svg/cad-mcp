@@ -5362,19 +5362,20 @@ def _shaft_label_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
         tb = (min(x2, x3), y2 - 0.5, max(x2, x3), y2 + fs + 1.3)
         return not any((tb[0] < b[2] and b[0] < tb[2] and tb[1] < b[3] and b[1] < tb[3])
                        or _seg_box((x1, y1), (x2, y2), b) for b in busy)
-    for d in plan.dims:
-        lb = (d.extra or {}).get("label")
-        if d.view != "front" or d.kind != "callout" or not lb or "elbow" not in lb or "end" not in lb \
-                or "sym_at" in lb or not mine(d, allc):
-            continue
+    labs = [d for d in plan.dims if d.view == "front" and d.kind == "callout" and (d.extra or {}).get("label")
+            and "elbow" in d.extra["label"] and "end" in d.extra["label"] and "sym_at" not in d.extra["label"]]
+    # 第一轮：自己的文字被压的；第二轮：引线压了别人（剖切字母、尺寸数字…）的，其余引出标注逐个试，严格变好才改
+    order = [(d, True) for d in labs if mine(d, allc)] + [(d, False) for d in labs if not mine(d, allc)]
+    for d, own in order:
+        lb = d.extra["label"]
         (ax, ay), (ex_, ey), (nx_, _) = lb["anchor"], lb["elbow"], lb["end"]
         L = abs(nx_ - ex_)
         fs = 3.5 if d.ref.startswith("xh:") else 3.0
         best = (n0, lb)
         cands = []
-        for dy in (5.5, -5.5, 11.0, -11.0, 16.5):
-            for dxe in (0.0, -6.0, 6.0, -12.0, 12.0):
-                for sg in ((1, -1) if nx_ >= ex_ else (-1, 1)):
+        for dy in ((5.5, -5.5, 11.0, -11.0, 16.5) if own else (5.5, -5.5, 11.0)):
+            for dxe in ((0.0, -6.0, 6.0, -12.0, 12.0) if own else (0.0, -6.0, 6.0)):
+                for sg in ((1, -1) if nx_ >= ex_ else (-1, 1))[:2 if own else 1]:
                     y = ey + dy
                     if abs(y - ay) < 4 or y + fs + 2 > H - 10:
                         continue
@@ -5396,7 +5397,7 @@ def _shaft_label_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
         n0, allc = score()
         if n0 == 0:
             return
-        if mine(d, allc) and plan.sheet == "A4":
+        if own and mine(d, allc) and plan.sheet == "A4":
             plan._xh_bad = True  # A4 上没有干净位置：plan_shaft_drawing 换 A3 重排
 
 
