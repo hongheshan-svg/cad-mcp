@@ -1661,7 +1661,8 @@ def _hole_ra_section_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         fv_ = vmap.get(d.view)
         sp_ = (d.extra or {}).get("sheet_pos")
         long_ = fv_ is not None and abs((d.extra or {}).get("normal", (0, 1))[0]) == 1 and sp_ is not None \
-            and not (fv_.origin_on_sheet[0] - fv_.size_mm[0] / 2 - 1 < sp_[0] < fv_.origin_on_sheet[0] + fv_.size_mm[0] / 2 + 1)
+            and (not (fv_.origin_on_sheet[0] - fv_.size_mm[0] / 2 - 1 < sp_[0] < fv_.origin_on_sheet[0] + fv_.size_mm[0] / 2 + 1)
+                 or (d.extra or {}).get("reach", 0.0) > 15.0)  # 或引线沿中心线拉得很长（穿过型腔虚线等）
         if bad(d.text) == 0 and not long_:
             continue
         v = vmap[sec.view]
@@ -1677,6 +1678,19 @@ def _hole_ra_section_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         half = math.sqrt(r * r - dist * dist)
         depths = [dd for dd, rr in hole_profile(h) if abs(rr - r) < 1e-6]
         lo_d, hi_d = (min(depths), max(depths)) if depths else (0.0, h.depth)
+        T_ = p.bbox.zmax - p.bbox.zmin
+        for pk in p.pockets:  # 孔口/孔底一侧的型腔罩住孔：孔壁只在型腔以外的深度上（深度从孔口端面量）
+            pr = pk["profile"]
+            if pk["face"] not in ("top", "bottom") or pr.shape not in ("rect", "circle"):
+                continue
+            u0, u1, w0, w1 = pr.bbox2d
+            if not (u0 <= inst.xyz[0] - r and inst.xyz[0] + r <= u1 and w0 <= inst.xyz[1] - r and inst.xyz[1] + r <= w1):
+                continue
+            dep = T_ if pk.get("through") else pk["depth"]
+            if pk["face"] == h.face:
+                lo_d = max(lo_d, dep)
+            else:
+                hi_d = min(hi_d, T_ - dep)
         if (hi_d - lo_d) * sc < 4:
             continue
 

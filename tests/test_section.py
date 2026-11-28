@@ -281,13 +281,24 @@ def test_creo_show_axes_per_view():
 
 
 def test_hole_roughness_stays_in_plan_view_when_bore_too_short():
-    """孔穿进对面型腔、剩下的孔壁太矮放不下符号时，Ra 仍标在孔所在面视图的孔旁。"""
+    """孔穿进对面型腔、剩下的孔壁太矮放不下符号：符号不塞进剖视孔腔。俯视图上水平引线又要沿中心线拉很长（穿型腔虚线），
+    改用剖视图带箭头引线，箭头落在型腔以外的实际孔壁上（底座厚 30、底面型腔深 12 → 孔壁在上 18 mm）。"""
     from cadmcp.detailing import plan_part_drawing
     from cadmcp.ir import DrawingSpec
+    from cadmcp.render_svg import render
     import sys
     sys.path.insert(0, "tests")
     from cast_bracket import cast_base
     p = resolve_part(PartSpec.model_validate(cast_base()))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     ra = [d for d in plan.dims if d.ref.startswith("ra:hole:")]
-    assert ra and all(not (d.extra or {}).get("in_section") for d in ra)
+    assert ra
+    for d in ra:
+        if (d.extra or {}).get("in_section"):
+            assert d.extra.get("leader_pts")
+            v = next(v_ for v_ in plan.views if v_.type == d.view)
+            top = v.origin_on_sheet[1] + v.size_mm[1] / 2
+            ay = d.extra["leader_pts"][0][1]
+            assert top - 18 * v.scale + 0.5 < ay < top - 0.5
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
