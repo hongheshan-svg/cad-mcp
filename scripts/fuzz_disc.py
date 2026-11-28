@@ -48,6 +48,16 @@ for n in range(int(sys.argv[2]) if len(sys.argv) > 2 else 200):
     if not gear and T >= 15 and rng.random() < .3:  # 止口凸台
         feats.append({"feature": "boss", "name": "Spigot", "height": rng.choice([3, 5]),
                       "profile": {"shape": "circle", "diameter": round(max(bore + 16, 0.5 * D)), "center": [0, 0]}})
+    pcd_r = [f["pattern"]["radius"] for f in feats if "pattern" in f]
+    a_ = round(rng.uniform(bore / 2 + 8, D / 2 - 8)) if D / 2 - 8 > bore / 2 + 8 else None
+    if not gear and rng.random() < .4 and a_ is not None and all(abs(a_ - r_) > 16 for r_ in pcd_r):
+        # 偏心孔（不碰分布圆上的孔）：对称销孔 / 单侧螺孔（孔位从中心线标）
+        if rng.random() < .5:
+            feats.append({"feature": "hole", "name": "Pin", "type": "simple", "size": rng.choice([6, 8, 10]),
+                          "positions": rng.choice([[[a_, 0], [-a_, 0]], [[0, a_], [0, -a_]]]), "tolerance": "H7"})
+        else:
+            feats.append({"feature": "hole", "name": "T1", "type": "tapped", "size": rng.choice(["M5", "M6", "M8"]),
+                          "positions": [rng.choice([[0, a_], [a_, 0], [-a_, 0], [0, -a_]])], "depth": min(T - 2, 10)})
     if rng.random() < .4:
         feats.append({"feature": "chamfer", "name": "C1", "edges": rng.choice(["top_outer", "bottom_outer"]),
                       "size": rng.choice([0.5, 1, 2])})

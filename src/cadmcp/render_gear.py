@@ -163,7 +163,8 @@ def draw_sheet_linear(s, d) -> None:
         else:  # 文字偏到一侧：尺寸线延长到文字下方
             tw = _text_w(d.text, 3.5)
             for x, yf in ((xa, ya), (xb, yb)):
-                s.line(x, yf + 1, x, py + 1.5, THIN)
+                sg = 1 if py > yf else -1  # 尺寸线在被注点上方 / 下方
+                s.line(x, yf + sg, x, py + sg * 1.5, THIN)
             s.line(min(xa, px - tw / 2), py, max(xb, px + tw / 2), py, THIN)
             _arrow(s, xa, py, 1, 0)
             _arrow(s, xb, py, -1, 0)

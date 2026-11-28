@@ -138,3 +138,26 @@ def test_disc_regressions_seed4_5():
     for i in h.instances:
         cx, cy = _uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va)))
         assert math.dist(lab, (cx, cy)) > h.max_dia / 2 * v.scale  # 圆点不落在孔里
+
+
+CENTER_CAP = {'name': 'RD1', 'part_no': 'RD-1', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 120}, 'thickness': 15}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 30, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'hole', 'name': 'Pin', 'type': 'simple', 'size': 8, 'positions': [[40, 0], [-40, 0]], 'tolerance': 'H7'}, {'feature': 'hole', 'name': 'T1', 'type': 'tapped', 'size': 'M6', 'positions': [[0, 45]], 'depth': 10}]}
+CENTER_KW = {'name': 'D20', 'part_no': 'D-20', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 60}, 'thickness': 10}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 25, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 8, 'height': 5.3, 'center': [0, 13.15]}}, {'feature': 'hole', 'name': 'T1', 'type': 'tapped', 'size': 'M6', 'positions': [[0, -22]], 'depth': 8}, {'feature': 'chamfer', 'name': 'C1', 'edges': 'top_outer', 'size': 0.5}]}
+
+
+def test_disc_hole_positions_from_center():
+    """圆盘：孔位从中心线标（对称销孔注中心距 80、单侧螺孔注到中心线 45），不用包围盒角点坐标；外径注 Φ120。"""
+    p, plan = _plan(CENTER_CAP)
+    assert not [d for d in plan.dims if d.view == "top" and d.kind == "ordinate"]
+    cp = {d.text: d for d in plan.dims if (d.extra or {}).get("cpos")}
+    assert set(cp) == {"80", "45"}
+    assert cp["80"].extra["orient"] == "h" and cp["45"].extra["orient"] == "v"
+    assert next(d for d in plan.dims if d.ref == "overall_x").text == "Φ120"
+    assert not any(d.ref == "overall_y" for d in plan.dims)
+    for spec in (CENTER_CAP, CENTER_KW):
+        p, plan = _plan(spec)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == []
+    # 有轮毂键槽：孔位尺寸列排在键槽深度尺寸线外侧
+    p, plan = _plan(CENTER_KW)
+    kx = next(d for d in plan.dims if d.ref == "KW_t").extra["sheet_pos"][0]
+    assert next(d for d in plan.dims if (d.extra or {}).get("cpos")).extra["sheet_pos"][0] > kx

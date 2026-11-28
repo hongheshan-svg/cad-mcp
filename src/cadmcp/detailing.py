@@ -831,6 +831,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
     _hole_ra_to_section(plan, p)
     if spec.dimensions != "none":
         _disc_keyway_sheet(plan, p, spec)
+        _disc_center_dims(plan, p)  # 键槽尺寸先定：孔位尺寸列排在其尺寸线外侧
         pitch_dim_sheet(plan, p)
         ordinate_dim_sheet(plan, p)  # 坐标值位置先定，引出标注避开它们
         flat_dim_sheet(plan, p)  # 展开图尺寸/折弯说明先定，引出标注避开它们
@@ -1654,7 +1655,14 @@ def _hole_ra_section_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
             continue
         sec = next((s_ for s_ in plan.sections if s_.kind in ("full", "step") and s_.view in vmap
                     and s_.view in VIEW_AXES), None)
-        if sec is None or bad(d.text) == 0:
+        if sec is None:
+            continue
+        # 端视图上孔壁 Ra 水平引出、符号落到视图轮廓之外：引线沿孔的中心线穿过外形和剖切符号（出图检查不计线线重合），也改
+        fv_ = vmap.get(d.view)
+        sp_ = (d.extra or {}).get("sheet_pos")
+        long_ = fv_ is not None and abs((d.extra or {}).get("normal", (0, 1))[0]) == 1 and sp_ is not None \
+            and not (fv_.origin_on_sheet[0] - fv_.size_mm[0] / 2 - 1 < sp_[0] < fv_.origin_on_sheet[0] + fv_.size_mm[0] / 2 + 1)
+        if bad(d.text) == 0 and not long_:
             continue
         v = vmap[sec.view]
         sc = v.scale
@@ -1681,7 +1689,7 @@ def _hole_ra_section_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         y_top = _uv_sheet(v, p.bbox, (0.0, vrange(p.bbox, va)[1]))[1]
         y_bot = _uv_sheet(v, p.bbox, (0.0, vrange(p.bbox, va)[0]))[1]
         orig = (d.view, d.at, dict(d.extra))
-        best = (bad(), orig)
+        best = (bad() + (5 if long_ else 0), orig)
         w_sym = 8.0 + len(d.text) * 2.0
         tcx, tcy = v.origin_on_sheet[0], v.origin_on_sheet[1] + v.size_mm[1] / 2 + 5  # 剖视标题 "A-A"（预览/CAD 同位）
         ttw = text_width(f"{sec.label}-{sec.label}", 5) / 2
@@ -3899,6 +3907,127 @@ def disc_hub_keyway(p: ResolvedPart) -> dict | None:
         if abs((x0 + x1) / 2 - cx) < 1e-6 and y0 < cy + rb - 1e-6 and y1 > cy + rb + 1e-6 and y0 > cy and w < 2 * rb:
             return {"pocket": pk, "bore": bore, "w": w, "top": y1 - cy, "rb": rb, "center": (cx, cy)}
     return None
+
+
+def _disc_center_dims(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """圆盘（拉伸圆形底座）俯视图：孔位从中心线标注，不用包围盒角点（盘外的空点）作坐标基准。
+    对称于中心线的一对孔注中心距（如 80），单侧的孔注到中心线的距离（如 45）；x 向尺寸在视图下方、y 向在右侧，
+    小尺寸靠里。外径在主视图注 Φ（俯视图不再重复注总宽）。尺寸按图纸坐标给定（extra hubkw：与轮毂键槽尺寸同一通路，
+    预览 draw_sheet_linear、SW/Creo 选两条孔边线标注，pick_pts 在孔圆/外圆上）。
+    无法从中心定位的要素（非轮毂键槽的矩形型腔、侧面孔、孔表）时不改。"""
+    v = next((v_ for v_ in plan.views if v_.type == "top"), None)
+    if v is None or p.base_type != "extrude" or p.profile is None or p.profile.shape != "circle" or plan.hole_table:
+        return
+    b = p.bbox
+    ha, va = VIEW_AXES["top"]
+    (ulo, uhi), (wlo, whi) = vrange(b, ha), vrange(b, va)
+    c0 = ((ulo + uhi) / 2, (wlo + whi) / 2)
+    R = p.profile.data["diameter"] / 2
+    hk = disc_hub_keyway(p)
+    pts = []  # (u, w, 选边半径)：要定位的圆心
+    for h in p.holes:
+        if hole_view(h.face, {"top"}) != "top":
+            return
+        if h.circular:
+            from .ir.resolve import face_point
+            cc = face_point(h.face, (h.circular["center_u"], h.circular["center_v"]), b, h.at)
+            pts.append((vc(cc, ha), vc(cc, va), h.circular["pcd"] / 2))
+        else:
+            pts += [(vc(i.xyz, ha), vc(i.xyz, va), h.max_dia / 2) for i in h.instances]
+    for pk in p.pockets + p.bosses:
+        pr = pk["profile"]
+        if hk is not None and pk is hk["pocket"]:
+            continue
+        if pr.shape != "circle" or pk["face"] not in ("top", "bottom"):
+            return
+        u_, w_ = pr.data["center"]
+        pts.append((vc((u_, w_, b.zmax), ha), vc((u_, w_, b.zmax), va), pr.data["diameter"] / 2))
+    sc = v.scale
+    cx, cy = _uv_sheet(v, b, c0)
+    vx0, vx1 = v.origin_on_sheet[0] - v.size_mm[0] / 2, v.origin_on_sheet[0] + v.size_mm[0] / 2
+    vy0 = v.origin_on_sheet[1] - v.size_mm[1] / 2
+    plan.dims[:] = [d for d in plan.dims if not (d.view == "top" and d.kind == "ordinate")
+                    and not (d.view == "top" and d.ref == f"overall_{va[-1]}")]
+    for d in plan.dims:  # 外径：主视图（全剖）总宽注 Φ
+        if d.kind == "linear" and d.ref == f"overall_{ha[-1]}" and not d.text.startswith("Φ"):
+            d.text = f"Φ{d.text}"
+            d.extra = {**(d.extra or {}), "prefix": "Φ", "suffix": ""}
+    if not any(d.ref == f"overall_{ha[-1]}" for d in plan.dims):
+        f_ = next((v_ for v_ in plan.views if v_.type != "top" and v_.type in VIEW_AXES and ha in VIEW_AXES[v_.type]), None)
+        if f_ is not None:
+            plan.dims.append(Dim(f_.type, "linear", ha, 2 * R, f"Φ{2 * R:g}", f"overall_{ha[-1]}",
+                                 extra={"prefix": "Φ", "suffix": ""}))
+
+    def spans(k):  # k = 0：x 向（沿 ha），1：y 向（沿 va）
+        offs = {}
+        for q in pts:
+            o = round(q[k] - c0[k], 3)
+            if abs(o) > 1e-6:
+                offs.setdefault(o, q)
+        out, used = [], set()
+        for o in sorted(offs, key=abs):
+            if o in used:
+                continue
+            if -o in offs:  # 对称一对：中心距
+                out.append((offs[-o] if o > 0 else offs[o], offs[o] if o > 0 else offs[-o], round(2 * abs(o), 3)))
+                used |= {o, -o}
+            else:  # 单侧：到中心线
+                out.append((None, offs[o], round(abs(o), 3)) if o > 0 else (offs[o], None, round(abs(o), 3)))
+                used.add(o)
+        return sorted(out, key=lambda t: t[2])
+
+    def sheet(q):
+        return _uv_sheet(v, b, (q[0], q[1]))
+    xs = spans(0)
+    rows = []
+    for k, (qa, qb, val) in enumerate(xs):
+        y = vy0 - 10 - 7 * k
+        ends = []
+        for q in (qa, qb):
+            if q is None:  # 中心线：外圆最下点（选外圆）
+                ends.append(((cx, vy0), (cx, cy - R * sc)))
+            else:
+                sx, sy = sheet(q)
+                ends.append(((sx, sy - q[2] * sc), (sx, sy - q[2] * sc)))
+        (pa, ka), (pb, kb) = sorted(ends, key=lambda e: e[0][0])
+        rows.append([pa, pb, ka, kb, y, val])
+    ys = spans(1)
+    cols = []
+    x_kw = max([d.extra["sheet_pos"][0] for d in plan.dims if d.view == "top" and (d.extra or {}).get("hubkw")
+                and d.extra.get("orient") == "v"] or [vx1 + 5])  # 轮毂键槽深度尺寸线（在右侧时）
+    for k, (qa, qb, val) in enumerate(ys):
+        x = max(vx1 + 12, x_kw + 7) + 7 * k
+        ends = []
+        for q in (qa, qb):
+            if q is None:
+                ends.append(((vx1, cy), (cx + R * sc, cy)))
+            else:
+                sx, sy = sheet(q)
+                ends.append(((sx + q[2] * sc, sy), (sx + q[2] * sc, sy)))
+        (pa, ka), (pb, kb) = sorted(ends, key=lambda e: e[0][1])
+        cols.append([pa, pb, ka, kb, x, val])
+
+    def text_at(lo, hi, mid, tw, blocked):  # 数字在两界线之间、避开外层尺寸的界线；放不下写到外侧
+        cands = [mid + sg * 0.5 * j for j in range(0, 80) for sg in ((1, -1) if j else (1,))]
+        cands = [c for c in cands if lo + tw / 2 + 1 <= c <= hi - tw / 2 - 1]
+        cands += [hi + 1.5 + tw / 2 + 0.5 * j for j in range(10)] + [lo - 1.5 - tw / 2 - 0.5 * j for j in range(10)]
+        return next((c for c in cands if not any(abs(c - e) < tw / 2 + 0.8 for e in blocked)), mid)
+    for k, (pa, pb, ka, kb, y, val) in enumerate(rows):
+        txt = f"{val:g}"
+        tw = text_width(txt, 3.5)
+        outer = [q[0] for r in rows[k + 1:] for q in r[:2]]
+        tx = text_at(pa[0], pb[0], (pa[0] + pb[0]) / 2, tw, outer)
+        plan.dims.append(Dim("top", "linear", ha, val, txt, f"cpos:{ha}={val:g}", None,
+                             {"hubkw": True, "cpos": True, "orient": "h", "sheet_pts": [pa, pb],
+                              "pick_pts": [ka, kb], "sheet_pos": (round(tx, 2), round(y, 2))}))
+    for k, (pa, pb, ka, kb, x, val) in enumerate(cols):
+        txt = f"{val:g}"
+        tw = text_width(txt, 3.5)
+        outer = [q[1] for c_ in cols[k + 1:] for q in c_[:2]]
+        ty = text_at(pa[1], pb[1], (pa[1] + pb[1]) / 2, tw, outer)
+        plan.dims.append(Dim("top", "linear", va, val, txt, f"cpos:{va}={val:g}", None,
+                             {"hubkw": True, "cpos": True, "orient": "v", "sheet_pts": [pa, pb],
+                              "pick_pts": [ka, kb], "sheet_pos": (round(x, 2), round(ty, 2))}))
 
 
 def _disc_keyway_sheet(plan: "DrawingPlan", p: ResolvedPart, spec: DrawingSpec) -> None:
