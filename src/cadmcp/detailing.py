@@ -4469,7 +4469,17 @@ def shaft_top_obstacles(p: ResolvedPart, sc: float) -> list[float]:
         elif g["target"].startswith("shoulder:"):
             sg = shoulder_gtol_geom(p, int(g["target"][9:]), sc)
             zs += [sg["z_leader"]]
+    zs += shaft_step_up_z(p, sc)
     return zs
+
+
+def shaft_step_up_z(p: ResolvedPart, sc: float) -> list[float]:
+    """向右变粗的轴肩（模型 z）：细段上的 Ra 符号文字向右写（约 21 mm），会撞上右邻粗段的端面轮廓。"""
+    out = []
+    for j in range(len(p.shaft_steps) - 1):
+        if (p.shaft_steps[j + 1][1] - p.shaft_steps[j][1]) / 2 * sc > 1.0:
+            out.append(p.step_z(j)[1])
+    return out
 
 
 def shaft_gtol_frac(p: ResolvedPart, i: int, sc: float) -> float:
@@ -4882,7 +4892,9 @@ def _shaft_dia_choice(p: ResolvedPart, i: int, sc: float = 1.0, force_long: bool
     lines = [z0, z1] + ([c] if c and z0 == 0 else []) + ([Ltot - c] if c and abs(z1 - Ltot) < 1e-6 else [])
     # 文字的障碍：键槽/环槽轮廓、各竖线、轴端螺孔虚线；螺纹只有终止线（小径细线是水平的）
     obst = [(f["z0"], f["z1"]) for f in p.shaft_features if f["step"] == i and f["kind"] not in ("gear", "thread")]
-    obst += [(h["z0"], h["z1"] + 0.3 * h["tap"]) for h in p.end_holes]
+    # 118° 钻尖（轴向长 r·tan31° ≈ 0.3·tap）在孔底一侧：右端孔的孔底在 z0，左端孔在 z1
+    obst += [(h["z0"] - 0.3 * h["tap"], h["z1"]) if h["side"] == "end" else (h["z0"], h["z1"] + 0.3 * h["tap"])
+             for h in p.end_holes]
     for ch in getattr(p, "center_holes", None) or []:  # 轴端中心孔（主视图画出锥孔轮廓，深约 D）
         obst.append((0.0, ch["D"] + 0.5) if ch["end"] == "start" else (Ltot - ch["D"] - 0.5, Ltot))
     obst += [(h["z"] - h["d"] / 2 - 0.5, h["z"] + h["d"] / 2 + 0.5) if h["dir"] == "view"
@@ -5164,6 +5176,72 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_ra_on_dim(plan)  # 标在孔径尺寸线上的 Ra：接在（已定位的）尺寸文字之后
     _shaft_gear_lines(plan, p)  # 齿轮段分度线/齿根线（非模型几何），在尺寸文字处断开
     _gear_flank_leader(plan, p)  # 齿面 Ra 无处可放（两侧延长线被挡、段内放不下）：改用引线指向分度线
+    _shaft_step_ra_leader(plan, p)  # 轴段 Ra 立在面上仍压线（短段：文字撞右邻粗段）：改用引线
+
+
+def _shaft_step_ra_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """轴段外圆的 Ra 立在轮廓上仍压线/压字（短轴段：文字向右撞上右邻粗段端面；上方挤满尺寸界线）时，改为带箭头的引线
+    指向该段外圆（GB/T 131：符号立在引线的水平折线上）。箭头在段内 1/2、1/3、2/3 处的上/下轮廓，引线 60° 向左/右
+    引到全轴最高轮廓之外的折线高度；逐个用预览出图检查，取冲突最少的（不比原位置好则不改）。"""
+    ds = [d for d in plan.dims if d.kind == "roughness" and d.ref.startswith("ra:step:") and d.view == "front"
+          and not (d.extra or {}).get("on_frame") and not (d.extra or {}).get("on_dim")
+          and not (d.extra or {}).get("leader_pts")]
+    fv = next((v for v in plan.views if v.type == "front"), None)
+    if not ds or fv is None:
+        return
+    from .render_svg import render
+
+    def bad(text=None) -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        allc = out["crossings"] + out["collisions"]
+        dash = out.get("dash_crossings") or []
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc):
+            return 0  # 只在压实线/压字时动（压点画线另由别处处理）
+        return 10 * len(allc) + len(dash)
+    sc, cy = fv.scale, fv.origin_on_sheet[1]
+    R = max(dd for _, dd in p.shaft_steps) / 2 * sc
+    y_top, y_bot = cy + R, cy - R
+    for d in ds:
+        i = int(d.ref.split(":")[-1])
+        if i >= len(p.shaft_steps) or bad(d.text) == 0:
+            continue
+        orig_at, orig = d.at, dict(d.extra)
+        best = (bad(), orig_at, orig)
+        z0, z1 = p.step_z(i)
+        r_ = p.shaft_steps[i][1] / 2
+        cands = []
+        for t in (0.5, 0.35, 0.65, 0.2, 0.8):
+            z = unbreak_z(p, z0 + t * (z1 - z0))
+            ax = shaft_sx(fv, None, z)
+            for side, ys in ((1, (y_top + 3.0, y_top + 6.0, y_top + 9.0)), (-1, (y_bot - 10.5, y_bot - 13.5))):
+                ay = cy + side * r_ * sc
+                for ye in ys:
+                    h = abs(ye - ay)
+                    if h < 5.0:
+                        continue
+                    for g in (1, -1):
+                        bx = ax + g * h * 0.577
+                        cx_ = bx + g * 6.5
+                        vx = bx + 2.5 if g > 0 else bx - 4.0
+                        cands.append(((round(z, 6), side * r_), {
+                            "leader_pts": [(round(ax, 2), round(ay, 2)), (round(bx, 2), round(ye, 2)),
+                                           (round(cx_, 2), round(ye, 2))],
+                            "sheet_at": (round(vx, 2), round(ye, 2)), "sheet_pos": (round(vx, 2), round(ye, 2)),
+                            "normal": (0, 1)}))
+        base = {k: v for k, v in orig.items() if k not in ("sheet_at", "sheet_pos", "normal", "reach")}
+        for at_, c in cands:
+            d.at, d.extra = at_, {**base, **c}
+            n = bad()
+            if n < best[0]:
+                best = (n, d.at, dict(d.extra))
+                if n == 0:
+                    break
+        _, d.at, d.extra = best
+        if "leader_pts" in d.extra:
+            d.extra = {**d.extra, "leader_segs": leader_segments(d.extra["leader_pts"])}
 
 
 def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:

@@ -623,3 +623,23 @@ def test_step_cut_corner_letter_avoids_circles():
     p = resolve_part(PartSpec.model_validate(STEP_LETTER_ON_PCD))
     _, out = render(plan_part_drawing(DrawingSpec(model=p.name), p), p)
     assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
+
+
+END_HOLE_SHAFT = {'name': 'S44', 'part_no': 'S-44', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 1.5, 'steps': [{'length': 25, 'diameter': 45, 'tolerance': 'm6'}, {'length': 40, 'diameter': 55, 'tolerance': 'f7'}], 'end_holes': [{'side': 'end', 'size': 'M16', 'depth': 24}]}, 'features': [], 'auto_precision': True}
+SHORT_STEP_RA = {'name': 'S99', 'part_no': 'S-99', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 1.5, 'steps': [{'length': 10, 'diameter': 36, 'tolerance': 'h7'}, {'length': 80, 'diameter': 44, 'tolerance': 'k6'}, {'length': 40, 'diameter': 52}, {'length': 30, 'diameter': 55}], 'end_holes': [{'side': 'end', 'size': 'M16', 'depth': 24}]}, 'features': [{'feature': 'keyway', 'name': 'K1', 'step': 1, 'length': 56}, {'feature': 'groove', 'name': 'G2', 'type': 'grinding', 'step': 2}], 'auto_precision': True}
+
+
+def test_shaft_end_hole_cone_and_short_step_ra():
+    """右端螺孔的钻尖在孔底（z0）一侧：直径文字避开锥线；短细段的 Ra 文字会撞右邻粗段时改用引线。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    for spec in (END_HOLE_SHAFT, SHORT_STEP_RA):
+        p = resolve_part(PartSpec.model_validate(spec))
+        plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == [], spec["name"]
+    p = resolve_part(PartSpec.model_validate(SHORT_STEP_RA))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    assert next(d for d in plan.dims if d.ref == "ra:step:0").extra.get("leader_segs")
