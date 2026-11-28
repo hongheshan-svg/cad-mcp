@@ -807,6 +807,10 @@ def _dim_boxes(plan, vtype) -> list[tuple[float, float, float, float]]:
             out += [(px - tw / 2 - 1, py - 1, px + tw / 2 + 1, py + 4.5), (min(x1, x2), py - 0.5, max(x1, x2), py + 0.5)]
         else:
             out += [(px - 4.5, py - tw / 2 - 1, px + 1, py + tw / 2 + 1), (px - 0.5, min(y1, y2), px + 0.5, max(y1, y2))]
+        if ex.get("hubkw"):  # 轮毂键槽尺寸的尺寸界线在视图内部（别的尺寸界线贴着轮廓外）
+            for qx, qy in ex["sheet_pts"]:
+                out.append((qx - 1.0, min(qy, py), qx + 1.0, max(qy, py) + 2) if ex.get("orient") == "h"
+                           else (min(qx, px), qy - 1.0, max(qx, px) + 2, qy + 1.0))
     return out
 
 
@@ -861,7 +865,8 @@ def _draw_cut_line(s, sec, part, V, avoid=None):
         def hits(c):  # 字母框（与 Svg.text 同算法）被已画的线穿过的条数
             w_ = _text_w(sec.label, 3.5)
             bx0, by0, bx1, by1 = c[0] - w_ / 2 + 0.4, c[1] - 1.2 - 0.7 + 0.4, c[0] + w_ / 2 - 0.4, c[1] - 1.2 + 2.8 - 0.4
-            return sum(_seg_hits_box(*ln, bx0, by0, bx1, by1) for ln in s.leaders + s.outlines + s.thins)
+            return sum(_seg_hits_box(*ln, bx0, by0, bx1, by1) for ln in s.leaders + s.outlines + s.thins) + \
+                sum(_box_overlap((bx0, by0, bx1, by1), o) > 0 for o in avoid or [])  # 后画的尺寸（规划层已定位）
 
         cands = [(a[0] + sx * r_, a[1] + sy * r_) for r_ in (4.5, 6.5) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
         tx, ty = max(cands, key=lambda c: (-hits(c), clearance(c) - (c != cands[0] and math.dist(c, a) > 5) * 0.5))

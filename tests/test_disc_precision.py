@@ -111,3 +111,30 @@ def test_bore_ra_leader_in_section():
     from cadmcp.adapters.solidworks.compile import compile_drawing
     ops = compile_drawing(plan, "D.SLDPRT")
     assert sum(o.op == "view_line" and o.args["ref"].startswith("ra:hole:Bore:leader") for o in ops) >= 2
+
+
+NARROW_SECTION = {'name': 'D127', 'part_no': 'D-127', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 60}, 'thickness': 15}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 20, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'hole', 'name': 'PC', 'type': 'simple', 'size': 10, 'pattern': {'kind': 'circular', 'radius': 21, 'count': 6, 'start_angle': 0}}], 'datums': [{'name': 'A', 'target': 'hole:Bore'}], 'tolerances': [{'type': 'circular_runout', 'value': 0.02, 'target': 'face:top', 'datums': ['A']}], 'roughness': [{'target': 'hole:Bore', 'ra': 1.6}, {'target': 'face:top', 'ra': 3.2}]}
+STEP_CUT_KW = {'name': 'D87', 'part_no': 'D-87', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 120}, 'thickness': 20}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 35, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 10, 'height': 5.3, 'center': [0, 18.15]}}, {'feature': 'hole', 'name': 'PC', 'type': 'counterbore', 'size': 'M6', 'pattern': {'kind': 'circular', 'radius': 51, 'count': 3, 'start_angle': 22.5}}, {'feature': 'chamfer', 'name': 'C1', 'edges': 'bottom_outer', 'size': 1}]}
+PCD_ON_HOLE = {'name': 'D109', 'part_no': 'D-109', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 80}, 'thickness': 30}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 25, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 8, 'height': 5.3, 'center': [0, 13.15]}}, {'feature': 'hole', 'name': 'PC', 'type': 'counterbore', 'size': 'M8', 'pattern': {'kind': 'circular', 'radius': 26, 'count': 6, 'start_angle': 22.5}}, {'feature': 'boss', 'name': 'Spigot', 'height': 3, 'profile': {'shape': 'circle', 'diameter': 41, 'center': [0, 0]}}]}
+STEP_CUT_KW2 = {'name': 'D3', 'part_no': 'D-3', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 250}, 'thickness': 15}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 35, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 10, 'height': 5.3, 'center': [0, 18.15]}}, {'feature': 'hole', 'name': 'PC', 'type': 'counterbore', 'size': 'M6', 'pattern': {'kind': 'circular', 'radius': 80, 'count': 3, 'start_angle': 30}}], 'auto_precision': True}
+
+
+def test_disc_regressions_seed4_5():
+    """窄剖面顶面 Ra 改引线；阶梯剖折角旁的键槽深度尺寸外移；分布圆标注落在两孔之间、被引线穿过时换备选。"""
+    for spec in (NARROW_SECTION, STEP_CUT_KW, PCD_ON_HOLE, STEP_CUT_KW2):
+        p, plan = _plan(spec)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == [], spec["name"]
+    p, plan = _plan(NARROW_SECTION)
+    assert next(d for d in plan.dims if d.ref == "ra:face:top").extra.get("leader_segs")
+    p, plan = _plan(PCD_ON_HOLE)
+    import math
+    pcd = next(d for d in plan.dims if d.ref.endswith(".pcd"))
+    h = next(h for h in p.holes if h.circular)
+    lab = pcd.extra["label"]["anchor"]
+    v = next(v_ for v_ in plan.views if v_.type == "top")
+    from cadmcp.detailing import VIEW_AXES, _uv_sheet, vc
+    ha, va = VIEW_AXES["top"]
+    for i in h.instances:
+        cx, cy = _uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va)))
+        assert math.dist(lab, (cx, cy)) > h.max_dia / 2 * v.scale  # 圆点不落在孔里

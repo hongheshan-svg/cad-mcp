@@ -695,8 +695,13 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                     val = round(ptc[ax] - origin[ax], 3)
                     ordinates.setdefault((view, ax, val), Dim(view, "ordinate", ax, val, f"{val:g}",
                                                               f"ord:{view}.{ax}={val:g}", (ptc[ha], ptc[va])))
+                # 落点在分布圆上两孔之间（不落在孔里），取最接近右下 45° 的那个空当
+                angs = sorted(math.degrees(math.atan2(vc(i.xyz, va) - ptc[va], vc(i.xyz, ha) - ptc[ha])) % 360
+                              for i in h.instances)
+                mids = [(a_ + ((b_ - a_) % 360 or 360) / 2) % 360 for a_, b_ in zip(angs, angs[1:] + angs[:1])] or [315.0]
+                am = math.radians(min(mids, key=lambda m: abs((m - 315 + 180) % 360 - 180)))
                 dims.append(Dim(view, "diameter", None, c["pcd"], f"Φ{c['pcd']:g} 分布圆", f"{h.name}.pcd",
-                                (ptc[ha] + c["pcd"] / 2 * 0.7071, ptc[va] - c["pcd"] / 2 * 0.7071)))
+                                (ptc[ha] + c["pcd"] / 2 * math.cos(am), ptc[va] + c["pcd"] / 2 * math.sin(am))))
                 for inst in h.instances:
                     located.update({f"{h.name}[{inst.index}].{ha}", f"{h.name}[{inst.index}].{va}"})
             row = None if h.circular else _regular_row(h, ha, va)
@@ -1044,7 +1049,14 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
             return False
         cx_ = vmap[d_.view].origin_on_sheet[0]
         tw_ = text_width(f"{next(sec.label for sec in plan.sections if sec.view == d_.view)}-X", 5)
-        return abs(ex_["sheet_at"][0] - cx_) < tw_ / 2 + 4
+        x_ = ex_["sheet_at"][0]
+        if d_.kind == "roughness":  # 符号横向范围：Ra 文字自尖端向右写
+            a_, b_ = x_ - 4.5, x_ + 8.0 + len(d_.text) * 2.0
+        elif d_.kind == "gtol":
+            a_, b_ = x_ - 4.0, x_ + 4.0
+        else:
+            a_, b_ = x_ - 4.0, x_ + 4.0
+        return a_ < cx_ + tw_ / 2 + 1.5 and cx_ - tw_ / 2 - 1.5 < b_
     for d in ds:
         face = face_of(d)
         v = vmap[d.view]
@@ -1070,7 +1082,45 @@ def _face_ra_slide(plan: "DrawingPlan", p: ResolvedPart) -> None:
                 best = (n, d.at, dict(d.extra))
                 if n == 0:
                     break
+        if best[0] > 0 and d.kind == "roughness" and tuple(ex0.get("normal", ())) == (0, 1):
+            best = _face_ra_leader(plan, d, face, v, p, ex0, best, bad, under_title)
         _, d.at, d.extra = best
+        if "leader_pts" in d.extra:
+            d.extra = {**d.extra, "leader_segs": leader_segments(d.extra["leader_pts"])}
+
+
+def _face_ra_leader(plan, d, face, v, p, ex0, best, bad, under_title):
+    """朝上的面 Ra 沿边线滑不出空位（窄剖面：实体段都被孔口占了、剩下的贴着标题/框格）：改用带箭头的引线指向该面
+    （GB/T 131，符号立在引线的水平折线上）。箭头在实体段上，引线向左/右 60°、45° 伸出 5/8/11 mm；逐个出图检查。"""
+    w_sym = 8.0 + len(d.text) * 2.0
+    pts = []
+    for k in range(1, 20):
+        a = _face_anchor(face, [v], p.bbox, d.kind, p, frac=k / 20)
+        if a is None or a[0] != d.view:
+            break
+        q = _uv_sheet(v, p.bbox, a[1])
+        if all(abs(q[0] - o[1][0]) > 1.5 for o in pts):
+            pts.append((a[1], q))
+    base = {k: v_ for k, v_ in ex0.items() if k not in ("sheet_at", "sheet_pos", "reach", "leader_pts", "leader_segs")}
+    for at_m, (ax, ay) in pts:
+        for k_ in (0.577, 1.0):
+            for e in (5.0, 8.0, 11.0):
+                for g in (-1, 1):
+                    ye = ay + e
+                    bx = ax + g * e * k_
+                    cx_ = bx + g * 6.5
+                    vx = bx + 2.5 if g > 0 else bx - 4.0
+                    d.at = at_m
+                    d.extra = {**base, "normal": (0, 1), "sheet_at": (round(vx, 2), round(ye, 2)),
+                               "sheet_pos": (round(vx, 2), round(ye, 2)),
+                               "leader_pts": [(round(ax, 2), round(ay, 2)), (round(bx, 2), round(ye, 2)),
+                                              (round(cx_, 2), round(ye, 2))]}
+                    n = bad() + 5 * under_title(d, d.extra)
+                    if n < best[0]:
+                        best = (n, d.at, dict(d.extra))
+                        if n == 0:
+                            return best
+    return best
 
 
 
@@ -3502,7 +3552,7 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     **({"on_edge": True} if rr >= 5 else {})}
         alts = []
         hung = any((d2.extra or {}).get("attach") == "callout" and d2.ref.endswith(f"hole:{d.ref}") for d2 in plan.dims)
-        if not hung and d.kind == "callout":  # 备选（出图检查仍压线压字时按代价顺序试，callout_retry）
+        if not hung and d.kind in ("callout", "diameter"):  # 备选（出图检查仍压线压字时按代价顺序试，callout_retry）
             for c_ in sorted(pool, key=lambda t: t[0])[1:]:  # 孔上挂了基准/粗糙度：引出点不换
                 if c_[0] >= 5000 or len(alts) >= 16:
                     break
@@ -3855,8 +3905,16 @@ def _disc_keyway_sheet(plan: "DrawingPlan", p: ResolvedPart, spec: DrawingSpec) 
     def dev(t):
         return t if spec.fit_deviations else t.split("(")[0]
     vx1 = v.origin_on_sheet[0] + v.size_mm[0] / 2
-    skip = (vx1 - 1.0, vx1 + 14.0) if any(d.view == "top" and d.kind == "ordinate" and d.axis == va
-                                           for d in plan.dims) else None  # 右侧坐标值引线与数字
+    skip = [(vx1 - 1.0, vx1 + 14.0)] if any(d.view == "top" and d.kind == "ordinate" and d.axis == va
+                                             for d in plan.dims) else []  # 右侧坐标值引线与数字
+    for sec in plan.sections:  # 阶梯剖的剖切线折角（竖直粗短画）在槽深尺寸的高度范围内
+        if sec.parent != "top" or len(sec.cut_points) < 2:
+            continue
+        cps = [_uv_sheet(v, p.bbox, (vc(q, ha), vc(q, va))) for q in sec.cut_points]
+        y_lo, y_hi = ey - hk["rb"] * sc - 2, ey + hk["top"] * sc + 2
+        for (xa_, ya_), (xb_, yb_) in zip(cps, cps[1:]):
+            if abs(xa_ - xb_) < 1e-6 and min(ya_, yb_) < y_hi and max(ya_, yb_) > y_lo:
+                skip.append((xa_ - 8.0, xa_ + 8.0))  # 折角粗短画的水平臂约 4 mm、转角外侧的字母
     for d in hub_keyway_dims("top", ex, ey, sc, hk["rb"], hk["w"], hk["top"], name, dev, rings=rings, circles=circles,
                              x_skip=skip):
         d.extra["hubkw"] = True
@@ -3885,7 +3943,7 @@ def _ord_shared(plan: "DrawingPlan", p: ResolvedPart, d: Dim) -> bool:
 
 def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: float, top: float, name: str, dev,
                     rings: tuple[float, ...] = (), circles: tuple[tuple[float, float, float], ...] = (),
-                    x_skip: tuple[float, float] | None = None) -> list[Dim]:
+                    x_skip: list[tuple[float, float]] | None = None) -> list[Dim]:
     """端视图上的轮毂键槽尺寸（GB/T 1095）：槽宽 b（JS9）与 d + t2（上偏差按 b）。键槽在端视图上方。
     ex, cy = 端视图中心（图纸 mm）；top = 槽底到轴线（模型 mm）；dev(text) 决定是否保留偏差。齿轮盘与套类共用。
     rings = 端视图上同心实线圆的图上半径（齿根圆、齿顶圆、外圆…）：文字压圆时槽宽文字上移、槽深尺寸线外移。"""
@@ -3923,7 +3981,7 @@ def hub_keyway_dims(view: str, ex: float, cy: float, sc: float, rb: float, w: fl
     xt = ex + rb * sc + 8
     for k in range(80):  # 槽深文字压同心圆：尺寸线逐 1 mm 外移
         x_ = ex + rb * sc + 8 + k
-        if x_skip is not None and x_skip[0] < x_ + 0.35 and x_ - 2.8 < x_skip[1]:  # 坐标尺寸引线带等：整体跳过
+        if any(a_ < x_ + 0.35 and x_ - 2.8 < b_ for a_, b_ in x_skip or ()):  # 坐标尺寸引线带、剖切线折角等：整体跳过
             continue
         if not on_ring((x_ - 2.8, ty - half, x_ + 0.35, ty + half)) and all(abs(x_ - ex - r) > 1.5 for r in rings):  # 也不贴着同心圆切过
             xt = x_
