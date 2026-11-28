@@ -1344,6 +1344,17 @@ class SwExecutor:
             self.readback.setdefault("dim_fit_failed", []).append(ref)
             return False
 
+    def _set_bilateral(self, disp, upper: float, lower: float, ref: str) -> bool:
+        """尺寸公差设为双向（上下偏差叠写，单位 mm → m）。失败返回 False，由调用方退回文字后缀。"""
+        try:
+            tol = disp.GetDimension2(0).Tolerance
+            tol.Type = self._k("swTolBILAT", 2)  # TODO(实机核对): swTolType_e.swTolBILAT 的取值
+            ok = tol.SetValues2(lower / 1000.0, upper / 1000.0, self._k("swSetValue_InThisConfiguration", 1), None)
+            return ok is not False
+        except Exception:  # noqa: BLE001
+            self.readback.setdefault("dim_tol_failed", []).append(ref)
+            return False
+
     def op_shaft_dimension(self, view: str, kind: str, text: str, at, ref: str, pts=None, pos=None, orient=None,
                            arc_end=None):
         """轴类尺寸：线性（轴段长/总长/键槽长与定位）= 选两条垂直边线；直径 = 选上下两条轮廓线，
@@ -1371,10 +1382,13 @@ class SwExecutor:
         suffix = (m.group(2) if m else "").strip()
         prefix = "<MOD-DIAM>" if kind == "diameter" else ""
         fm = re.match(r"^([A-Za-z]{1,2}\d{1,2})\(([^/]+)/([^)]+)\)$", suffix)
+        bm = re.match(r"^\(\s*([+-]?[0-9.]+)\s*/\s*([+-]?[0-9.]+)\s*\)$", suffix)  # 只有极限偏差（如槽深 20(0/-0.2)）
         if fm and self._set_fit(disp, fm.group(1), ref):  # SW 自带配合公差：显示代号 + 上下叠写偏差
             suffix = ""
         elif fm:
             suffix = f"{fm.group(1)}({fm.group(2)}/{fm.group(3)})"
+        elif bm and self._set_bilateral(disp, float(bm.group(1)), float(bm.group(2)), ref):
+            suffix = ""
         if kind == "diameter" or suffix:
             all_ = self._k("swDimensionTextAll", 0)
             try:  # <MOD-DIAM> 为 SW 直径符号标记，<DIM> 为尺寸值；公差带作为后缀文字

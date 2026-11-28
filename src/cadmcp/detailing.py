@@ -2275,7 +2275,12 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
                                     (sz0, f["z0"])))
                 dims.append(Dim("section", "linear", "y", f["width"], (tol_text(f["width"], "N9") if spec.fit_deviations else f"{f['width']:g}N9"), f"{f['name']}_w",
                                 (f["d"], f["width"])))
-                dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], f"{f['d'] - f['depth']:g}",
+                # 槽深 d − t1：GB/T 1095 轴槽深 t1 偏差同轮毂槽 t2（b ≤ 6 为 +0.1，否则 +0.2），d − t1 取 0/−（用户确认）
+                from .gear_drawing import hub_t2_tol
+                dt_ = f"{f['d'] - f['depth']:g}"
+                if spec.fit_deviations:
+                    dt_ += f"(0/-{hub_t2_tol(f['width']):g})"
+                dims.append(Dim("section", "linear", "x", f["d"] - f["depth"], dt_,
                                 f"{f['name']}_t", (f["d"], f["depth"])))
             else:
                 if f in dets and f["type"] == "circlip":  # 挡圈槽：主视图只留标准号引出，尺寸见局部放大图

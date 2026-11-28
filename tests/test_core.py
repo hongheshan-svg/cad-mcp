@@ -184,7 +184,7 @@ def test_shaft_features_and_drawing(tmp_path):
     r = svc.build(DrawingSpec.model_validate({"model": "SH1", "title_block": {"designer": "AI"}}))
     assert r["rules"]["passed"], r["rules"]
     texts = [d["text"] for d in svc.get_model("SH1_DRW")["dimensions"]]
-    assert {"Φ20k6(+0.015/+0.002)", "Φ25k6(+0.015/+0.002)", "6N9(0/-0.030)", "16.5", "8N9(0/-0.036)", "21", "2×C1", "130"} <= set(texts)
+    assert {"Φ20k6(+0.015/+0.002)", "Φ25k6(+0.015/+0.002)", "6N9(0/-0.030)", "16.5(0/-0.1)", "8N9(0/-0.036)", "21(0/-0.2)", "2×C1", "130"} <= set(texts)
     assert any("挡圈槽" in t for t in texts)
 
 

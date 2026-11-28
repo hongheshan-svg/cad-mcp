@@ -656,3 +656,8 @@ Creo：`feat.round` edges 同样给点坐标。
   选两圆时是否给出圆心距（不是边距），Creo `tk.drw.dim` 同。
 - 主视图总宽注 Φ（`prefix: "Φ"`），俯视图不再标总宽。
 - 有轮毂键槽时孔位尺寸列在键槽深度 d+t2 尺寸线右侧 7 mm。
+
+## 键槽槽深偏差（TODO(实机核对)）
+- 轴键槽断面 d−t1 注 0/−0.1（b ≤ 6）或 0/−0.2（b ≥ 8），与轮毂槽 d+t2 同表（GB/T 1095，用户确认按此规则，原表待核对）。
+- SW：`op_shaft_dimension` 对"值(上/下)"文字改设原生双向公差 `_set_bilateral`（`swTolBILAT` 取值、`SetValues2` 单位 m 待核对），
+  失败时退回文字后缀（readback `dim_tol_failed`）。
