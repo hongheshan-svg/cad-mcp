@@ -866,11 +866,20 @@ def _draw_cut_line(s, sec, part, V, avoid=None):
             w_ = _text_w(sec.label, 3.5)
             bx0, by0, bx1, by1 = c[0] - w_ / 2 + 0.4, c[1] - 1.2 - 0.7 + 0.4, c[0] + w_ / 2 - 0.4, c[1] - 1.2 + 2.8 - 0.4
             return sum(_seg_hits_box(*ln, bx0, by0, bx1, by1) for ln in s.leaders + s.outlines + s.thins) + \
-                sum(_box_overlap((bx0, by0, bx1, by1), o) > 0 for o in avoid or [])  # 后画的尺寸（规划层已定位）
+                sum(_box_overlap((bx0, by0, bx1, by1), o) > 0 for o in avoid or []) + \
+                sum(_circle_hits_box(c_, (bx0, by0, bx1, by1)) for c_ in s.circles + s.dash_circles)  # 孔圆、分布圆
 
         cands = [(a[0] + sx * r_, a[1] + sy * r_) for r_ in (4.5, 6.5) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
         tx, ty = max(cands, key=lambda c: (-hits(c), clearance(c) - (c != cands[0] and math.dist(c, a) > 5) * 0.5))
         s.text(tx, ty - 1.2, sec.label, 3.5, "middle")
+
+
+def _circle_hits_box(c, b) -> bool:
+    """圆周穿过矩形框（圆 (cx, cy, r)）。"""
+    cx, cy, r = c[0], c[1], c[2]
+    dx, dy = max(b[0] - cx, 0.0, cx - b[2]), max(b[1] - cy, 0.0, cy - b[3])
+    far = math.hypot(max(abs(b[0] - cx), abs(b[2] - cx)), max(abs(b[1] - cy), abs(b[3] - cy)))
+    return math.hypot(dx, dy) <= r <= far
 
 
 def _seg_dist(p, a, b) -> float:

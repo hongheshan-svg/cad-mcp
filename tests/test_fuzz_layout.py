@@ -609,3 +609,17 @@ def test_hung_position_frames_move_with_callout():
         if g.kind == "gtol" and g.extra.get("attach") == "callout":
             co = next(d for d in plan.dims if d.kind == "callout" and d.ref == g.ref.split("@hole:")[-1])
             assert g.extra["callout_label"] == co.extra["label"]
+
+
+STEP_LETTER_ON_PCD = {'name': 'F4', 'part_no': 'F-4', 'title': '测试板', 'material': 'Q235', 'base': {'type': 'extrude', 'profile': {'shape': 'rect', 'width': 200, 'height': 200}, 'thickness': 30}, 'features': [{'feature': 'hole', 'name': 'H0', 'type': 'countersink', 'size': 'M8', 'positions': [[-50, -50], [-50, 50], [50, -50], [50, 50]]}, {'feature': 'hole', 'name': 'H1', 'type': 'clearance', 'size': 'M8', 'positions': [[-50, 0], [50, 0]]}, {'feature': 'hole', 'name': 'H2', 'type': 'tapped', 'size': 'M10', 'positions': [[28, -16]], 'depth': 12}, {'feature': 'hole', 'name': 'H3', 'type': 'clearance', 'size': 'M4', 'positions': [[7, -45]]}, {'feature': 'hole', 'name': 'PC', 'type': 'tapped', 'size': 'M5', 'pattern': {'kind': 'circular', 'radius': 60, 'count': 3, 'start_angle': 0}}]}
+
+
+def test_step_cut_corner_letter_avoids_circles():
+    """阶梯剖转角字母不落在分布圆/孔圆上。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate(STEP_LETTER_ON_PCD))
+    _, out = render(plan_part_drawing(DrawingSpec(model=p.name), p), p)
+    assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
