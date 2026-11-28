@@ -5177,6 +5177,84 @@ def shaft_dim_sheet(plan: "DrawingPlan", p: ResolvedPart) -> None:
     _shaft_gear_lines(plan, p)  # 齿轮段分度线/齿根线（非模型几何），在尺寸文字处断开
     _gear_flank_leader(plan, p)  # 齿面 Ra 无处可放（两侧延长线被挡、段内放不下）：改用引线指向分度线
     _shaft_step_ra_leader(plan, p)  # 轴段 Ra 立在面上仍压线（短段：文字撞右邻粗段）：改用引线
+    _shaft_label_retry(plan, p)  # 引出标注（环槽、倒角、横孔）与框格等同行相压：换行/换朝向
+
+
+def _shaft_label_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """主视图引出标注（环槽/挡圈槽/退刀槽、倒角、横孔：引线 + 水平折线 + 文字）出图检查仍压线压字时（排行只看了别的
+    引出标注，没看几何公差框格及其上方的 Ra），折线上下换行（±5.5 mm 一档）、文字朝向左右互换、折点横移，逐个出图检查，
+    取冲突最少的（不比原位置好则不改）。改 extra["label"] 的 elbow/end/text_at（预览与 CAD 共用）。"""
+    from .render_svg import render
+    H = plan.sheet_size[1]
+
+    def score():
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6, []
+        allc = out["crossings"] + out["collisions"]
+        return 10 * len(allc) + len(out.get("dash_crossings") or []), allc
+
+    def mine(d, allc):
+        return any(d.text == c or (not isinstance(c, str) and d.text in c) for c in allc)
+    n0, allc = score()
+    if n0 == 0:
+        return
+    from .render_gdt import _widths
+    busy = []  # 框格与框格上方的 Ra（图纸 mm，外扩 1）：引出标注的文字与引线不进来（数值上不压也挤得难看）
+    for o in plan.dims:
+        eo = o.extra or {}
+        if o.view != "front":
+            continue
+        if o.kind == "gtol" and "cells" in eo and isinstance(eo.get("sheet_pos"), (tuple, list)):
+            lx = (eo.get("elbow") or {}).get("x_leader", eo["sheet_pos"][0])
+            fx, fy = lx - 3.5 - eo.get("frame_dx", 0.0), eo["sheet_pos"][1]
+            busy.append((fx - 1, fy - 1, fx + sum(_widths(eo["cells"])) + 1, fy + 8))
+        elif o.kind == "roughness" and eo.get("on_frame") and "sheet_at" in eo:
+            rx, ry = eo["sheet_at"]
+            busy.append((rx - 5.5, ry - 1, rx + 9 + len(o.text) * 1.8, ry + 11))
+
+    def clear(c, fs):
+        (x1, y1), (x2, y2), (x3, _) = c["anchor"], c["elbow"], c["end"]
+        tb = (min(x2, x3), y2 - 0.5, max(x2, x3), y2 + fs + 1.3)
+        return not any((tb[0] < b[2] and b[0] < tb[2] and tb[1] < b[3] and b[1] < tb[3])
+                       or _seg_box((x1, y1), (x2, y2), b) for b in busy)
+    for d in plan.dims:
+        lb = (d.extra or {}).get("label")
+        if d.view != "front" or d.kind != "callout" or not lb or "elbow" not in lb or "end" not in lb \
+                or "sym_at" in lb or not mine(d, allc):
+            continue
+        (ax, ay), (ex_, ey), (nx_, _) = lb["anchor"], lb["elbow"], lb["end"]
+        L = abs(nx_ - ex_)
+        fs = 3.5 if d.ref.startswith("xh:") else 3.0
+        best = (n0, lb)
+        cands = []
+        for dy in (5.5, -5.5, 11.0, -11.0, 16.5):
+            for dxe in (0.0, -6.0, 6.0, -12.0, 12.0):
+                for sg in ((1, -1) if nx_ >= ex_ else (-1, 1)):
+                    y = ey + dy
+                    if abs(y - ay) < 4 or y + fs + 2 > H - 10:
+                        continue
+                    x = ex_ + dxe
+                    end = x + sg * L
+                    if min(x, end) < 12 or max(x, end) > plan.sheet_size[0] - 12:
+                        continue
+                    cands.append({**lb, "elbow": (round(x, 2), round(y, 2)), "end": (round(end, 2), round(y, 2)),
+                                  "text_at": (round(min(x, end) + 0.5, 2), round(y + 0.8, 2)), "dir": sg})
+        cands = [c for c in cands if clear(c, fs)]
+        for c in cands:
+            d.extra = {**d.extra, "label": c}
+            n, _ = score()
+            if n < best[0]:
+                best = (n, c)
+                if n == 0:
+                    break
+        d.extra = {**d.extra, "label": best[1]}
+        n0, allc = score()
+        if n0 == 0:
+            return
+        if mine(d, allc) and plan.sheet == "A4":
+            plan._xh_bad = True  # A4 上没有干净位置：plan_shaft_drawing 换 A3 重排
 
 
 def _shaft_step_ra_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:

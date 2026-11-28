@@ -661,3 +661,18 @@ def test_shaft_top_number_moves_outside_when_split():
     d = next(d for d in plan.dims if d.ref == "XH1_pos")
     xa, xb = sorted(q[0] for q in d.extra["sheet_pts"])
     assert not xa < d.extra["text_x"] < xb
+
+
+LABEL_ON_FRAME_ROW = {'name': 'S82', 'part_no': 'S-82', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 0, 'steps': [{'length': 25, 'diameter': 40}, {'length': 15, 'diameter': 45, 'tolerance': 'js6'}, {'length': 15, 'diameter': 50}]}, 'features': [{'feature': 'groove', 'name': 'G1', 'type': 'undercut', 'step': 1}, {'feature': 'groove', 'name': 'G2', 'type': 'circlip', 'step': 2}], 'auto_precision': True}
+
+
+def test_shaft_groove_label_avoids_frame_row():
+    """挡圈槽引出标注与圆柱度框格同一行：A4 2:1 上无处可放 → 换 A3，标注不压框格。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate(LABEL_ON_FRAME_ROW))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
