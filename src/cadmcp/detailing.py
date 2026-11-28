@@ -5393,13 +5393,21 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
         ex = d.extra
         xa, xb = sorted(q[0] for q in ex["sheet_pts"])
         tw = text_width(d.text, 3.5)
-        outside = tw > xb - xa - 1.6  # 写在界线外的短数字：只在左右两侧之间换
+        outside = tw > xb - xa - 1  # 写在界线外的短数字（与 render_shaft._hdim 同一判据）：只在左右两侧之间换
         if outside and "text_x" not in ex:
             continue
         y = ex["sheet_pos"][1]
         own = {round(q[0], 2) for q in ex["sheet_pts"]}
         obs = [(a, b) for a, b, y0, y1 in vlines if y0 < y + 3.8 and y + 0.5 < y1
                and not (b - a < 1 and round((a + b) / 2, 2) in own)]
+        for o in plan.dims:  # 引出标注（环槽、倒角、横孔…）的斜引线：在数字高度带内占的横向范围
+            lb = (o.extra or {}).get("label") if o.view == "front" else None
+            if lb and "anchor" in lb and "elbow" in lb:
+                (x1_, y1_), (x2_, y2_) = lb["anchor"], lb["elbow"]
+                ya_, yb_ = max(min(y1_, y2_), y + 0.5), min(max(y1_, y2_), y + 3.8)
+                if ya_ < yb_ and abs(y2_ - y1_) > 1e-6:
+                    xs_ = [x1_ + (x2_ - x1_) * (yy - y1_) / (y2_ - y1_) for yy in (ya_, yb_)]
+                    obs.append((min(xs_) - 0.3, max(xs_) + 0.3))
         for o in rows:  # 同一行别的数字
             eo = o.extra
             if o is not d and abs(eo["sheet_pos"][1] - y) < 3.5:
@@ -5409,7 +5417,7 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
         c0 = ex.get("text_x", ex["sheet_pos"][0])
         if free(c0):
             continue
-        if outside:
+        def put_outside():
             W_ = plan.sheet_size[0]
             sides = [(xa - 1.5 - tw / 2, -1), (xb + 1.5 + tw / 2, 1)]
             if c0 > xb:
@@ -5417,9 +5425,11 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
             sides.sort(key=lambda t: abs(t[0] - c0) > 1)  # 本侧先：再往外挪（尺寸线随之延长）
             alt = [c + sg * k * 0.5 for c, sg in sides for k in range(9)]
             alt = [c for c in alt if 7 < c - tw / 2 and c + tw / 2 < W_ - 7]
-            ok = [c for c in alt if free(c)]
-            if ok:
-                d.extra = {**ex, "text_x": round(ok[0], 2), "sheet_pos": (round(ok[0], 2), y)}
+            ok_ = [c for c in alt if free(c)]
+            if ok_:
+                d.extra = {**ex, "text_x": round(ok_[0], 2), "sheet_pos": (round(ok_[0], 2), y)}
+        if outside:
+            put_outside()
             continue
         lo, hi = xa + tw / 2 + 0.8, xb - tw / 2 - 0.8
         cands = [lo + k * 0.25 for k in range(int((hi - lo) / 0.25) + 1)]
@@ -5427,6 +5437,8 @@ def _shaft_top_num_clear(plan: "DrawingPlan") -> None:
         if ok:
             c = min(ok, key=lambda c_: abs(c_ - c0))
             d.extra = {**ex, "text_x": round(c, 2), "sheet_pos": (round(c, 2), y)}
+        else:  # 界线之间被别的界线隔得放不下：写到界线外侧
+            put_outside()
 
 
 def _shaft_label_rows(plan: "DrawingPlan", p: ResolvedPart) -> None:

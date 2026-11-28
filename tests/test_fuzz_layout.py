@@ -643,3 +643,21 @@ def test_shaft_end_hole_cone_and_short_step_ra():
     p = resolve_part(PartSpec.model_validate(SHORT_STEP_RA))
     plan = plan_part_drawing(DrawingSpec(model=p.name), p)
     assert next(d for d in plan.dims if d.ref == "ra:step:0").extra.get("leader_segs")
+
+
+TOP_NUM_SPLIT = {'name': 'S147', 'part_no': 'S-147', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 0.5, 'steps': [{'length': 10, 'diameter': 45, 'tolerance': 'm6'}, {'length': 30, 'diameter': 40}, {'length': 30, 'diameter': 32, 'tolerance': 'f7'}, {'length': 15, 'diameter': 27}], 'cross_holes': [{'step': 3, 'diameter': 6}], 'end_holes': [{'side': 'end', 'size': 'M10', 'depth': 15}]}, 'features': [{'feature': 'groove', 'name': 'G0', 'type': 'circlip', 'step': 0}, {'feature': 'keyway', 'name': 'K1', 'step': 1, 'length': 22}, {'feature': 'groove', 'name': 'G2', 'type': 'grinding', 'step': 2}, {'feature': 'groove', 'name': 'G3', 'type': 'undercut', 'step': 3}]}
+
+
+def test_shaft_top_number_moves_outside_when_split():
+    """横孔定位尺寸 7.5 的两界线之间夹着退刀槽定位的界线：数字写到界线外，且避开退刀槽的斜引线。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate(TOP_NUM_SPLIT))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    d = next(d for d in plan.dims if d.ref == "XH1_pos")
+    xa, xb = sorted(q[0] for q in d.extra["sheet_pts"])
+    assert not xa < d.extra["text_x"] < xb
