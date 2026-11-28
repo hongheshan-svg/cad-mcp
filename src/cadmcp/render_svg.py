@@ -1656,6 +1656,14 @@ def render(plan: DrawingPlan, model: ResolvedPart | ResolvedAssembly | None = No
                     s.text(vx1 + 5 + o, ty_ - 0.8, d.text, 2.5)
             elif d.kind == "weld":
                 _weld_symbol(s, *P(*d.at), d)
+            elif d.kind == "roughness" and (d.extra or {}).get("leader_pts"):  # 引线指孔壁、符号立在折线上
+                from . import render_gdt
+                (ax_, ay_), (bx_, by_), (cx_, cy_) = d.extra["leader_pts"]
+                s.line(ax_, ay_, bx_, by_, THIN)
+                s.line(bx_, by_, cx_, cy_, THIN)
+                L_ = math.hypot(ax_ - bx_, ay_ - by_) or 1.0
+                s.parts.append(_arrow_head(s, (ax_, ay_), ((ax_ - bx_) / L_, (ay_ - by_) / L_)))
+                render_gdt.roughness(s, *d.extra["sheet_at"], (0, 1), d.text)
             elif d.kind in ("datum", "gtol", "roughness"):
                 from . import render_gdt
                 render_gdt.draw(s, d.kind, *P(*d.at), d.extra, d.text)

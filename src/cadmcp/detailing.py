@@ -834,6 +834,7 @@ def plan_part_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
         overall_dim_sheet(plan, p)
         _face_ra_slide(plan, p)
         _hole_ra_retry(plan, p)
+        _hole_ra_section_leader(plan, p)
         _hole_datum_retry(plan, p)
         callout_retry(plan, p)
     return _general_ra_retry(plan, p)
@@ -1552,6 +1553,111 @@ def _hole_ra_to_section(plan: "DrawingPlan", p: ResolvedPart) -> None:
             d.extra = {**(d.extra or {}), "normal": (1, 0), "in_section": sec.label}
             # 孔轴线（细点画线）在孔腔正中：引线缩短到 Ra 文字末端（尖端 + 引线 + 7 + 字宽）不越过轴线
             d.extra["reach"] = round(min(8.0, half * vscale.get(sec.view, 1.0) - 8.0 - len(d.text) * 2.0), 2)
+
+
+def _hole_ra_section_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
+    """孔壁 Ra 留在孔所在面的视图（剖视图孔腔放不下符号）但出图检查仍压线压字（端视图挤：分布圆、剖切符号…）时，
+    改在剖视图上用带箭头的引线指孔壁（GB/T 131：符号立在引线的水平折线上）：引线从孔壁 60° 穿过孔腔伸出端面，
+    折线在端面外。候选（孔壁左/右 × 深度 1/2、1/3、2/3 × 上/下端面 × 伸出 4/7/10 mm）逐个出图检查，取冲突最少的
+    （不比原位置好则不动）。结果同齿面引线 Ra：extra["leader_pts"/"leader_segs"]，sheet_at = 符号尖端。"""
+    from .render_svg import render
+    from .section import AX, FRAME, hole_profile
+    vmap = {v.type: v for v in plan.views}
+
+    def bad(text=None) -> int:
+        try:
+            _, out = render(plan, p)
+        except Exception:  # noqa: BLE001
+            return 10 ** 6
+        allc = out["crossings"] + out["collisions"]
+        dash = out.get("dash_crossings") or []
+        if text is not None and not any(text in (c if isinstance(c, str) else " ".join(map(str, c))) for c in allc + dash):
+            return 0
+        return 10 * len(allc) + len(dash)
+    for d in plan.dims:
+        if d.kind != "roughness" or not d.ref.startswith("ra:hole:") or (d.extra or {}).get("in_section"):
+            continue
+        h = next((x for x in p.holes if x.name == d.ref[len("ra:hole:"):]), None)
+        if h is None or h.slot or h.face not in ("top", "bottom"):
+            continue
+        sec = next((s_ for s_ in plan.sections if s_.kind in ("full", "step") and s_.view in vmap
+                    and s_.view in VIEW_AXES), None)
+        if sec is None or bad(d.text) == 0:
+            continue
+        v = vmap[sec.view]
+        sc = v.scale
+        hi_, di_ = AX[FRAME[sec.view][0]], AX[FRAME[sec.view][1]]
+        ha, va = VIEW_AXES[sec.view]
+        r = h.drill / 2
+        cut = [(abs(i.xyz[di_] - d_), i, d_) for i in h.instances for h0, h1, d_ in sec.path
+               if h0 - 1e-6 <= i.xyz[hi_] <= h1 + 1e-6 and abs(i.xyz[di_] - d_) < r * 0.5]
+        if not cut:
+            continue
+        dist, inst, dcut = min(cut, key=lambda c: c[0])
+        half = math.sqrt(r * r - dist * dist)
+        depths = [dd for dd, rr in hole_profile(h) if abs(rr - r) < 1e-6]
+        lo_d, hi_d = (min(depths), max(depths)) if depths else (0.0, h.depth)
+        if (hi_d - lo_d) * sc < 4:
+            continue
+
+        def sheet(sgn, depth):
+            q = list(inst.xyz)
+            q[hi_] += sgn * half
+            q[di_] = dcut
+            q[2] += -inst.normal[2] * depth
+            return _uv_sheet(v, p.bbox, (vc(tuple(q), ha), vc(tuple(q), va))), (vc(tuple(q), ha), vc(tuple(q), va))
+        y_top = _uv_sheet(v, p.bbox, (0.0, vrange(p.bbox, va)[1]))[1]
+        y_bot = _uv_sheet(v, p.bbox, (0.0, vrange(p.bbox, va)[0]))[1]
+        orig = (d.view, d.at, dict(d.extra))
+        best = (bad(), orig)
+        w_sym = 8.0 + len(d.text) * 2.0
+        tcx, tcy = v.origin_on_sheet[0], v.origin_on_sheet[1] + v.size_mm[1] / 2 + 5  # 剖视标题 "A-A"（预览/CAD 同位）
+        ttw = text_width(f"{sec.label}-{sec.label}", 5) / 2
+        tbox = (tcx - ttw - 1.5, tcy - 1.5, tcx + ttw + 1.5, tcy + 5 + 1.5)
+        cands = []
+        busy = [tbox]  # 视图的尺寸文字/尺寸线（规划层图纸坐标）：符号外框不压
+        for o in plan.dims:
+            ex_ = o.extra or {}
+            if o.view == sec.view and o.kind == "linear" and "sheet_pos" in ex_ and "sheet_pts" in ex_:
+                (xa_, ya_), (xb_, yb_) = ex_["sheet_pts"]
+                px_, py_ = ex_["sheet_pos"]
+                if ex_.get("orient") == "h":
+                    busy.append((min(xa_, xb_) - 1, py_ - 1, max(xa_, xb_) + 1, py_ + 5))
+                else:
+                    busy.append((px_ - 5, min(ya_, yb_) - 1, px_ + 1, max(ya_, yb_) + 1))
+        # k_ = 引线水平/竖直比（60°、45°、30° 斜线）：标题正压在孔上方时，平一些的引线在孔腔里横走过标题
+        for k_, t, sgn in [(k_, t, sgn) for k_ in (0.577, 1.0, 1.732) for t in (0.5, 0.35, 0.65, 0.8) for sgn in (-1, 1)]:
+            (ax, ay), at_m = sheet(sgn, lo_d + t * (hi_d - lo_d))
+            xo = _uv_sheet(v, p.bbox, (vc(tuple(inst.xyz), ha), 0.0))[0]
+            g = 1 if xo > ax else -1  # 引线朝孔腔一侧（孔轴线方向），从上端面伸出（下方是总体尺寸带）
+            if (y_top - ay) * k_ > 2 * half * sc - 0.6:  # 出端面前引线就撞上对面孔壁
+                continue
+            for e in (4.0, 7.0, 10.0, 13.0):
+                ye = y_top + e
+                bx = ax + g * (ye - ay) * k_
+                cx_ = bx + g * 6.5  # 水平折线只托住 √（同齿面引线 Ra）
+                vx = bx + 2.5 if g > 0 else bx - 4.0
+                sb = (vx - 4.5, ye, vx + w_sym, ye + 9.5)  # 符号外框
+                if any(sb[0] < b_[2] and b_[0] < sb[2] and sb[1] < b_[3] and b_[1] < sb[3] for b_ in busy):
+                    continue  # 贴着/压着剖视标题、尺寸
+                if any(_seg_box((ax, ay), (bx, ye), b_) for b_ in busy):
+                    continue  # 引线穿过标题/尺寸文字
+                cands.append((at_m, {"leader_pts": [(round(ax, 2), round(ay, 2)), (round(bx, 2), round(ye, 2)),
+                                                    (round(cx_, 2), round(ye, 2))],
+                                     "sheet_at": (round(vx, 2), round(ye, 2)), "sheet_pos": (round(vx, 2), round(ye, 2))}))
+        base = {k: v_ for k, v_ in orig[2].items() if k not in ("sheet_at", "sheet_pos", "reach", "ext_pts", "on_dim",
+                                                               "leader_pts", "leader_segs", "rot")}
+        for at_m, c in cands:
+            d.view, d.at = sec.view, (round(at_m[0], 6), round(at_m[1], 6))
+            d.extra = {**base, **c, "normal": (0, 1), "in_section": sec.label}
+            n = bad()
+            if n < best[0]:
+                best = (n, (d.view, d.at, dict(d.extra)))
+                if n == 0:
+                    break
+        d.view, d.at, d.extra = best[1]
+        if "leader_pts" in d.extra:
+            d.extra = {**d.extra, "leader_segs": leader_segments(d.extra["leader_pts"])}
 
 
 def _plan_sections(plan: "DrawingPlan", spec: DrawingSpec, p: ResolvedPart) -> None:

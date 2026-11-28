@@ -92,3 +92,22 @@ def test_face_symbols_off_corner_and_section_title():
     cx = next(v_ for v_ in plan.views if v_.type == "front").origin_on_sheet[0]
     assert all(abs(d.extra["sheet_at"][0] - cx) > 8 for d in plan.dims
                if d.view == "front" and tuple(d.extra.get("normal", ())) == (0, 1))
+
+
+PCD_CAP = {'name': 'D88', 'part_no': 'D-88', 'title': '端盖', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 80}, 'thickness': 20}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 30, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 8, 'height': 5.3, 'center': [0, 15.65]}}, {'feature': 'hole', 'name': 'PC', 'type': 'simple', 'size': 12, 'pattern': {'kind': 'circular', 'radius': 31, 'count': 3, 'start_angle': 22.5}}, {'feature': 'boss', 'name': 'Spigot', 'height': 3, 'profile': {'shape': 'circle', 'diameter': 46, 'center': [0, 0]}}], 'auto_precision': True}
+
+
+def test_bore_ra_leader_in_section():
+    """端视图挤（Ra 压分布圆）、剖视孔腔又放不下符号：孔壁 Ra 改在剖视图上用带箭头引线指孔壁，
+    引线穿孔腔从上端面伸出，符号立在折线上，不压剖视标题；SW 用视图草图线画引线与箭头。"""
+    p, plan = _plan(PCD_CAP)
+    ra = next(d for d in plan.dims if d.ref == "ra:hole:Bore")
+    assert ra.view == "front" and ra.extra.get("leader_pts") and ra.extra.get("leader_segs")
+    (ax, ay), (bx, by), _ = ra.extra["leader_pts"]
+    v = next(v_ for v_ in plan.views if v_.type == "front")
+    assert by > v.origin_on_sheet[1] + v.size_mm[1] / 2 > ay  # 从上端面伸出
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == []
+    from cadmcp.adapters.solidworks.compile import compile_drawing
+    ops = compile_drawing(plan, "D.SLDPRT")
+    assert sum(o.op == "view_line" and o.args["ref"].startswith("ra:hole:Bore:leader") for o in ops) >= 2
