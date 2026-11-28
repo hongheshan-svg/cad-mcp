@@ -13,9 +13,11 @@ THIN, THICK = 0.25, 0.5
 CENTER = "6,1.5,1,1.5"
 
 
-def _hatch(s, cid, poly, x0, y0, x1, y1, step=2.5):
-    path = " ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in poly)
-    s.parts.append(f"<clipPath id='{cid}'><polygon points='{path}'/></clipPath>")
+def _hatch(s, cid, poly, x0, y0, x1, y1, step=2.5, holes=()):
+    def sub(pl):
+        return "M " + " L ".join(f"{x:.2f},{s.y(y):.2f}" for x, y in pl) + " Z"
+    d_ = " ".join([sub(poly)] + [sub(h) for h in holes])  # 孔（剖到的腹板孔）按 evenodd 挖空
+    s.parts.append(f"<clipPath id='{cid}'><path d='{d_}' clip-rule='evenodd'/></clipPath>")
     lines = []
     span = (x1 - x0) + (y1 - y0)
     k = -span
@@ -24,6 +26,37 @@ def _hatch(s, cid, poly, x0, y0, x1, y1, step=2.5):
                      f"y2='{s.y(y1):.2f}' stroke='#111' stroke-width='0.18'/>")
         k += step
     s.parts.append(f"<g clip-path='url(#{cid})'>{''.join(lines)}</g>")
+
+
+def _cut_holes(part, holes, xl, xr, cy, sc) -> list[dict]:
+    """主视图（左视图上过中心的竖直剖切面 x = 0 全剖）切到的腹板孔/均布孔：孔在剖面里的轮廓。
+    第一角画法：左视图从 +Z 看，+Z 端面在主视图左侧（x = xl）。返回每个孔的 y（图纸）、剖面多边形 poly、
+    孔壁/台阶线 lines、两端面孔口半宽 open {x: 半宽}。"""
+    from .section import hole_profile
+    out = []
+    for h in holes:
+        prof = hole_profile(h)
+        rmax = max(r_ for _, r_ in prof)
+        for inst in h.instances:
+            dx = abs(inst.xyz[0])
+            if dx >= h.drill / 2 - 1e-6:
+                continue  # 剖切面没切到钻孔
+            sg = 1 if h.face == "top" else -1  # 孔口在 +Z（左端）或 −Z（右端）
+            x_in = xl if sg > 0 else xr
+            hy = cy + inst.xyz[1] * sc
+            pts = []  # 沿深度的 (x, 半宽)；半宽 = 剖切面上的弦半长
+            for dep, r_ in prof:
+                w_ = math.sqrt(max(r_ * r_ - dx * dx, 0.0)) * sc
+                pts.append((x_in + sg * dep * sc, w_))
+            upper = [(x, hy + w) for x, w in pts]
+            lower = [(x, hy - w) for x, w in reversed(pts)]
+            lines = [(a[0], a[1], b[0], b[1]) for a, b in zip(upper, upper[1:])]
+            lines += [(a[0], a[1], b[0], b[1]) for a, b in zip(lower, lower[1:])]
+            open_ = {x_in: pts[0][1]}
+            if h.through:
+                open_[xr if sg > 0 else xl] = pts[-1][1]
+            out.append({"y": hy, "poly": upper + lower, "lines": lines, "open": open_, "rmax": rmax})
+    return out
 
 
 def _vdim_text(s, x_line, x_from, ya, yb, text):
@@ -52,11 +85,12 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
     ybot_hole = cy - rb
 
     # ---- 主视图：全剖，轮齿不剖 ----
+    cut = _cut_holes(part, parts["others"], xl, xr, cy, sc)
     if bore is not None:
         up = [(xl, cy + rf), (xr, cy + rf), (xr, ytop_hole), (xl, ytop_hole)]
         dn = [(xl, ybot_hole), (xr, ybot_hole), (xr, cy - rf), (xl, cy - rf)]
-        _hatch(s, "gearU", up, xl, ytop_hole, xr, cy + rf)
-        _hatch(s, "gearD", dn, xl, cy - rf, xr, ybot_hole)
+        _hatch(s, "gearU", up, xl, ytop_hole, xr, cy + rf, holes=[c["poly"] for c in cut])
+        _hatch(s, "gearD", dn, xl, cy - rf, xr, ybot_hole, holes=[c["poly"] for c in cut])
         s.line(xl, ytop_hole, xr, ytop_hole, THICK)
         s.line(xl, ybot_hole, xr, ybot_hole, THICK)
         if kw:  # 剖切面之后键槽侧壁与孔壁的交线（可见）
@@ -66,11 +100,17 @@ def render_gear(s, plan: DrawingPlan, part: ResolvedPart, refs: list[str]) -> No
     s.line(xl, cy + ra, xr, cy + ra, THICK)                   # 齿顶线
     s.line(xl, cy - ra, xr, cy - ra, THICK)
     for x in (xl, xr):                                        # 端面：剖视中只画有材料处（孔里没有线）
-        if bore is not None:
-            s.line(x, ytop_hole, x, cy + ra, THICK)
-            s.line(x, cy - ra, x, ybot_hole, THICK)
-        else:
-            s.line(x, cy - ra, x, cy + ra, THICK)
+        spans = [(ytop_hole, cy + ra), (cy - ra, ybot_hole)] if bore is not None else [(cy - ra, cy + ra)]
+        for c in cut:  # 剖到的腹板孔：孔口处端面线断开
+            if abs(c["open"].get(x, -1.0) + 1.0) > 1e-9:
+                y0_, y1_ = c["y"] - c["open"][x], c["y"] + c["open"][x]
+                spans = [q for a_, b_ in spans for q in ((a_, min(b_, y0_)), (max(a_, y1_), b_)) if q[1] - q[0] > 1e-6]
+        for a_, b_ in spans:
+            s.line(x, a_, x, b_, THICK)
+    for c in cut:  # 剖到的腹板孔：孔壁与台阶（粗实线）、孔轴线（细点画线，超出端面 3 mm）
+        for seg in c["lines"]:
+            s.line(*seg, THICK)
+        s.line(xl - 3, c["y"], xr + 3, c["y"], THIN, CENTER)
     s.line(xl, cy + rf, xr, cy + rf, THICK)                   # 齿根线（剖视中粗实线）
     s.line(xl, cy - rf, xr, cy - rf, THICK)
     for sign in (1, -1):                                      # 分度线：细点画线，超出端面 2–3 mm

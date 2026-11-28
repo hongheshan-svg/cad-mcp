@@ -161,3 +161,26 @@ def test_disc_hole_positions_from_center():
     p, plan = _plan(CENTER_KW)
     kx = next(d for d in plan.dims if d.ref == "KW_t").extra["sheet_pos"][0]
     assert next(d for d in plan.dims if (d.extra or {}).get("cpos")).extra["sheet_pos"][0] > kx
+
+
+GEAR_WEB_CUT = {'name': 'D43', 'part_no': 'D-43', 'title': '齿轮', 'material': '45#', 'base': {'type': 'extrude', 'profile': {'shape': 'circle', 'diameter': 186}, 'thickness': 25}, 'features': [{'feature': 'hole', 'name': 'Bore', 'type': 'simple', 'size': 25, 'positions': [[0, 0]], 'tolerance': 'H7'}, {'feature': 'pocket', 'name': 'KW', 'face': 'top', 'depth': 'through', 'profile': {'shape': 'rect', 'width': 8, 'height': 5.3, 'center': [0, 13.15]}}, {'feature': 'hole', 'name': 'PC', 'type': 'counterbore', 'size': 'M6', 'pattern': {'kind': 'circular', 'radius': 39, 'count': 3, 'start_angle': 30}}], 'gear': {'module': 3, 'teeth': 60}}
+
+
+def test_gear_section_shows_cut_web_hole():
+    """齿轮主视图（过中心竖直全剖）切到 270° 处的沉孔：剖视里画出孔壁与沉孔台阶（台阶在 +Z 端面 = 主视图左端），
+    剖面线挖空，孔轴线画点画线；没切到的孔不画。"""
+    from cadmcp.gear_drawing import gear_parts
+    from cadmcp.render_gear import _cut_holes
+    p, plan = _plan(GEAR_WEB_CUT)
+    main = plan.views[0]
+    b = p.bbox.zmax - p.bbox.zmin
+    xl = main.origin_on_sheet[0] - b * main.scale / 2
+    xr = xl + b * main.scale
+    cut = _cut_holes(p, gear_parts(p)["others"], xl, xr, main.origin_on_sheet[1], main.scale)
+    assert len(cut) == 1 and cut[0]["y"] < main.origin_on_sheet[1]
+    xs = sorted({round(q[0], 2) for q in cut[0]["poly"]})
+    assert xs[0] == round(xl, 2) and xs[-1] == round(xr, 2) and len(xs) == 3  # 孔口、台阶、孔底（通孔到右端）
+    step_x = xs[1]
+    assert step_x - xl < xr - step_x  # 台阶靠左端（+Z 面）
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
