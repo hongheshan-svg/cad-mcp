@@ -3849,7 +3849,7 @@ def _disc_keyway_sheet(plan: "DrawingPlan", p: ResolvedPart, spec: DrawingSpec) 
     rings = (hk["rb"] * sc, p.profile.data["diameter"] / 2 * sc) + tuple(
         bs["profile"].data["diameter"] / 2 * sc for bs in p.bosses if bs["profile"].shape == "circle")
     rings += tuple(h.circular["pcd"] / 2 * sc for h in p.holes if h.circular)
-    circles = tuple((*_uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va))), h.max_dia / 2 * sc + 2.0)
+    circles = tuple((*_uv_sheet(v, p.bbox, (vc(i.xyz, ha), vc(i.xyz, va))), h.max_dia / 2 * sc + 3.0)
                     for h in p.holes if h is not hk["bore"] for i in h.instances)
 
     def dev(t):

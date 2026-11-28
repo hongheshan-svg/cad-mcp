@@ -115,10 +115,10 @@ def plan_gear_drawing(spec: DrawingSpec, p: ResolvedPart, today: date | None = N
                 "text_at": (round(elbow[0] - tw - 0.5, 2), round(elbow[1] + 0.8, 2)), "on_edge": True, "dir": -1}}))
         if kw is not None and bore is not None:
             hk = hub_keyway_dims("left", ex, cy, sc, bore.max_dia / 2, kw["width"], kw["top"], kw["name"], dev,
-                                 rings=(bore.max_dia / 2 * sc, df / 2 * sc, da / 2 * sc)
+                                 rings=(bore.max_dia / 2 * sc, df / 2 * sc, d / 2 * sc, da / 2 * sc)  # 含分度圆（点画线）
                                  + tuple(h.circular["pcd"] / 2 * sc for h in parts["others"] if getattr(h, "circular", None)),
-                                 circles=tuple((ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc + 2.0)
-                                               for h in parts["others"] for i in h.instances))  # 含孔中心线伸出 2 mm
+                                 circles=tuple((ex + i.xyz[0] * sc, cy + i.xyz[1] * sc, h.max_dia / 2 * sc + 3.0)
+                                               for h in parts["others"] for i in h.instances))  # 含孔中心线伸出（约 3 mm）
             dims += hk
             if g.get("blank_runout") and spec.dimensions != "none":
                 # 轮毂键槽对称度（对基准 A 轴孔，GB/T 1184 8 级按键宽）：箭头从右侧与槽宽尺寸线对齐，框格在齿顶圆右侧
