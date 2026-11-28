@@ -2424,6 +2424,8 @@ def _plan_shaft(spec: DrawingSpec, p: ResolvedPart, today: date | None = None,
         from .gear_drawing import param_table
         plan.gear_table = param_table(plan, p)
         _gear_table_place(plan)
+        if spec.dimensions != "none":
+            _gear_flank_leader(plan, p)  # 参数表挪位后再查一次：齿面 Ra 的延长线位置可能被表压住
     return plan
 
 
@@ -5503,7 +5505,13 @@ def _gear_flank_leader(plan: "DrawingPlan", p: ResolvedPart) -> None:
         w = _flank_ra_w(d.text)
         orig = dict(d.extra)
         if not orig.get("forced") and bad(d.text) == 0:  # 延长线位置可用且没压到东西：照常
-            continue
+            n_all = bad()
+            k_ = plan.dims.index(d)
+            plan.dims.pop(k_)
+            n_wo = bad()
+            plan.dims.insert(k_, d)
+            if n_all <= n_wo:  # 去掉它冲突也不少：与它无关（它的延长线压了别人的字时才算它的）
+                continue
         best = (bad(), orig)
         if best[0] == 0:
             continue

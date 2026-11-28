@@ -709,3 +709,21 @@ def test_sheet_metal_general_finish_as_supplied():
     assert any("不去除材料" in (o.args.get("text") or "") for o in ops if o.op == "note")
     plan2 = plan_part_drawing(DrawingSpec(model=p.name, surface_finish="Ra 6.3"), p)
     assert plan2.title_block["surface_finish"] == "Ra 6.3"
+
+
+FLANK_EXT_OVER_DIA = {'name': 'S142', 'part_no': 'S-142', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 0.5, 'steps': [{'length': 40, 'diameter': 24}, {'length': 50, 'diameter': 27, 'tolerance': 'js6'}, {'length': 30, 'diameter': 35.0}, {'length': 60, 'diameter': 40}, {'length': 60, 'diameter': 50}], 'center_holes': {'type': 'B'}, 'shoulder_fillet': 1}, 'features': [{'feature': 'keyway', 'name': 'K0', 'step': 0, 'length': 28}, {'feature': 'keyway', 'name': 'K1', 'step': 1, 'length': 36, 'offset': 2}, {'feature': 'keyway', 'name': 'K4', 'step': 4, 'length': 45, 'offset': 2}, {'feature': 'gear', 'name': 'Z2', 'step': 2, 'module': 2.5, 'teeth': 12}]}
+FLANK_UNDER_TABLE = {'name': 'S80', 'part_no': 'S-80', 'title': '测试轴', 'material': '45#', 'base': {'type': 'shaft', 'chamfer': 0, 'steps': [{'length': 80, 'diameter': 27}, {'length': 60, 'diameter': 30}, {'length': 30, 'diameter': 35, 'tolerance': 'm6'}, {'length': 15, 'diameter': 40}, {'length': 80, 'diameter': 42}], 'center_holes': {'type': 'B'}}, 'features': [{'feature': 'gear', 'name': 'Z4', 'step': 4, 'module': 3, 'teeth': 12}]}
+
+
+def test_gear_flank_ra_leader_when_extension_blocked():
+    """齿面 Ra 的分度线延长线压了相邻段的直径文字（冲突里报的是别人的字）、或参数表挪位后压住 Ra：改用引线指分度线。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    for spec in (FLANK_EXT_OVER_DIA, FLANK_UNDER_TABLE):
+        p = resolve_part(PartSpec.model_validate(spec))
+        plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+        _, out = render(plan, p)
+        assert out["crossings"] == [] and out["collisions"] == [] and out["dash_crossings"] == [], spec["name"]
+        assert next(d for d in plan.dims if d.ref.startswith("ra:flank")).extra.get("leader_pts")
