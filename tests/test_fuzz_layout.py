@@ -589,3 +589,23 @@ def test_crowded_bearing_dia_centered_axis_broken():
     assert out["crossings"] == [] and out["collisions"] == []
     ops = compile_drawing(plan, "S.SLDPRT")
     assert any(o.op == "sheet_centerlines" and len(o.args["lines"]) == len(plan.shaft_axis) for o in ops)
+
+
+HUNG_FRAMES = {'name': 'F120', 'part_no': 'F-120', 'title': '测试板', 'material': 'Q235', 'base': {'type': 'extrude', 'profile': {'shape': 'rect', 'width': 100, 'height': 120}, 'thickness': 5}, 'features': [{'feature': 'hole', 'name': 'H0', 'type': 'simple', 'size': 5, 'positions': [[5, -11]], 'tolerance': 'H7'}, {'feature': 'hole', 'name': 'H1', 'type': 'simple', 'size': 20, 'positions': [[-25, -35], [-25, 35], [25, -35], [25, 35]], 'tolerance': 'H7'}, {'feature': 'boss', 'name': 'B', 'height': 15, 'profile': {'shape': 'rect', 'width': 40, 'height': 32, 'center': [0, 0], 'corner_radius': 3}}, {'feature': 'fillet', 'name': 'E1', 'edges': 'outer_vertical', 'size': 1}], 'auto_precision': True}
+
+
+def test_hung_position_frames_move_with_callout():
+    """两个孔标注都挂位置度框格、视图挤：标注可换孔实例（孔不是基准时），框格随标注换位置；
+    出图检查两遍（先挪的在后挪的让开后再选一次），不压孔、不压字。"""
+    from cadmcp.detailing import plan_part_drawing
+    from cadmcp.ir import DrawingSpec, PartSpec
+    from cadmcp.ir.resolve import resolve_part
+    from cadmcp.render_svg import render
+    p = resolve_part(PartSpec.model_validate(HUNG_FRAMES))
+    plan = plan_part_drawing(DrawingSpec(model=p.name), p)
+    _, out = render(plan, p)
+    assert out["crossings"] == [] and out["collisions"] == []
+    for g in plan.dims:
+        if g.kind == "gtol" and g.extra.get("attach") == "callout":
+            co = next(d for d in plan.dims if d.kind == "callout" and d.ref == g.ref.split("@hole:")[-1])
+            assert g.extra["callout_label"] == co.extra["label"]

@@ -858,26 +858,48 @@ def callout_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
         hard = list(out["crossings"]) + [t for pair in out["collisions"] for t in pair]
         dash = out.get("dash_crossings") or []
         return 10 * len(out["crossings"]) + 10 * len(out["collisions"]) + len(dash), (text in hard or text in dash)
-    for d in plan.dims:
-        alts = (d.extra or {}).pop("_alts", None)
+    def put(d, lb, at_):  # 换标注位置；挂在标注下方的位置度框格跟着移（同 precision_sheet）
+        d.extra["label"] = lb
+        if at_ is not None:
+            d.at = at_
+        for g in hung.get(d.ref, ()):
+            g.extra = {**g.extra, "callout_label": lb,
+                       "sheet_pos": (round(min(lb["elbow"][0], lb["end"][0]), 2), round(lb["elbow"][1] - 6.0, 2))}
+    hung: dict[str, list] = {}
+    for g in plan.dims:
+        if g.kind == "gtol" and (g.extra or {}).get("attach") == "callout":
+            hung.setdefault(g.ref.split("@hole:")[-1], []).append(g)
+    # 两遍：先挪的标注在别的标注还压着时选的位置，第二遍按其它标注挪好后的情况再选一次
+    for d in [d_ for d_ in plan.dims if (d_.extra or {}).get("_alts")] * 2:
+        alts = (d.extra or {}).get("_alts")
         if not alts:
             continue
+        frames = [c for g in hung.get(d.ref, ()) for c in g.extra.get("cells", []) if c]  # 冲突按框格单元格文字报
         n0, mine = bad(d.text)
+        for ft in frames:
+            mine = mine or bad(ft)[1]
         if not mine:
             continue
+        def llen(lb):
+            return math.dist(lb["anchor"], lb["elbow"])
         best = (n0, d.extra["label"], d.at)
+        more = None  # 找到不压的位置后再看几个，冲突一样多时取引线短的（代价顺序里靠前的未必最短）
         for lb in alts:
             lb = dict(lb)
             at_ = lb.pop("_at", None)
-            d.extra["label"] = lb
-            if at_ is not None:
-                d.at = at_
+            put(d, lb, at_)
             n, mine = bad(d.text)
-            if n < best[0]:
+            if n < best[0] or (more is not None and n == best[0] and llen(lb) < llen(best[1]) - 1):
                 best = (n, lb, d.at)
-            if not mine and n < n0:
-                break
-        d.extra["label"], d.at = best[1], best[2]
+            if more is None and not mine and n < n0 and not any(bad(ft)[1] for ft in frames):
+                more = 16
+            if more is not None:
+                more -= 1
+                if more < 0:
+                    break
+        put(d, best[1], best[2])
+    for d in plan.dims:
+        (d.extra or {}).pop("_alts", None)
 
 
 def _hole_datum_retry(plan: "DrawingPlan", p: ResolvedPart) -> None:
@@ -3509,9 +3531,12 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
         cx, cy = v.origin_on_sheet
         anchors = [d.at] if d.at is not None else [None]
         h_ = next((h for h in (part.holes if part is not None else []) if h.name == d.ref), None)
-        tied = any(d2.kind in ("gtol", "roughness", "datum") and d2.ref.endswith(f"hole:{d.ref}") for d2 in plan.dims)
+        # 孔是基准（基准符号与孔的尺寸对齐，须同一个孔）时不换实例；挂在标注下的位置度框格、孔壁 Ra 不受影响
+        dnames = {f"datum:{(x['name'] if isinstance(x, dict) else x.name)}" for x in (getattr(part, "datums", None) or [])
+                  if (x["target"] if isinstance(x, dict) else x.target) == f"hole:{d.ref}"}
+        tied = any(d2.kind == "datum" and (d2.ref.endswith(f"hole:{d.ref}") or d2.ref in dnames) for d2 in plan.dims)
         if d.kind == "callout" and h_ is not None and not h_.circular and not tied and v.type in VIEW_AXES \
-                and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):  # 孔上挂了公差框格/粗糙度时不换实例
+                and FACE_AXIS.get(h_.face) == FACE_AXIS.get(v.type):
             ha_, va_ = VIEW_AXES[v.type]  # 多个同规格孔：引线可指向任一个，取最好放的
             anchors += [(vc(i.xyz, ha_), vc(i.xyz, va_)) for i in h_.instances[1:]]
         pk_ = next((pk for pk in (part.pockets if part is not None else []) if pk["name"] == d.ref), None)
@@ -3551,10 +3576,9 @@ def place_labels(plan: "DrawingPlan", bbox, reserved: list[tuple[float, float, f
                     "end": (round(ex + dirn * tw, 2), round(ey, 2)), "dir": dirn,
                     **({"on_edge": True} if rr >= 5 else {})}
         alts = []
-        hung = any((d2.extra or {}).get("attach") == "callout" and d2.ref.endswith(f"hole:{d.ref}") for d2 in plan.dims)
-        if not hung and d.kind in ("callout", "diameter"):  # 备选（出图检查仍压线压字时按代价顺序试，callout_retry）
-            for c_ in sorted(pool, key=lambda t: t[0])[1:]:  # 孔上挂了基准/粗糙度：引出点不换
-                if c_[0] >= 5000 or len(alts) >= 16:
+        if d.kind in ("callout", "diameter"):  # 备选（出图检查仍压线压字时按代价顺序试，callout_retry）
+            for c_ in sorted(pool, key=lambda t: t[0])[1:]:  # 孔是基准：引出点不换（挂的框格随标注移，见 callout_retry）
+                if c_[0] >= 5000 or len(alts) >= 40:
                     break
                 if tied and c_[5] != best[5]:
                     continue
